@@ -1,0 +1,167 @@
+"""Photo ingest for the planning call.
+
+Two jobs: read what the camera recorded, and work out what each photo is
+physically capable of. The second one matters more than it sounds. Telling the
+planner "p013 cannot fill a full-bleed page" up front prevents a class of
+revision round-trips that would otherwise be discovered only by the validator,
+after a render.
+"""
+
+from __future__ import annotations
+
+import sys
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+
+import yaml
+from PIL import Image, ExifTags
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "phase0"))
+
+import templates_lib  # noqa: E402
+from geometry import Geometry, effective_dpi  # noqa: E402
+
+Image.MAX_IMAGE_PIXELS = None
+
+_EXIF = {v: k for k, v in ExifTags.TAGS.items()}
+_TAG_DATETIME = _EXIF.get("DateTimeOriginal", 36867)
+_TAG_GPS = _EXIF.get("GPSInfo", 34853)
+
+
+@dataclass
+class Photo:
+    id: str
+    path: Path
+    width: int
+    height: int
+    taken_at: datetime | None = None
+    gps: tuple[float, float] | None = None
+    place: str | None = None
+    caption: str = ""
+    upload_order: int = 0
+    avoid: list[str] = field(default_factory=list)
+    group: str | None = None                       # from cluster.assign
+    annotation: str = ""                           # from annotate.run
+    strength: int = 0                              # 1-5, from annotate.run
+    suggested_focal: tuple[float, float] | None = None
+
+    unusable: bool = False
+
+    @property
+    def orientation(self) -> str:
+        r = self.width / self.height
+        return "landscape" if r > 1.05 else "portrait" if r < 0.95 else "square"
+
+    def prompt_line(self) -> str:
+        bits = [
+            self.id,
+            self.group or "g?",
+            f"{self.width}x{self.height}",
+            self.orientation,
+            self.taken_at.strftime("%Y-%m-%d %H:%M") if self.taken_at else "no date",
+            self.place or ("gps" if self.gps else "no place"),
+        ]
+        if self.annotation:
+            bits.append(self.annotation)
+        if self.suggested_focal:
+            bits.append(f"focal {self.suggested_focal[0]:.2f},{self.suggested_focal[1]:.2f}")
+        if self.unusable:
+            bits.append("TOO SMALL TO PRINT — leave it out")
+        elif self.avoid:
+            bits.append("too small for: " + ", ".join(self.avoid))
+        return " | ".join(bits) + " | " + (self.caption or "(no caption)")
+
+
+def _ratio(v) -> float:
+    try:
+        return float(v)
+    except Exception:
+        return 0.0
+
+
+def _gps(exif: dict) -> tuple[float, float] | None:
+    raw = exif.get(_TAG_GPS)
+    if not raw:
+        return None
+    def dms(vals, ref, neg):
+        d = _ratio(vals[0]) + _ratio(vals[1]) / 60 + _ratio(vals[2]) / 3600
+        return -d if ref in neg else d
+    try:
+        lat = dms(raw[2], raw[1], ("S",))
+        lon = dms(raw[4], raw[3], ("W",))
+        return round(lat, 6), round(lon, 6)
+    except Exception:
+        return None
+
+
+def read_dir(photo_dir: Path) -> list[Photo]:
+    exts = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".heic"}
+    out: list[Photo] = []
+    for order, p in enumerate(sorted(photo_dir.iterdir())):
+        if p.suffix.lower() not in exts:
+            continue
+        with Image.open(p) as im:
+            w, h = im.size
+            try:
+                exif = dict(im.getexif())
+            except Exception:
+                exif = {}
+            if exif.get(274, 1) in (5, 6, 7, 8):
+                w, h = h, w
+        taken = None
+        if raw := exif.get(_TAG_DATETIME):
+            try:
+                taken = datetime.strptime(str(raw), "%Y:%m:%d %H:%M:%S")
+            except ValueError:
+                pass
+        out.append(Photo(p.stem, p, w, h, taken, _gps(exif), None, "", order))
+    return out
+
+
+def apply_captions(photos: list[Photo], captions_file: Path) -> None:
+    """captions.yaml is `photo_id: caption`, optionally with an `order:` list.
+
+    The user's order is a hint to the planner, not an instruction — the whole
+    premise is that the AI may resequence.
+    """
+    data = yaml.safe_load(captions_file.read_text()) or {}
+    order = data.pop("order", None) if isinstance(data, dict) else None
+    by_id = {p.id: p for p in photos}
+    for pid, caption in (data or {}).items():
+        if pid in by_id:
+            by_id[pid].caption = str(caption or "").strip()
+    if order:
+        rank = {pid: i for i, pid in enumerate(order)}
+        for p in photos:
+            p.upload_order = rank.get(p.id, len(rank) + p.upload_order)
+        photos.sort(key=lambda p: p.upload_order)
+
+
+def annotate_limits(photos: list[Photo], g: Geometry, warn_dpi: float) -> None:
+    """Mark which templates each photo is too small for, at the warn threshold."""
+    slot_sizes: dict[str, float] = {}
+    for spec in templates_lib.REGISTRY.values():
+        if not spec.planner_visible or spec.slot_count == 0:
+            continue
+        rendered = templates_lib.build(spec.name, g, {})
+        slot_sizes[spec.name] = max(
+            (b.rect.w * b.rect.h for b in rendered.slots), default=0.0
+        )
+    for p in photos:
+        avoid = []
+        for name in sorted(slot_sizes, key=lambda n: -slot_sizes[n]):
+            rendered = templates_lib.build(name, g, {})
+            biggest = max(rendered.slots, key=lambda b: b.rect.w * b.rect.h)
+            if effective_dpi(p.width, p.height, biggest.rect) < warn_dpi:
+                avoid.append(name)
+        p.avoid = avoid
+        p.unusable = len(avoid) == len(slot_sizes)
+
+
+def load(photo_dir: Path, captions_file: Path | None, g: Geometry, warn_dpi: float) -> list[Photo]:
+    photos = read_dir(photo_dir)
+    if captions_file and captions_file.exists():
+        apply_captions(photos, captions_file)
+    annotate_limits(photos, g, warn_dpi)
+    return photos

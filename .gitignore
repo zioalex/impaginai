@@ -1,0 +1,25 @@
+# Generated output. Everything here is reproducible from the source and a
+# photo directory, and the PDFs are large — keep them out of history.
+out/
+renders/
+derivatives/
+albums/
+annotations.json
+versions.json
+layout-v*.json
+prompt-plan.txt
+
+# Input photographs are the user's own and are never committed.
+phase0/photos/
+phase1/photos/
+photos/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# OS
+.DS_Store

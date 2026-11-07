@@ -1,0 +1,19 @@
+# One line per photo. This is the only data entry the user does.
+# `order:` is optional and is only a hint — the planner may resequence.
+order: [p001, p002, p003, p004, p005, p006, p007, p008, p009, p010, p011, p012, p013, p014, p015]
+
+p001: Der erste Blick auf die Bucht, kurz nach der Ankunft
+p002: Morgens am Hafen, bevor die Boote auslaufen
+p003: Die Gasse hinter der Kirche
+p004: Mittagslicht auf dem Wasser
+p005: Der alte Feigenbaum im Innenhof
+p006: Wind von Nordwest, die ganze Woche
+p007: Trockenmauern auf dem Weg nach oben
+p008: Salz auf der Haut
+p009: Abendessen draußen, viel zu spät
+p010: Die Kirche von Santa Maria, geschlossen
+p011: Detail einer Tür
+p012: Kacheln, blau und weiß
+p013: Ein kleines Boot, weit draußen
+p014: Muscheln, gesammelt und wieder zurückgelegt
+p015: Letzter Abend, das Licht ging schnell

@@ -1,0 +1,74 @@
+# Saal Digital — Professional Line, layflat binding.
+#
+# VERIFY markers below mean: confirm against the InDesign/PSD template you
+# download from saal-digital.ch → Professional Zone → Photo Books → your format,
+# BEFORE placing the Phase 0 order. Everything here is a considered guess except
+# where noted as CONFIRMED.
+#
+# CONFIRMED from Saal's Professional Zone documentation:
+#   - Bleed is specified per page, so a spread needs the value twice horizontally.
+#   - PDF export must contain NO crop or register marks.
+#   - Cover and inner pages are two separate PDF files.
+#   - Layflat opens 180 deg with no image loss at the centre.
+#   - Special covers (linen, cork, acrylic) cannot be PDF-uploaded. A photo-print
+#     cover CAN. We are ordering a photo-print cover.
+
+lab: saal-digital
+line: professional
+binding: layflat
+colour_space: sRGB          # never CMYK — Chromium emits RGB natively
+crop_marks: false           # CONFIRMED: Saal rejects these
+
+paper:
+  name: FUJIFILM Crystal Archive HD
+  gsm: 368                  # CONFIRMED from product page
+  finish: silk
+
+pages:
+  # "Pages" excludes the cover. A spread is 2 pages.
+  min: 24
+  max: 200
+  increment: 2              # VERIFY — Saal may require 4
+  counts_cover: false       # CONFIRMED
+
+formats:
+  "21x21":
+    page_w_mm: 210
+    page_h_mm: 210
+    bleed_mm: 3             # VERIFY against downloaded template
+    default: true           # Phase 0 test format
+  "30x30":
+    page_w_mm: 300
+    page_h_mm: 300
+    bleed_mm: 3             # matches the 306mm figure in PLAN.md
+  "28x21":
+    page_w_mm: 280
+    page_h_mm: 210
+    bleed_mm: 3             # VERIFY
+
+# Cover is one PDF covering back + spine + front, plus wrap-around margin.
+cover:
+  wrap_mm: 15.0             # VERIFY — material folded around the board
+  board_mm: 2.0             # VERIFY — one board, front and back each
+  leaf_thickness_mm: 0.62   # VERIFY — layflat leaf = 2 printed sheets mounted
+  hinge_mm: 8.0             # VERIFY — no image detail should land in the hinge
+  overhang_mm: 0.0          # VERIFY — cover boards may overhang the block
+  spine_text: true
+
+# Resolution policy applied by the validator at final print size.
+resolution:
+  target_dpi: 300
+  warn_below_dpi: 200
+  block_below_dpi: 150
+
+# Design safety, not a lab rule — how far key content stays inside the trim.
+safety:
+  safe_margin_mm: 5.0
+  # Layflat opens flat, but the crease still catches light and the paper still
+  # bends there, so anything printed across it loses visibility. Project decision:
+  # no photograph spans the fold. Templates that span it are hidden from the
+  # planner and rejected by the validator while this is false.
+  allow_fold_crossing: false
+  # If fold crossing is ever re-enabled, focal points inside this band of the
+  # fold still warn.
+  fold_band_mm: 8.0

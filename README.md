@@ -1,0 +1,99 @@
+# photo_album_maker
+
+A self-hosted AI photo album maker. Point it at a folder of photographs and one
+caption each; it decides the sequencing, pacing, sectioning and page layout, and
+emits a print-ready PDF for a photo lab plus a shareable web album from the same
+source data.
+
+It is not a drag-and-drop editor. The user never positions a box.
+
+`PLAN.md` is the living specification — architecture, constraints, decisions log.
+Read it before changing anything.
+
+## State of the build
+
+| Phase | What it is | State |
+|---|---|---|
+| **0** | Validate the print chain: hand-written layout JSON → Saal-Digital-spec PDFs | code complete, **awaiting the physical test print** |
+| **1** | Core loop, CLI only: annotate → plan → proof → revise, with version history | built, covered by an offline test, not yet run against the real model |
+| 2 | Web frontend (FastAPI + Postgres + RQ behind four screens) | not started |
+| 3 | 300 DPI export path and web album | cover generator and print path already done in Phase 0 |
+| 4 | Multi-language albums, map page, suggested captions | not started |
+
+Phase 0 is deliberately a blocker. The test book has to be ordered, printed and
+measured with a ruler before the template library is worth tuning — a layout
+that scores well in JSON can still look flat on paper.
+
+## Quick start
+
+```bash
+pip install -r requirements.txt
+playwright install chromium
+```
+
+**Phase 0** — render the calibration book:
+
+```bash
+cd phase0
+python tools/make_placeholder_photos.py
+python render.py check --layout examples/layout_test24.json --photos ./photos
+python render.py proof --layout examples/layout_test24.json --photos ./photos --allow-fold
+python render.py cover --layout examples/layout_test24.json --photos ./photos
+```
+
+**Phase 1** — the core loop:
+
+```bash
+cd phase1
+export ANTHROPIC_API_KEY=...
+python album.py annotate --album ./albums/sardinien --photos ./photos
+python album.py plan     --album ./albums/sardinien --photos ./photos --title "Sardinien 2026"
+python album.py proof    --album ./albums/sardinien --photos ./photos
+python album.py revise   --album ./albums/sardinien --photos ./photos --comment "Seite 4 ist überladen"
+python tests/test_loop.py   # offline, no API key, no network
+```
+
+## The three ideas worth knowing
+
+**The model never emits CSS, coordinates or pixel values.** It picks a template
+by name and a normalised focal point. Templates are *data* — functions from page
+geometry to slot rectangles in millimetres — so the renderer and the validator
+read the same numbers and cannot drift apart.
+
+**Vision is paid for once.** An `annotate` pass looks at each photograph a single
+time and caches subject, people, scene, focal point and a strength rating to
+`annotations.json`. Planning and every revision afterwards are text-only, so
+schema retries cost nothing extra.
+
+**Every print constraint is executable.** Bleed, page-count increments, effective
+DPI per slot, spine width, fold crossing — all enforced in `phase0/validate.py`,
+not merely requested in a prompt. Lab specifications live in `phase0/labs/*.yaml`.
+
+## Findings so far
+
+- **Chromium shrink-to-fits the entire document** if any page's content extends
+  past the page box — which the spread canvas does by design. It scales every
+  page uniformly and silently while still reporting the correct PDF page size.
+  Fix: `contain: layout paint size` on `.sheet`. `verify_pdf()` reads the drawn
+  width of full-bleed images back out of the PDF content stream as a regression
+  guard. Do not remove either.
+- **No photograph crosses the fold.** Layflat binding removes the loss of image,
+  but the crease still catches light and bends paper. Fold-spanning templates are
+  withheld from the planner entirely; the validator rejects them. Governed by
+  `allow_fold_crossing` in the lab config, so the calibration book can still
+  print a panorama deliberately and let paper settle the argument.
+- **Every constraint the validator can express must also appear in the prompt**,
+  or every album pays for it with a retry.
+- **Grouping has to be computed, not inferred.** Timestamps and GPS give the
+  moment/place skeleton for free; the annotate pass supplies who is in the frame.
+
+## Before ordering the test book
+
+Everything marked `VERIFY` in `phase0/labs/saal.yaml` is a considered guess —
+especially the cover constants, since the spine is computed from them. Download
+Saal's template for your format and confirm them first. `phase0/README.md` lists
+exactly what to measure when the book arrives.
+
+## Licence
+
+Apache 2.0 — see `LICENSE`.
