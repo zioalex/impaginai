@@ -1,0 +1,118 @@
+/* Album print stylesheet.
+ *
+ * Positioning comes from templates_lib.py as inline millimetre values. This
+ * file owns everything else: type, colour, caption treatment. It is the file
+ * to iterate on after seeing printed output.
+ *
+ * Type direction: a transitional serif (Charter) carries titles and captions,
+ * a humanist sans sets the small utility text — place names, folios, chart
+ * labels. Captions are set small and tracked, sitting on a consistent baseline
+ * below the image rather than floating; the album's only real ornament is the
+ * uppercase tracked eyebrow that names the place. The photographs are the
+ * design. Everything here stays quiet.
+ *
+ * TODO before production: vendor real WOFF2 files into assets/fonts and
+ * reference them with @font-face. System fonts are not reproducible across
+ * a Docker rebuild, and a font substitution silently reflows every caption.
+ */
+
+:root {
+  --font-display: "Charter", "Bitstream Charter", "Source Serif 4", Georgia, serif;
+  --font-caption: "Carlito", "Source Sans 3", "Helvetica Neue", sans-serif;
+  --ink: #141414;
+  --ink-soft: #6e6e6e;
+  --paper: #ffffff;
+  --invert: #ffffff;
+  --invert-soft: rgba(255, 255, 255, 0.72);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-display);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* One .sheet per PDF page. The spread canvas sits inside and is shifted so
+   the correct half shows through.
+ *
+ * `contain` is load-bearing, not a micro-optimisation. The spread canvas is
+ * wider than the page by design, and Chromium's print path responds to any
+ * content extending past the page box by shrink-to-fitting THE WHOLE DOCUMENT
+ * — silently, uniformly, and without changing the PDF page size. Symptom: every
+ * page renders at ~67% with white margins where full bleed should be, which at
+ * the lab is 24 ruined pages. overflow:hidden does not prevent it; containment
+ * does, because it stops descendants contributing to layout size at all.
+ * verify_pdf() in render.py asserts this stays fixed. */
+.sheet {
+  position: relative;
+  overflow: hidden;
+  contain: layout paint size;
+  background: var(--paper);
+  page-break-after: always;
+  break-after: page;
+}
+.sheet:last-child { page-break-after: auto; break-after: auto; }
+
+.canvas { position: absolute; top: 0; }
+.canvas.ink { background: var(--ink); }
+
+.abs { position: absolute; }
+
+img.slot {
+  display: block;
+  object-fit: cover;
+  /* object-position is set inline from the model's focal point */
+}
+
+/* Captions ------------------------------------------------------------- */
+.caption {
+  font-family: var(--font-caption);
+  font-size: 2.6mm;
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+}
+.caption.overlay { color: var(--invert); text-shadow: 0 0 1.2mm rgba(0, 0, 0, 0.45); }
+.caption.right { text-align: right; }
+.caption.center { text-align: center; }
+
+/* Text blocks ---------------------------------------------------------- */
+.tb { font-family: var(--font-display); color: var(--ink); }
+.tb.invert { color: var(--invert); }
+
+.tb.eyebrow {
+  font-family: var(--font-caption);
+  font-size: 2.4mm;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.tb.eyebrow.invert { color: var(--invert-soft); }
+
+.tb.title { font-size: 11mm; line-height: 1.05; letter-spacing: -0.01em; }
+.tb.subtitle { font-size: 4.6mm; line-height: 1.3; color: var(--ink-soft); }
+.tb.subtitle.invert { color: var(--invert-soft); }
+.tb.body { font-size: 3.4mm; line-height: 1.6; }
+
+.chart-label {
+  font-family: var(--font-caption);
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+
+/* Cover ---------------------------------------------------------------- */
+.cover-panel { position: absolute; overflow: hidden; }
+.cover-ink { background: var(--ink); }
+.spine-text {
+  font-family: var(--font-display);
+  color: var(--invert);
+  font-size: 4mm;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  transform-origin: 0 0;
+  transform: rotate(90deg);
+}

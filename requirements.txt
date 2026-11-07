@@ -1,0 +1,10 @@
+# Phase 0
+playwright>=1.44
+pillow>=10.3
+pydantic>=2.7
+pyyaml>=6.0
+pypdf>=4.2
+
+# Phase 1+ (not used yet)
+# anthropic>=0.30
+# fastapi, sqlalchemy, alembic, psycopg[binary], rq, redis
