@@ -26,7 +26,10 @@ Image.MAX_IMAGE_PIXELS = None
 
 _EXIF = {v: k for k, v in ExifTags.TAGS.items()}
 _TAG_DATETIME = _EXIF.get("DateTimeOriginal", 36867)
+_TAG_DATETIME_DIGITIZED = _EXIF.get("DateTimeDigitized", 36868)
 _TAG_GPS = _EXIF.get("GPSInfo", 34853)
+_IFD_EXIF = 34665          # ExifOffset — holds DateTimeOriginal
+_IFD_GPS = 34853           # GPSInfo
 
 
 @dataclass
@@ -80,8 +83,8 @@ def _ratio(v) -> float:
         return 0.0
 
 
-def _gps(exif: dict) -> tuple[float, float] | None:
-    raw = exif.get(_TAG_GPS)
+def _gps(raw: dict) -> tuple[float, float] | None:
+    """`raw` is the GPS IFD itself: {1: ref, 2: (d,m,s), 3: ref, 4: (d,m,s)}."""
     if not raw:
         return None
     def dms(vals, ref, neg):
@@ -103,19 +106,29 @@ def read_dir(photo_dir: Path) -> list[Photo]:
             continue
         with Image.open(p) as im:
             w, h = im.size
+            # DateTimeOriginal and GPS live in their own sub-IFDs, NOT in the
+            # top-level one. Reading only `getexif()` finds the orientation tag
+            # and nothing else, which looks like it works — every photo simply
+            # comes back undated, and the clustering silently degrades to
+            # upload order instead of failing loudly.
+            exif, gps_ifd = {}, {}
             try:
-                exif = dict(im.getexif())
+                top = im.getexif()
+                exif = dict(top)
+                exif.update(top.get_ifd(_IFD_EXIF))
+                gps_ifd = dict(top.get_ifd(_IFD_GPS))
             except Exception:
-                exif = {}
+                pass
             if exif.get(274, 1) in (5, 6, 7, 8):
                 w, h = h, w
         taken = None
-        if raw := exif.get(_TAG_DATETIME):
+        raw = exif.get(_TAG_DATETIME) or exif.get(_TAG_DATETIME_DIGITIZED)
+        if raw:
             try:
-                taken = datetime.strptime(str(raw), "%Y:%m:%d %H:%M:%S")
+                taken = datetime.strptime(str(raw).strip(), "%Y:%m:%d %H:%M:%S")
             except ValueError:
                 pass
-        out.append(Photo(p.stem, p, w, h, taken, _gps(exif), None, "", order))
+        out.append(Photo(p.stem, p, w, h, taken, _gps(gps_ifd), None, "", order))
     return out
 
 
