@@ -7,16 +7,30 @@
     "spread_count": 12
   },
   "sections": [
-    { "id": "s1", "title": "Ankunft", "intro_text": "Erste Tage, viel Licht." },
-    { "id": "s2", "title": "Kalibrierung", "intro_text": "Messseiten." },
-    { "id": "s3", "title": "Detail", "intro_text": "Nahaufnahmen." }
+    {
+      "id": "s1",
+      "title": "Ankunft",
+      "intro_text": "Erste Tage, viel Licht."
+    },
+    {
+      "id": "s2",
+      "title": "Kalibrierung",
+      "intro_text": "Messseiten."
+    },
+    {
+      "id": "s3",
+      "title": "Detail",
+      "intro_text": "Nahaufnahmen."
+    }
   ],
   "spreads": [
     {
       "index": 1,
       "section_id": "s1",
       "template": "text-page",
-      "options": { "side": "right" },
+      "options": {
+        "side": "right"
+      },
       "text": {
         "eyebrow": "Sardinien · 2026",
         "title": "Phase 0 Testbuch",
@@ -32,7 +46,10 @@
       "slots": [
         {
           "photo_id": "p001",
-          "focal": [0.72, 0.4],
+          "focal": [
+            0.72,
+            0.4
+          ],
           "caption": "Panorama über den Falz — Testbild",
           "caption_position": "bottom-right"
         }
@@ -50,8 +67,22 @@
       "section_id": "s1",
       "template": "two-up-equal",
       "slots": [
-        { "photo_id": "p002", "focal": [0.5, 0.35], "caption": "Links, gleiches Gewicht" },
-        { "photo_id": "p003", "focal": [0.5, 0.35], "caption": "Rechts, gleiches Gewicht" }
+        {
+          "photo_id": "p002",
+          "focal": [
+            0.5,
+            0.35
+          ],
+          "caption": "Links, gleiches Gewicht"
+        },
+        {
+          "photo_id": "p003",
+          "focal": [
+            0.5,
+            0.35
+          ],
+          "caption": "Rechts, gleiches Gewicht"
+        }
       ],
       "note": "symmetric pair, tests margin balance across the gutter"
     },
@@ -59,11 +90,16 @@
       "index": 5,
       "section_id": "s1",
       "template": "full-bleed-single",
-      "options": { "side": "right" },
+      "options": {
+        "side": "right"
+      },
       "slots": [
         {
           "photo_id": "p004",
-          "focal": [0.5, 0.45],
+          "focal": [
+            0.5,
+            0.45
+          ],
           "caption": "Vollformat rechts, weiße Seite links",
           "caption_position": "bottom-left"
         }
@@ -74,9 +110,18 @@
       "index": 6,
       "section_id": "s1",
       "template": "single-centered",
-      "options": { "side": "right" },
+      "options": {
+        "side": "right"
+      },
       "slots": [
-        { "photo_id": "p005", "focal": [0.5, 0.5], "caption": "Viel Weißraum, Bildunterschrift auf Grundlinie" }
+        {
+          "photo_id": "p005",
+          "focal": [
+            0.5,
+            0.5
+          ],
+          "caption": "Viel Weißraum, Bildunterschrift auf Grundlinie"
+        }
       ],
       "note": "white space and caption typography"
     },
@@ -90,33 +135,94 @@
       "index": 8,
       "section_id": "s3",
       "template": "two-up-hero",
-      "options": { "side": "left" },
+      "options": {
+        "side": "left"
+      },
       "slots": [
-        { "photo_id": "p006", "focal": [0.5, 0.4] },
-        { "photo_id": "p007", "focal": [0.5, 0.5], "caption": "Kleines Bild neben großem" }
+        {
+          "photo_id": "p006",
+          "focal": [
+            0.5,
+            0.4
+          ]
+        },
+        {
+          "photo_id": "p007",
+          "focal": [
+            0.5,
+            0.5
+          ],
+          "caption": "Kleines Bild neben großem"
+        }
       ],
       "note": "hero left bleeding, inset right"
     },
     {
       "index": 9,
       "section_id": "s3",
-      "template": "three-up-strip",
+      "template": "trio-page",
       "slots": [
-        { "photo_id": "p008", "focal": [0.5, 0.5] },
-        { "photo_id": "p009", "focal": [0.5, 0.5], "caption": "Mittleres Bild liegt im Falz" },
-        { "photo_id": "p010", "focal": [0.5, 0.5] }
+        {
+          "photo_id": "p008",
+          "focal": [
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "photo_id": "p009",
+          "focal": [
+            0.5,
+            0.5
+          ],
+          "caption": "Mittleres Bild liegt im Falz"
+        },
+        {
+          "photo_id": "p010",
+          "focal": [
+            0.5,
+            0.5
+          ]
+        }
       ],
-      "note": "middle image crosses the fold deliberately"
+      "note": "Drei Bilder auf EINER Seite komponiert — prüft Rasterausrichtung und Bundsteg bei mehreren Bildern",
+      "options": {
+        "side": "left"
+      }
     },
     {
       "index": 10,
       "section_id": "s3",
       "template": "grid-four",
       "slots": [
-        { "photo_id": "p011", "focal": [0.5, 0.5] },
-        { "photo_id": "p012", "focal": [0.5, 0.5] },
-        { "photo_id": "p014", "focal": [0.5, 0.5] },
-        { "photo_id": "p015", "focal": [0.5, 0.5] }
+        {
+          "photo_id": "p011",
+          "focal": [
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "photo_id": "p012",
+          "focal": [
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "photo_id": "p014",
+          "focal": [
+            0.5,
+            0.5
+          ]
+        },
+        {
+          "photo_id": "p015",
+          "focal": [
+            0.5,
+            0.5
+          ]
+        }
       ],
       "note": "contact-sheet grid reading across the opening"
     },
@@ -124,9 +230,17 @@
       "index": 11,
       "section_id": "s3",
       "template": "photo-and-text",
-      "options": { "side": "left" },
+      "options": {
+        "side": "left"
+      },
       "slots": [
-        { "photo_id": "p015", "focal": [0.4, 0.5] }
+        {
+          "photo_id": "p015",
+          "focal": [
+            0.4,
+            0.5
+          ]
+        }
       ],
       "text": {
         "eyebrow": "Cala Goloritzé",
@@ -148,7 +262,10 @@
   ],
   "cover": {
     "front_photo_id": "p001",
-    "front_focal": [0.75, 0.45],
+    "front_focal": [
+      0.75,
+      0.45
+    ],
     "title": "Phase 0 Testbuch",
     "subtitle": "Sardinien 2026",
     "spine_title": "Phase 0 Testbuch · 2026",

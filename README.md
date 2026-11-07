@@ -60,6 +60,13 @@ by name and a normalised focal point. Templates are *data* — functions from pa
 geometry to slot rectangles in millimetres — so the renderer and the validator
 read the same numbers and cannot drift apart.
 
+**Pages are composed, not just filled.** A page composition arranges several
+photographs inside one page on a shared 6x6 modular grid, and a spread template
+is a pair of those compositions. Without that layer every template places at
+most one photograph per page, and the book reads as a slideshow with blank
+facing pages. In a composed page the first slot is the feature: largest
+rectangle, only caption.
+
 **Vision is paid for once.** An `annotate` pass looks at each photograph a single
 time and caches subject, people, scene, focal point and a strength rating to
 `annotations.json`. Planning and every revision afterwards are text-only, so

@@ -68,16 +68,41 @@ template name, a photo id, a normalised focal point and a caption.
 
 | Template | Slots | Use |
 |---|---|---|
-| `full-bleed-single` | 1 | hero image, one page |
-| `panorama-spread` | 1 | WITHDRAWN — see the fold rule below |
-| `single-centered` | 1 | image with generous white space + caption |
-| `two-up-equal` | 2 | pair, same weight |
-| `two-up-hero` | 2 | one large, one small |
-| `three-up-strip` | 3 | horizontal sequence: two pictures, fold, one picture |
-| `grid-four` | 4 | detail shots, contact-sheet feel |
+| `full-bleed-single` | 1 | one photograph to the edges, facing page empty |
+| `single-centered` | 1 | one photograph with white space, facing page empty |
+| `duo-page` | 2 | two composed on ONE page (large above wide) |
+| `trio-page` | 3 | three composed on ONE page (wide one over a pair) |
+| `grid-four` | 4 | four in a square grid on ONE page |
+| `two-up-equal` | 2 | one photograph on each page, same weight |
+| `two-up-hero` | 2 | a bleeding photograph facing a smaller one |
+| `hero-and-pair` | 3 | bleeding photograph facing two stacked |
+| `hero-and-trio` | 4 | bleeding photograph facing three composed |
+| `solo-and-pair` | 3 | framed single facing a stepped pair |
+| `column-and-solo` | 4 | tall photograph beside two stacked, facing a single |
+| `mosaic-spread` | 6 | three composed on each page — densest, use sparingly |
 | `photo-and-text` | 1 | half image, half narrative block |
 | `section-divider` | 0 | title page between chapters |
 | `text-page` | 0 | intro or closing text |
+| `panorama-spread` | 1 | WITHDRAWN — see the fold rule below |
+
+## Page composition
+
+The first library had no composition layer: every template placed at most one
+photograph per page, so a "spread template" was only a pair of single-photo
+pages and the book read as a slideshow with blank facing pages.
+
+`phase0/compose.py` supplies the missing level. A **page composition** arranges
+one or more photographs inside a single page on a shared 6x6 modular grid with
+a caption band reserved at the foot. A **spread template is a pair of page
+compositions**, which is what makes real pairings possible — a bleeding hero
+facing a stack of three, a quiet single facing a mosaic — while keeping the
+no-fold rule structural rather than remembered: a composition is built inside
+one page's content area and cannot reach past it.
+
+Slots snap to whole grid cells, so images align across different compositions
+and across the book. In a composed page, slot 0 is the **feature**: the largest
+rectangle and the only caption. Captioning every photograph in a composition
+turns the page into a catalogue entry.
 
 Plus two calibration templates (`test-chart`, `gutter-target`) that exist for
 Phase 0 only and are hidden from the planner via `planner_visible=False`.
@@ -94,8 +119,10 @@ Consequences, all implemented:
 
 - `panorama-spread` is withheld from the planner catalogue entirely — offering a
   template and then rejecting its use only buys a retry.
-- `three-up-strip` was rebuilt as two pictures on the left page and one on the
-  right, with the fold falling in a gap. It still reads as a sequence.
+- `three-up-strip` was replaced outright by the page-composition layer: three
+  photographs now compose within a single page (`trio-page`, or the right-hand
+  page of `hero-and-trio`), so the question of what sits in the fold does not
+  arise.
 - The validator distinguishes *bleeding past the fold* from *spanning it*. A
   single-page full-bleed image runs one bleed past the crease so a mis-trim
   cannot open a white gap; that margin is trimmed into the binding and none of
@@ -240,10 +267,13 @@ GPS, vision-suggested captions the user edits.
   rather than rewinding — history stays append-only.
 - Open template-library item: `two-up-equal` slots are near-square, so 4:5
   portraits crop hard. Do not fix from screen impressions; wait for paper.
-- Anti-clutter rules are in the prompt as counts, not adjectives: most spreads
-  hold one or two photographs, three is a change of pace, four is rare and only
-  for minor detail shots, and never two four-slot spreads within three spreads
-  of each other.
+- Anti-clutter rules are in the prompt as structure, not adjectives: the feature
+  slot is first and carries the only caption, composed pages are for photographs
+  that belong together, weak frames (1-2/5) go in the small rectangles rather
+  than on a page of their own, and `mosaic-spread` is rarely right twice.
+- Adding composition shortened the demo album from 36 pages to 26 for the same
+  21 photographs, by ending the one-photo-per-page default and its blank facing
+  pages.
 
 ## Decisions log
 
