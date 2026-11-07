@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Literal
 
+import compose
 from geometry import Geometry, Rect
 
 Aspect = Literal["landscape", "portrait", "square", "any"]
@@ -58,196 +59,92 @@ class TemplateSpec:
     planner_visible: bool = True   # calibration templates are hidden from the LLM
 
 
-# --- helpers ------------------------------------------------------------
+# --- spread templates = a pair of page compositions ----------------------
+#
+# Every template below names a composition for the left page and one for the
+# right (see compose.py). The slot order the planner fills is left page first,
+# then right, each in reading order, so sequencing survives into print.
+#
+# Nothing crosses the fold. That is structural here, not a rule to remember:
+# a composition is built inside one page's content area and cannot reach past it.
 
-CAPTION_H = 9.0
-CAPTION_GAP = 4.0
-
-
-def _side(options: dict) -> Side:
-    s = options.get("side", "right")
-    return "left" if s == "left" else "right"
-
-
-def _other(side: Side) -> Side:
-    return "right" if side == "left" else "left"
-
-
-def _caption_below(r: Rect, align="left") -> Rect:
-    return Rect(r.x, r.y2 + CAPTION_GAP, r.w, CAPTION_H)
-
-
-def _caption_overlay(g: Geometry, side: Side, where: str) -> Rect:
-    s = g.safe(side)
-    h = CAPTION_H
-    y = s.y if where.startswith("top") else s.y2 - h
-    return Rect(s.x, y, s.w, h)
-
-
-# --- templates ----------------------------------------------------------
-
-def t_full_bleed_single(g: Geometry, o: dict) -> Rendered:
-    side = _side(o)
-    r = g.full_bleed(side)
-    return Rendered(
-        slots=[
+def _page_slots(g: Geometry, side: Side, comp_name: str, aspect_hint=None) -> list[SlotBox]:
+    rects, feature, cap = compose.build_page(g, side, comp_name)
+    out: list[SlotBox] = []
+    for i, r in enumerate(rects):
+        is_feature = (i == feature)
+        bleeds = compose.COMPOSITIONS[comp_name].bleed
+        out.append(
             SlotBox(
                 rect=r,
                 aspect="any",
-                bleeds=True,
-                caption_style="overlay",
-                caption_rect=_caption_overlay(g, side, o.get("caption_position", "bottom-left")),
+                # Only the feature image is captioned. Captioning every photo in
+                # a composed page turns it into a catalogue entry.
+                caption_style=("overlay" if bleeds else ("below" if is_feature else "none")),
+                caption_rect=(None if bleeds else cap),
                 caption_align="left",
+                bleeds=bleeds,
             )
-        ]
-    )
+        )
+    return out
 
 
-def t_panorama_spread(g: Geometry, o: dict) -> Rendered:
-    return Rendered(
-        slots=[
-            SlotBox(
-                rect=g.spread_bleed,
-                aspect="landscape",
-                bleeds=True,
-                caption_style="overlay",
-                caption_rect=_caption_overlay(g, "right", o.get("caption_position", "bottom-right")),
-                caption_align="right",
-            )
-        ]
-    )
-
-
-def t_single_centered(g: Geometry, o: dict) -> Rendered:
-    side = _side(o)
-    c = g.text_column(side)
-    h = c.h - CAPTION_H - CAPTION_GAP
-    r = Rect(c.x, c.y, c.w, h)
-    return Rendered(slots=[SlotBox(r, "any", "below", _caption_below(r))])
-
-
-def t_two_up_equal(g: Geometry, o: dict) -> Rendered:
-    slots = []
-    for side in ("left", "right"):
-        c = g.text_column(side)
-        h = c.h - CAPTION_H - CAPTION_GAP
-        r = Rect(c.x, c.y, c.w, h)
-        slots.append(SlotBox(r, "any", "below", _caption_below(r)))
-    return Rendered(slots=slots)
-
-
-def t_two_up_hero(g: Geometry, o: dict) -> Rendered:
-    hero_side: Side = _side(o)
-    small_side = _other(hero_side)
-    hero = g.full_bleed(hero_side)
-    c = g.text_column(small_side)
-    sw = c.w * 0.66
-    sh = sw * 0.75
-    sx = c.x + (c.w - sw) / 2
-    sy = c.y + (c.h - sh) / 2
-    small = Rect(round(sx, 2), round(sy, 2), round(sw, 2), round(sh, 2))
-    return Rendered(
-        slots=[
-            SlotBox(hero, "any", "none", bleeds=True),
-            SlotBox(small, "any", "below", _caption_below(small)),
-        ]
-    )
-
-
-def t_three_up_strip(g: Geometry, o: dict) -> Rendered:
-    """Three images reading left to right, with the fold falling in a gap.
-
-    The obvious construction — three equal boxes spread evenly across the whole
-    opening — puts the middle image straight through the crease. Instead: two on
-    the left page, one on the right, all on the same baseline and the same
-    height. It still reads as a sequence; nothing is printed into the fold.
-    """
-    left_c = g.text_column("left")
-    right_c = g.text_column("right")
-    gap = 6.0
-    w = (left_c.w - gap) / 2
-    h = w * 0.78
-    y = g.bleed + (g.page_h - h) / 2
-    rects = [
-        Rect(round(left_c.x, 2), round(y, 2), round(w, 2), round(h, 2)),
-        Rect(round(left_c.x + w + gap, 2), round(y, 2), round(w, 2), round(h, 2)),
-        Rect(round(right_c.x, 2), round(y, 2), round(right_c.w, 2), round(h, 2)),
-    ]
-    return Rendered(
-        slots=[
-            SlotBox(rects[0], "landscape", "none"),
-            SlotBox(rects[1], "landscape", "none"),
-            SlotBox(rects[2], "landscape", "below", _caption_below(rects[2])),
-        ]
-    )
-
-
-def t_grid_four(g: Geometry, o: dict) -> Rendered:
-    """A 2x2 grid reading across the whole opening: two cells per page.
-
-    Slot order is reading order — top-left, top-right, bottom-left,
-    bottom-right — so the planner's sequencing survives into the print.
-    """
-    gap = 6.0
-    cells: dict[tuple[int, int], Rect] = {}
-    for col, side in enumerate(("left", "right")):
-        c = g.text_column(side)
-        h = (c.h - gap) / 2
-        for row in range(2):
-            cells[(row, col)] = Rect(
-                round(c.x, 2), round(c.y + row * (h + gap), 2), round(c.w, 2), round(h, 2)
-            )
-    order = [(0, 0), (0, 1), (1, 0), (1, 1)]
-    return Rendered(slots=[SlotBox(cells[k], "any", "none") for k in order])
+def _pair(left: str, right: str):
+    """Build a spread template from two page compositions."""
+    def build(g: Geometry, o: dict) -> Rendered:
+        # `side` flips which page gets which composition, so one template serves
+        # both handednesses and the planner can vary the rhythm.
+        a, b = (left, right) if o.get("side", "left") != "right" else (right, left)
+        slots = _page_slots(g, "left", a) + _page_slots(g, "right", b)
+        texts = []
+        for page_side, name in (("left", a), ("right", b)):
+            if name == "text":
+                c = g.text_column(page_side)
+                texts += [
+                    TextBox(Rect(c.x, round(c.y + c.h * 0.30, 2), c.w, 8), "eyebrow", key="eyebrow"),
+                    TextBox(Rect(c.x, round(c.y + c.h * 0.36, 2), c.w, 34), "title", key="title"),
+                    TextBox(Rect(c.x, round(c.y + c.h * 0.50, 2), c.w, 14), "subtitle", key="subtitle"),
+                    TextBox(Rect(c.x, round(c.y + c.h * 0.60, 2), round(c.w * 0.82, 2), 50), "body", key="body"),
+                ]
+        return Rendered(slots=slots, texts=texts)
+    return build
 
 
 def t_photo_and_text(g: Geometry, o: dict) -> Rendered:
-    photo_side: Side = _side(o)
-    text_side = _other(photo_side)
-    r = g.full_bleed(photo_side)
+    photo_side: Side = "left" if o.get("side", "left") != "right" else "right"
+    text_side: Side = "right" if photo_side == "left" else "left"
     c = g.text_column(text_side)
     body = Rect(c.x, round(c.y + c.h * 0.22, 2), round(c.w * 0.84, 2), round(c.h * 0.6, 2))
     eyebrow = Rect(c.x, round(c.y + c.h * 0.22 - 12, 2), c.w, 6)
     return Rendered(
-        slots=[SlotBox(r, "any", "none", bleeds=True)],
-        texts=[
-            TextBox(eyebrow, "eyebrow", "left", key="eyebrow"),
-            TextBox(body, "body", "left", key="body"),
-        ],
+        slots=_page_slots(g, photo_side, "bleed"),
+        texts=[TextBox(eyebrow, "eyebrow", key="eyebrow"), TextBox(body, "body", key="body")],
     )
 
 
 def t_section_divider(g: Geometry, o: dict) -> Rendered:
-    """Solid ink spread with white type.
-
-    Doubles as a dense-black reproduction test on the Fuji paper: any banding
-    or bronzing shows up here first.
-    """
+    """Solid ink spread with white type. Doubles as a black density test."""
     c = g.text_column("right")
     return Rendered(
         background="ink",
         texts=[
-            TextBox(Rect(c.x, round(c.y + c.h * 0.42, 2), c.w, 8), "eyebrow", "left", key="eyebrow", invert=True),
-            TextBox(Rect(c.x, round(c.y + c.h * 0.48, 2), c.w, 30), "title", "left", key="title", invert=True),
-            TextBox(Rect(c.x, round(c.y + c.h * 0.62, 2), round(c.w * 0.8, 2), 40), "body", "left", key="body", invert=True),
+            TextBox(Rect(c.x, round(c.y + c.h * 0.42, 2), c.w, 8), "eyebrow", key="eyebrow", invert=True),
+            TextBox(Rect(c.x, round(c.y + c.h * 0.48, 2), c.w, 30), "title", key="title", invert=True),
+            TextBox(Rect(c.x, round(c.y + c.h * 0.62, 2), round(c.w * 0.8, 2), 40), "body", key="body", invert=True),
         ],
     )
 
 
-def t_text_page(g: Geometry, o: dict) -> Rendered:
-    side = _side(o)
-    c = g.text_column(side)
-    return Rendered(
-        texts=[
-            TextBox(Rect(c.x, round(c.y + c.h * 0.30, 2), c.w, 8), "eyebrow", "left", key="eyebrow"),
-            TextBox(Rect(c.x, round(c.y + c.h * 0.36, 2), c.w, 34), "title", "left", key="title"),
-            TextBox(Rect(c.x, round(c.y + c.h * 0.50, 2), c.w, 14), "subtitle", "left", key="subtitle"),
-            TextBox(Rect(c.x, round(c.y + c.h * 0.60, 2), round(c.w * 0.82, 2), 50), "body", "left", key="body"),
-        ]
-    )
+def t_panorama_spread(g: Geometry, o: dict) -> Rendered:
+    """Retained for the Phase 0 calibration book only; withheld from the planner
+    unless the lab config permits fold crossing."""
+    s = g.safe("right")
+    return Rendered(slots=[SlotBox(g.spread_bleed, "landscape", "overlay",
+                                   Rect(s.x, s.y2 - 9, s.w, 9), "right", bleeds=True)])
 
 
 # --- Phase 0 calibration templates (never offered to the planner) -------
+
 
 def t_test_chart(g: Geometry, o: dict) -> Rendered:
     return Rendered(chart="test_chart")
@@ -260,21 +157,63 @@ def t_gutter_target(g: Geometry, o: dict) -> Rendered:
 REGISTRY: dict[str, TemplateSpec] = {
     t.name: t
     for t in [
-        TemplateSpec("full-bleed-single", 1, ("any",), "hero image, one page", t_full_bleed_single),
-        TemplateSpec("panorama-spread", 1, ("landscape",), "image across both pages", t_panorama_spread, spans_fold=True),
-        TemplateSpec("single-centered", 1, ("any",), "image with generous white space + caption", t_single_centered),
-        TemplateSpec("two-up-equal", 2, ("any", "any"), "pair, same weight", t_two_up_equal),
-        TemplateSpec("two-up-hero", 2, ("any", "any"), "one large, one small", t_two_up_hero),
-        TemplateSpec("three-up-strip", 3, ("landscape",) * 3, "horizontal sequence, two pictures then one", t_three_up_strip),
-        TemplateSpec("grid-four", 4, ("any",) * 4, "detail shots, contact-sheet feel", t_grid_four),
-        TemplateSpec("photo-and-text", 1, ("any",), "half image, half narrative block", t_photo_and_text),
-        TemplateSpec("section-divider", 0, (), "title page between chapters", t_section_divider),
-        TemplateSpec("text-page", 0, (), "intro or closing text", t_text_page),
+        # --- one photograph, given room -------------------------------
+        TemplateSpec("full-bleed-single", 1, ("any",),
+                     "one photograph to the edges, facing page empty",
+                     _pair("bleed", "blank")),
+        TemplateSpec("single-centered", 1, ("any",),
+                     "one photograph with generous white space, facing page empty",
+                     _pair("blank", "solo")),
+
+        # --- one composed page, facing a quiet one --------------------
+        TemplateSpec("duo-page", 2, ("any", "any"),
+                     "two photographs composed on ONE page (large above wide), facing page empty",
+                     _pair("duo-stack", "blank")),
+        TemplateSpec("trio-page", 3, ("any",) * 3,
+                     "three photographs composed on ONE page (wide one over a pair), facing page empty",
+                     _pair("trio-feature", "blank")),
+        TemplateSpec("grid-four", 4, ("any",) * 4,
+                     "four photographs in a square grid on ONE page, facing page empty",
+                     _pair("quad", "blank")),
+
+        # --- both pages carrying images -------------------------------
+        TemplateSpec("two-up-equal", 2, ("any", "any"),
+                     "one photograph on each page, same weight",
+                     _pair("solo", "solo")),
+        TemplateSpec("two-up-hero", 2, ("any", "any"),
+                     "a bleeding photograph facing a smaller one",
+                     _pair("bleed", "solo-air")),
+        TemplateSpec("hero-and-pair", 3, ("any",) * 3,
+                     "a bleeding photograph facing two stacked on the other page",
+                     _pair("bleed", "duo-stack")),
+        TemplateSpec("hero-and-trio", 4, ("any",) * 4,
+                     "a bleeding photograph facing three composed on the other page",
+                     _pair("bleed", "trio-feature")),
+        TemplateSpec("solo-and-pair", 3, ("any",) * 3,
+                     "one framed photograph facing a stepped pair",
+                     _pair("solo", "duo-offset")),
+        TemplateSpec("column-and-solo", 4, ("any",) * 4,
+                     "a tall photograph beside two stacked, facing a single",
+                     _pair("trio-column", "solo-air")),
+        TemplateSpec("mosaic-spread", 6, ("any",) * 6,
+                     "three composed on each page — the densest layout, use sparingly",
+                     _pair("trio-feature", "trio-feature")),
+
+        # --- text ------------------------------------------------------
+        TemplateSpec("photo-and-text", 1, ("any",),
+                     "a bleeding photograph facing a narrative block", t_photo_and_text),
+        TemplateSpec("section-divider", 0, (),
+                     "title page between chapters", t_section_divider),
+        TemplateSpec("text-page", 0, (),
+                     "intro or closing text", _pair("blank", "text")),
+
+        # --- withheld --------------------------------------------------
+        TemplateSpec("panorama-spread", 1, ("landscape",),
+                     "image across both pages", t_panorama_spread, spans_fold=True),
         TemplateSpec("test-chart", 0, (), "PHASE 0 calibration chart", t_test_chart, planner_visible=False),
         TemplateSpec("gutter-target", 0, (), "PHASE 0 fold alignment target", t_gutter_target, planner_visible=False, spans_fold=True),
     ]
 }
-
 
 def build(name: str, g: Geometry, options: dict | None = None) -> Rendered:
     spec = REGISTRY[name]

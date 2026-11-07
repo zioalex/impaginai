@@ -114,11 +114,24 @@ in `grid-four` or not in the book at all.
 - When a group is small — one or two photographs — do not pad it out to fill a spread. \
 Give it `single-centered` and let it be quiet.
 
-## Do not clutter
+## Composition and clutter
 
-- Most spreads should hold one or two photographs. Three is a change of pace. Four is \
-rare, and only for genuinely minor detail shots.
-- Never place two four-slot spreads within three spreads of each other.
+Templates whose description says "composed on ONE page" arrange several photographs \
+within a single page, on a shared grid. Use them: a book in which every page holds \
+exactly one photograph reads as a slideshow, not a designed album, and it wastes paper \
+on facing pages left blank.
+
+- In a composed page the FIRST photograph you list is the feature — it gets the largest \
+rectangle and the only caption. Put your strongest frame of that group there and the \
+supporting ones after it. Order matters; it is not a list of equals.
+- Composition is for photographs that belong together — the same subject from two \
+angles, a detail beside the thing it came from, three frames of one moment. Unrelated \
+pictures on one page look like a contact sheet.
+- Weak frames (strength 1-2) belong in the small rectangles of a composed page, never \
+on a page of their own.
+- Vary the density. A composed page wants a quiet one facing it or next to it; \
+`mosaic-spread` is the densest layout in the catalogue and rarely right more than once \
+in a book.
 - White space is not waste. It is the only thing that makes the next full-bleed land.
 
 ## How to sequence
