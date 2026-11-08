@@ -143,8 +143,14 @@ python render.py cover --layout ../albums/sardinien/layout-v003.json \
        --photos ~/Pictures/sardinien --out ../albums/sardinien/renders
 ```
 
-Use the highest-numbered `layout-v*.json` in the album directory, or check
-`history` for the version you want. Upload `inner-print.pdf` and `cover.pdf` to
+Use the highest-numbered `layout-v*.json` in the album directory (the editor
+writes one each time it designs), or check `history` for the version you want.
+`layouts/vNNN.json` holds the same content under the version store.
+
+The cover is designed by the planner along with the pages. If `cover` renders
+and tells you the layout has no cover section, that layout predates this and
+needs designing again, or you can add the section by hand — the message shows
+the shape. Upload `inner-print.pdf` and `cover.pdf` to
 the lab as **two separate files**.
 
 **Before ordering anything**, read `phase0/README.md`. The cover constants in
@@ -245,6 +251,10 @@ at wherever you unpacked it.
 ## If something goes wrong
 
 **`can't open file 'album.py'`** — the CLI lives in `phase1/`; `cd phase1` first.
+
+**`ModuleNotFoundError`** — the virtual environment is not activated. Run
+`source .venv/bin/activate` in the shell you are using, or call the interpreter
+directly as `.venv/bin/python`.
 
 **`no photos found`** — `--photos` must point at a directory containing
 `.jpg`, `.jpeg`, `.png`, `.tif` or `.webp` files. HEIC from an iPhone needs
