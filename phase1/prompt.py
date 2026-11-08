@@ -43,6 +43,8 @@ SCHEMA_SKETCH = """{
     "options": {"side": "left"|"right"},
     "note": "one line of your reasoning, shown to the user"
   }],
+  "cover": {"front_photo_id": str, "front_focal": [x, y], "title": str,
+            "subtitle": str|null, "spine_title": str, "back_text": str|null},
   "change_summary": str|null
 }"""
 
@@ -162,7 +164,12 @@ Return one JSON object and nothing else. No prose, no markdown fence.
 {SCHEMA_SKETCH}
 
 `meta.spread_count` must equal the number of spreads. `index` starts at 1 and ascends. \
-Templates with 0 slots take an empty `slots` array and use `text` instead."""
+Templates with 0 slots take an empty `slots` array and use `text` instead.
+
+Always include `cover`. Choose for `front_photo_id` a strong, uncluttered photograph \
+that still reads when white title text sits over its lower half — not the same one you \
+opened the book with. `spine_title` must be short enough for a narrow spine: the title \
+alone, or the title and the year."""
 
 
 def photo_block(photos: list[Photo]) -> str:

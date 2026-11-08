@@ -91,6 +91,9 @@ def good_layout(spread_count: int = 12, summary: str | None = None) -> dict:
         "sections": [{"id": "s1", "title": "Ankunft", "intro_text": None},
                      {"id": "s2", "title": "Der Wind", "intro_text": None}],
         "spreads": spreads,
+        "cover": {"front_photo_id": "p004", "front_focal": [0.5, 0.45],
+                  "title": "Sardinien 2026", "subtitle": "Zehn Tage am Meer",
+                  "spine_title": "Sardinien 2026", "back_text": None},
         "change_summary": summary,
     }
 
@@ -123,7 +126,31 @@ def scripted(*answers: str):
     return complete
 
 
+def ensure_fixtures() -> None:
+    """Generate the photo fixtures if they are not there.
+
+    A test that needs a manual setup step is a test people skip, and on a fresh
+    clone this one died with a bare FileNotFoundError.
+    """
+    import subprocess
+
+    if not PHOTO_DIR.exists() or not any(PHOTO_DIR.glob("*.jpg")):
+        gen = ROOT.parent / "phase0" / "tools" / "make_placeholder_photos.py"
+        print(f"generating fixtures: {gen.name}")
+        subprocess.run([sys.executable, str(gen)], check=True, capture_output=True)
+    demo = ROOT / "demo_photos"
+    if not demo.exists() or not any(demo.glob("*.jpg")):
+        gen = ROOT / "tools" / "make_demo_photos.py"
+        if gen.exists():
+            print(f"generating fixtures: {gen.name}")
+            try:
+                subprocess.run([sys.executable, str(gen)], check=True, capture_output=True)
+            except subprocess.CalledProcessError:
+                print("  (skipped: needs piexif)")
+
+
 def main() -> int:
+    ensure_fixtures()
     lab = R.load_lab(ROOT.parent / "phase0" / "labs" / "saal.yaml")
     g = R.geometry_for(lab, "21x21")
     ph = PH.load(PHOTO_DIR, CAPTIONS, g, lab["resolution"]["warn_below_dpi"])
@@ -288,6 +315,22 @@ def main() -> int:
 
     stamped = OV.stamp_locations(lay, groups, {})
     print(f"location stamping: {stamped} chapter opening(s)")
+
+    # 10. the cover must actually render, not come out blank
+    cov = Layout.model_validate(store.get(2)[1]).cover
+    assert cov and cov.front_photo_id, "planner output carried no cover"
+    argv = ["render.py", "cover", "--layout", str(tmp), "--photos", str(PHOTO_DIR),
+            "--out", str(ALBUM / "renders"), "--format", "21x21"]
+    saved, sys.argv = sys.argv, argv
+    try:
+        rc = R.main()
+    finally:
+        sys.argv = saved
+    cover_pdf = ALBUM / "renders" / "cover.pdf"
+    assert rc == 0 and cover_pdf.exists(), "cover render failed"
+    assert cover_pdf.stat().st_size > 50_000, (
+        f"cover is only {cover_pdf.stat().st_size} bytes — almost certainly blank")
+    print(f"cover: {cover_pdf.stat().st_size / 1e6:.1f} MB")
 
     print("\nALL CHECKS PASSED")
     return 0

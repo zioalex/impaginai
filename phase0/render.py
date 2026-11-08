@@ -482,6 +482,14 @@ def main() -> int:
         ok = verify_pdf(pdf, g.media_w, g.media_h, layout.page_count, bleed_pages)
         return 0 if ok else 1
 
+    if layout.cover is None or not (layout.cover.front_photo_id or layout.cover.title):
+        print("\nrefusing to render a cover: this layout has no `cover` section, so the "
+              "result would be a blank wrap.\nAdd one to the layout JSON, for example:\n"
+              '  "cover": {"front_photo_id": "p001", "front_focal": [0.5, 0.45],\n'
+              '            "title": "Sardinien 2026", "subtitle": "Zehn Tage am Meer",\n'
+              '            "spine_title": "Sardinien 2026"}')
+        return 1
+
     html, info = build_cover_html(layout, g, lab, photo_paths, css)
     pdf = args.out / "cover.pdf"
     render_pdf(html, args.out / "cover.html", pdf)
