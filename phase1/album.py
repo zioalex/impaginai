@@ -33,6 +33,8 @@ from validate import check, load_photos  # noqa: E402
 
 import annotate  # noqa: E402
 import cluster  # noqa: E402
+import geocode  # noqa: E402
+import overrides as OV  # noqa: E402
 import photos as PH  # noqa: E402
 import planner  # noqa: E402
 import prompt as P  # noqa: E402
@@ -50,10 +52,17 @@ def setup(args):
     ph = PH.load(args.photos, captions, g, warn)
     if not ph:
         raise SystemExit(f"no photos found in {args.photos}")
+    # Place names before clustering: the group label carries the location.
+    named = geocode.apply(ph, args.album, offline_db=not getattr(args, "no_geocode", False))
+    ov = OV.Overrides.load(args.album)
+    ph = OV.apply_to_photos(ph, ov)
     groups = cluster.assign(ph, args.gap_hours, args.radius_m)
     anns = annotate.Annotations.load(args.album / "annotations.json")
     annotate.apply(ph, anns)
-    return lab, g, fmt, ph, groups, anns
+    if named:
+        print(f"{named} photo(s) located", end="")
+        print(f", {len(ov.by_id)} with custom settings" if ov.by_id else "")
+    return lab, g, fmt, ph, groups, anns, ov
 
 
 def make_thumbnails(ph, dst: Path, long_edge: int = 1200) -> Path:
@@ -74,7 +83,7 @@ def make_thumbnails(ph, dst: Path, long_edge: int = 1200) -> Path:
 
 
 def do_annotate(args) -> int:
-    lab, g, fmt, ph, groups, _ = setup(args)
+    lab, g, fmt, ph, groups, _, ov = setup(args)
     thumbs = make_thumbnails(ph, args.album / "derivatives" / "proof")
     print(f"looking at {len(ph)} photographs in batches of {annotate.BATCH}...")
     anns, usage = annotate.run(ph, thumbs, args.album / "annotations.json",
@@ -86,7 +95,7 @@ def do_annotate(args) -> int:
 
 
 def do_plan(args) -> int:
-    lab, g, fmt, ph, groups, anns = setup(args)
+    lab, g, fmt, ph, groups, anns, ov = setup(args)
     store = Store(args.album)
     print(f"{len(ph)} photos, {sum(1 for p in ph if p.caption)} captioned, format {fmt}")
     print(f"{len(groups)} moment/place groups:")
@@ -130,15 +139,15 @@ def do_plan(args) -> int:
         complete=planner.anthropic_completer(args.model),
         target_spreads=args.spreads, thumb_dir=thumb_dir, groups=groups,
     )
-    v = store.add(res.layout.model_dump(mode="json", exclude_none=False), parent=None,
-                  change_summary="initial plan")
+    data = finish(res.layout.model_dump(mode="json", exclude_none=False), ov, groups, ph)
+    v = store.add(data, parent=None, change_summary="initial plan")
     print(f"  {res.usage.line()}")
     print(f"  wrote v{v.version_no:03d} — {len(res.layout.spreads)} spreads / {res.layout.page_count} pages")
     return report(res.layout, args, g, lab, groups)
 
 
 def do_revise(args) -> int:
-    lab, g, fmt, ph, groups, _ = setup(args)
+    lab, g, fmt, ph, groups, _, ov = setup(args)
     store = Store(args.album)
     parent, current = store.get(args.from_version)
     print(f"revising v{parent.version_no:03d} (text only, no images)")
@@ -147,12 +156,24 @@ def do_revise(args) -> int:
         language=args.language, complete=planner.anthropic_completer(args.model),
         groups=groups,
     )
-    v = store.add(res.layout.model_dump(mode="json", exclude_none=False),
-                  parent=parent.version_no, user_comment=args.comment,
+    data = finish(res.layout.model_dump(mode="json", exclude_none=False), ov, groups, ph)
+    v = store.add(data, parent=parent.version_no, user_comment=args.comment,
                   change_summary=res.layout.change_summary)
     print(f"  {res.usage.line()}")
     print(f"  wrote v{v.version_no:03d}: {res.layout.change_summary or '(no summary returned)'}")
     return report(res.layout, args, g, lab, groups)
+
+
+def finish(data: dict, ov, groups, photos) -> dict:
+    """Everything the model does not decide: the user's own instructions, and
+    the location stamp. Re-run on every version so an override set once holds."""
+    notes = OV.apply_to_layout(data, ov)
+    stamped = OV.stamp_locations(data, groups, {p.id: p for p in photos})
+    for n in notes:
+        print(f"  override: {n}")
+    if stamped:
+        print(f"  stamped {stamped} chapter opening(s) with place and date")
+    return data
 
 
 def report(layout: Layout, args, g, lab, groups=None) -> int:
@@ -169,7 +190,7 @@ def report(layout: Layout, args, g, lab, groups=None) -> int:
 
 
 def do_proof(args) -> int:
-    lab, g, fmt, _, _, _ = setup(args)
+    lab, g, fmt, _, groups, _, ov = setup(args)
     store = Store(args.album)
     v, data = store.get(args.version)
     layout = Layout.model_validate(data)
@@ -216,6 +237,8 @@ def main() -> int:
                        help="a gap longer than this starts a new moment group")
         p.add_argument("--radius-m", type=float, default=400.0,
                        help="GPS distance that starts a new place group")
+        p.add_argument("--no-geocode", action="store_true",
+                       help="skip place-name lookup entirely")
         p.add_argument("--format", default=None)
         p.add_argument("--language", default="de")
         p.add_argument("--model", default=planner.MODEL)

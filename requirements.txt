@@ -1,10 +1,25 @@
-# Phase 0
-playwright>=1.44
-pillow>=10.3
-pydantic>=2.7
-pyyaml>=6.0
-pypdf>=4.2
+# Pinned so a rebuild produces the same book. Versions verified working
+# together; see OFFLINE.md for installing these without a network.
 
-# Phase 1+ (not used yet)
-# anthropic>=0.30
-# fastapi, sqlalchemy, alembic, psycopg[binary], rq, redis
+# --- rendering and print chain (Phase 0) ---
+playwright==1.63.0
+pillow==12.3.0
+pypdf==6.17.0
+
+# --- schema, config, planning (Phase 1) ---
+pydantic==2.13.5
+PyYAML==6.0.3
+anthropic>=0.40,<1.0          # the ONLY component that needs the internet
+
+# --- web editor (Phase 2) ---
+fastapi==0.162.2
+uvicorn==0.54.0
+
+# --- optional ---
+# Offline place names from GPS. ~8 MB of bundled settlement data, no network,
+# no API key. Without it the album simply has no place names; with it you can
+# still override any name in places.yaml. Pulls in numpy and scipy.
+reverse-geocoder==1.5.1
+
+# Writing EXIF, needed only by the demo photo generator.
+piexif==1.1.3

@@ -264,7 +264,13 @@ model (`phase1/tests/test_loop.py`). What remains is the part that needs real
 output: iterating the template library and the prompt against actual albums, and
 that should wait for the printed test book.
 
-**Phase 2 — web frontend.** The four screens, FastAPI + Postgres + RQ behind them.
+**Phase 2 — the album editor. BUILT.** `phase2/server.py` plus one HTML file.
+Deliberately NOT the originally planned Next.js + Postgres + RQ stack: a build
+step and a database would break the self-hosted, offline requirement for
+conveniences this UI does not need. State lives in the album directory as plain
+YAML and JSON — the same files the CLI reads — so the two are interchangeable.
+Postgres and a queue become worth it only when albums are shared between users,
+which is not a requirement today.
 
 **Phase 3 — print export and web album.** 300 DPI path, resolution validation,
 shareable web album route. (Cover generation moved forward into Phase 0.)
@@ -290,9 +296,38 @@ GPS, vision-suggested captions the user edits.
   slot is first and carries the only caption, composed pages are for photographs
   that belong together, weak frames (1-2/5) go in the small rectangles rather
   than on a page of their own, and `mosaic-spread` is rarely right twice.
+- A treatment on a bleeding photograph is a contradiction: a frame that runs off
+  the paper is trimmed away. `full-page` on a treated photograph therefore means
+  full page inside its margins, and the validator warns on the general case.
+- Caption placement used `crosses_fold` where it needed `spans_fold`, so
+  captions on single-page bleeds were landing on the facing blank page.
 - Adding composition shortened the demo album from 36 pages to 26 for the same
   21 photographs, by ending the one-photo-per-page default and its blank facing
   pages.
+
+## Capabilities added after the first demo
+
+**Place names, offline.** `phase1/geocode.py` resolves GPS without a network or
+an API key, using `reverse_geocoder`'s bundled settlement database. The user's
+own `places.yaml` outranks it, because a geocoder returns the nearest
+administrative settlement and that is frequently not what a person calls the
+place. Results cache to `places_cache.json` so runs are repeatable. The place
+and date are stamped on each chapter opening by the system — once per group,
+guaranteed, not left to the model to remember.
+
+**Chronological order** is now stated in the prompt and checked in the
+validator, which reports every pair of photographs running backwards in time.
+
+**Per-photo overrides** (`phase1/overrides.py`). The user's channel that does
+not go through the model: description, size (auto/full-page/large/small), edge
+treatment, exclude. Applied AFTER planning and re-applied to every later
+version, so an instruction given once holds. `full-page` is structural — it
+pulls the photograph out of its spread, downgrades that spread to a template
+with one fewer slot, and inserts a full-bleed spread immediately after.
+
+**Size capability is measured per photograph** against the real slot
+rectangles, so the editor can strike out "Full page" on a photograph that lacks
+the pixels and say why, instead of failing at export.
 
 ## Decisions log
 

@@ -107,8 +107,8 @@ are cheap. If revisions stop feeling cheap, something has turned vision back on.
 
 ## Not done yet
 
-- Reverse geocoding of GPS to place names. The planner reads `place` from the
-  photo line and it is currently empty. Any geocoder needs network access the
-  homelab container does not have by default; plan for a cached lookup table.
-- `captions.yaml` order is honoured as a hint only, as specified.
-- HEIC needs `pillow-heif` if the source photos come off an iPhone.
+- HEIC needs `pillow-heif` if the source photographs come off an iPhone.
+- `who` in the annotations is a per-batch description ("two children"), not
+  identity recognition, so it will not reliably link one person across an album
+  shot over ten days. Face embeddings computed locally, or letting the user tag
+  people in the editor, are the honest options.

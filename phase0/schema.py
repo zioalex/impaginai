@@ -44,6 +44,9 @@ class Slot(BaseModel):
     focal: tuple[float, float] = (0.5, 0.5)
     caption: str | None = None
     caption_position: CaptionPosition = "bottom-left"
+    # Set by the user through overrides.yaml, never by the planner. The model
+    # is not asked for visual treatments: it cannot see the result.
+    treatment: Literal["none", "frame", "rounded", "vignette", "soft-edge"] = "none"
 
     @field_validator("focal")
     @classmethod
