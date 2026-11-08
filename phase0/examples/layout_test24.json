@@ -251,13 +251,13 @@
     {
       "index": 12,
       "section_id": "s3",
-      "template": "section-divider",
+      "template": "section-divider-plain",
       "text": {
         "eyebrow": "Kapitel drei",
         "title": "Detail",
         "body": "Volltonschwarz über die ganze Doppelseite — prüft Schwarzdichte, Banding und weiße Schrift auf dunklem Grund."
       },
-      "note": "solid ink spread, doubles as a black density test"
+      "note": "Volltonschwarz über die ganze Doppelseite — prüft Schwarzdichte, Banding und weiße Schrift. Hier bewusst die Variante ohne Bild."
     }
   ],
   "cover": {

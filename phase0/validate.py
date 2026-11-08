@@ -75,6 +75,8 @@ class Report:
     issues: list[Issue]
     min_dpi: float
     page_count: int
+    empty_pages: list[int] = None       # pages with no photograph at all
+    bare_pages: list[int] = None        # pages with neither photograph nor text
 
     @property
     def blocking(self) -> bool:
@@ -85,11 +87,17 @@ class Report:
             for i in self.issues:
                 if i.level == level:
                     print(i)
+        empty = self.empty_pages or []
+        bare = self.bare_pages or []
+        pct = 100 * len(empty) / self.page_count if self.page_count else 0
         print(
             f"\n{self.page_count} pages · lowest effective resolution "
-            f"{self.min_dpi:.0f} DPI · "
+            f"{self.min_dpi:.0f} DPI · {len(empty)} page(s) without a photograph "
+            f"({pct:.0f}%), {len(bare)} carrying nothing at all · "
             + ("BLOCKED" if self.blocking else "ready for export")
         )
+        if bare:
+            print(f"  pages carrying nothing: {bare}")
 
 
 def check(
@@ -172,6 +180,39 @@ def check(
         if spec.slot_count == 0 and not (rendered.texts or rendered.chart):
             issues.append(Issue("info", "empty", where, "no slots and no text"))
 
+    # --- page density ---------------------------------------------------
+    # A page that carries no photograph is a design choice; a book made mostly
+    # of them is a slideshow with the lights off. Measured rather than eyeballed,
+    # because the cost only becomes obvious once it is printed and paid for.
+    has_photo: set[int] = set()
+    has_text: set[int] = set()
+    page_no = 0
+    for sp in layout.spreads:
+        rendered = templates_lib.build(sp.template, g, sp.options)
+        text = sp.text
+        for side in ("left", "right"):
+            page_no += 1
+            window = g.page_window(side)
+            for slot, box in zip(sp.slots, rendered.slots):
+                if slot.photo_id in photos and box.rect.intersects(window):
+                    has_photo.add(page_no)
+                    break
+            if rendered.chart:
+                # Calibration pages carry rulers and tone targets, not slots.
+                has_text.add(page_no)
+                continue
+            for tb in rendered.texts:
+                if tb.rect.intersects(window) and text and getattr(text, tb.key, None):
+                    has_text.add(page_no)
+                    break
+    all_pages = set(range(1, page_no + 1))
+    empty = sorted(all_pages - has_photo)
+    bare = sorted(all_pages - has_photo - has_text)
+    if pc and len(empty) / pc > 0.30:
+        issues.append(Issue("warning", "density", "book", f"{len(empty)} of {pc} pages carry no photograph ({100 * len(empty) / pc:.0f}%) — the album is mostly empty paper"))
+    if pc and len(bare) / pc > 0.15:
+        issues.append(Issue("warning", "density", "book", f"{len(bare)} of {pc} pages carry neither photograph nor text: {bare}"))
+
     if min_dpi_seen == float("inf"):
         min_dpi_seen = 0.0
-    return Report(issues, min_dpi_seen, pc)
+    return Report(issues, min_dpi_seen, pc, empty, bare)

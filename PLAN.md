@@ -81,8 +81,10 @@ template name, a photo id, a normalised focal point and a caption.
 | `column-and-solo` | 4 | tall photograph beside two stacked, facing a single |
 | `mosaic-spread` | 6 | three composed on each page — densest, use sparingly |
 | `photo-and-text` | 1 | half image, half narrative block |
-| `section-divider` | 0 | title page between chapters |
-| `text-page` | 0 | intro or closing text |
+| `section-divider` | 1 | chapter title on black facing the chapter's opening photograph |
+| `title-page` | 1 | book title facing its opening photograph |
+| `section-divider-plain` | 0 | chapter title alone on black — costs two empty pages |
+| `text-page` | 0 | text alone, facing page empty — costs two empty pages |
 | `panorama-spread` | 1 | WITHDRAWN — see the fold rule below |
 
 ## Page composition
@@ -103,6 +105,23 @@ Slots snap to whole grid cells, so images align across different compositions
 and across the book. In a composed page, slot 0 is the **feature**: the largest
 rectangle and the only caption. Captioning every photograph in a composition
 turns the page into a catalogue entry.
+
+### Empty pages are a budget, not a default
+
+Adding composition was not enough on its own: the first composed demo still had
+six pages carrying nothing — three solid-black dividers holding three words
+each, and three blank facing pages from one-slot templates. Roughly a quarter
+of the book was paper the reader pays for and never looks at.
+
+Two changes. Chapter titles and the book title now **face the opening
+photograph** (`section-divider`, `title-page`) instead of spending a spread on
+a few words; the deliberate full stop still exists as `section-divider-plain`
+and `text-page`, and their descriptions say in capitals what they cost. And
+`validate.py` now counts pages carrying no photograph and pages carrying
+nothing at all, printing both on every run and warning past 30% and 15%. The
+prompt gives the planner the same budget: about one page in six.
+
+On the demo this went from 6 empty pages in 26 to 2 in 24.
 
 Plus two calibration templates (`test-chart`, `gutter-target`) that exist for
 Phase 0 only and are hidden from the planner via `planner_visible=False`.

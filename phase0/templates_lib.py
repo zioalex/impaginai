@@ -122,17 +122,38 @@ def t_photo_and_text(g: Geometry, o: dict) -> Rendered:
     )
 
 
-def t_section_divider(g: Geometry, o: dict) -> Rendered:
-    """Solid ink spread with white type. Doubles as a black density test."""
-    c = g.text_column("right")
-    return Rendered(
-        background="ink",
-        texts=[
-            TextBox(Rect(c.x, round(c.y + c.h * 0.42, 2), c.w, 8), "eyebrow", key="eyebrow", invert=True),
-            TextBox(Rect(c.x, round(c.y + c.h * 0.48, 2), c.w, 30), "title", key="title", invert=True),
-            TextBox(Rect(c.x, round(c.y + c.h * 0.62, 2), round(c.w * 0.8, 2), 40), "body", key="body", invert=True),
-        ],
-    )
+def _title_texts(g: Geometry, side: Side, invert: bool) -> list[TextBox]:
+    c = g.text_column(side)
+    return [
+        TextBox(Rect(c.x, round(c.y + c.h * 0.42, 2), c.w, 8), "eyebrow", key="eyebrow", invert=invert),
+        TextBox(Rect(c.x, round(c.y + c.h * 0.48, 2), c.w, 30), "title", key="title", invert=invert),
+        TextBox(Rect(c.x, round(c.y + c.h * 0.62, 2), round(c.w * 0.8, 2), 40), "body", key="body", invert=invert),
+    ]
+
+
+def _text_and_photo(ink: bool):
+    """A text page facing a bleeding photograph.
+
+    The default for chapter openings and for the title. A divider that spends a
+    whole spread on three words leaves two pages carrying nothing; pairing the
+    text with the chapter's opening image costs no extra paper and gives the
+    reader something to look at while being told where they are.
+    """
+    def build(g: Geometry, o: dict) -> Rendered:
+        text_side: Side = "right" if o.get("side", "left") == "right" else "left"
+        photo_side: Side = "left" if text_side == "right" else "right"
+        return Rendered(
+            slots=_page_slots(g, photo_side, "bleed"),
+            texts=_title_texts(g, text_side, ink),
+            background=("ink-" + text_side) if ink else "paper",
+        )
+    return build
+
+
+def t_section_divider_plain(g: Geometry, o: dict) -> Rendered:
+    """Solid ink spread, no photograph. A deliberate full stop, and the black
+    density test in the calibration book."""
+    return Rendered(background="ink", texts=_title_texts(g, "right", True))
 
 
 def t_panorama_spread(g: Geometry, o: dict) -> Rendered:
@@ -159,21 +180,21 @@ REGISTRY: dict[str, TemplateSpec] = {
     for t in [
         # --- one photograph, given room -------------------------------
         TemplateSpec("full-bleed-single", 1, ("any",),
-                     "one photograph to the edges, facing page empty",
+                     "one photograph to the edges, FACING PAGE LEFT EMPTY",
                      _pair("bleed", "blank")),
         TemplateSpec("single-centered", 1, ("any",),
-                     "one photograph with generous white space, facing page empty",
+                     "one photograph with white space, FACING PAGE LEFT EMPTY",
                      _pair("blank", "solo")),
 
         # --- one composed page, facing a quiet one --------------------
         TemplateSpec("duo-page", 2, ("any", "any"),
-                     "two photographs composed on ONE page (large above wide), facing page empty",
+                     "two photographs composed on ONE page (large above wide), FACING PAGE LEFT EMPTY",
                      _pair("duo-stack", "blank")),
         TemplateSpec("trio-page", 3, ("any",) * 3,
-                     "three photographs composed on ONE page (wide one over a pair), facing page empty",
+                     "three photographs composed on ONE page (wide one over a pair), FACING PAGE LEFT EMPTY",
                      _pair("trio-feature", "blank")),
         TemplateSpec("grid-four", 4, ("any",) * 4,
-                     "four photographs in a square grid on ONE page, facing page empty",
+                     "four photographs in a square grid on ONE page, FACING PAGE LEFT EMPTY",
                      _pair("quad", "blank")),
 
         # --- both pages carrying images -------------------------------
@@ -202,10 +223,19 @@ REGISTRY: dict[str, TemplateSpec] = {
         # --- text ------------------------------------------------------
         TemplateSpec("photo-and-text", 1, ("any",),
                      "a bleeding photograph facing a narrative block", t_photo_and_text),
-        TemplateSpec("section-divider", 0, (),
-                     "title page between chapters", t_section_divider),
+        TemplateSpec("section-divider", 1, ("any",),
+                     "chapter title on black facing the chapter's opening photograph",
+                     _text_and_photo(ink=True)),
+        TemplateSpec("title-page", 1, ("any",),
+                     "the book's title facing its opening photograph",
+                     _text_and_photo(ink=False)),
+        TemplateSpec("section-divider-plain", 0, (),
+                     "chapter title alone on black, both pages — a deliberate full stop, "
+                     "COSTS TWO PAGES carrying no photograph",
+                     t_section_divider_plain),
         TemplateSpec("text-page", 0, (),
-                     "intro or closing text", _pair("blank", "text")),
+                     "text alone, facing page empty — COSTS TWO PAGES carrying no photograph",
+                     _pair("blank", "text")),
 
         # --- withheld --------------------------------------------------
         TemplateSpec("panorama-spread", 1, ("landscape",),

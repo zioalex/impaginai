@@ -34,14 +34,15 @@ ALBUM = Path("/tmp/album_test")
 
 def good_layout(spread_count: int = 12, summary: str | None = None) -> dict:
     spreads = [
-        {"index": 1, "section_id": "s1", "template": "text-page", "slots": [],
+        {"index": 1, "section_id": "s1", "template": "title-page",
+         "slots": [{"photo_id": "p001", "focal": [0.6, 0.45], "caption": None, "caption_position": "none"}],
          "text": {"eyebrow": "Sardinien · 2026", "title": "Sardinien 2026",
                   "subtitle": "Zehn Tage am Meer", "body": "Zehn Tage, ein Auto, kein Plan."},
-         "options": {"side": "right"}, "note": "title page"},
-        {"index": 2, "section_id": "s1", "template": "full-bleed-single",
-         "slots": [{"photo_id": "p001", "focal": [0.72, 0.42],
-                    "caption": None, "caption_position": "none"}],
-         "options": {"side": "right"}, "note": "opening image, sets the tone"},
+         "note": "title facing the opening photograph"},
+        {"index": 2, "section_id": "s1", "template": "two-up-hero",
+         "slots": [{"photo_id": "p015", "focal": [0.5, 0.45], "caption": None, "caption_position": "none"},
+                   {"photo_id": "p005", "focal": [0.5, 0.4], "caption": "Der alte Feigenbaum", "caption_position": "below"}],
+         "options": {"side": "left"}, "note": "bleeding hero facing a smaller frame"},
         {"index": 3, "section_id": "s1", "template": "two-up-equal",
          "slots": [{"photo_id": "p002", "focal": [0.5, 0.35], "caption": "Morgens am Hafen", "caption_position": "below"},
                    {"photo_id": "p003", "focal": [0.5, 0.4], "caption": "Die Gasse hinter der Kirche", "caption_position": "below"}],
@@ -49,9 +50,10 @@ def good_layout(spread_count: int = 12, summary: str | None = None) -> dict:
         {"index": 4, "section_id": "s1", "template": "single-centered",
          "slots": [{"photo_id": "p005", "focal": [0.5, 0.5], "caption": "Der alte Feigenbaum", "caption_position": "below"}],
          "options": {"side": "right"}, "note": "the book breathes"},
-        {"index": 5, "section_id": "s2", "template": "section-divider", "slots": [],
+        {"index": 5, "section_id": "s2", "template": "section-divider",
+         "slots": [{"photo_id": "p006", "focal": [0.5, 0.4], "caption": None, "caption_position": "none"}],
          "text": {"eyebrow": "Kapitel zwei", "title": "Der Wind", "body": "Vier Tage Nordwest."},
-         "note": "chapter break"},
+         "note": "chapter title on black facing the chapter's opening image"},
         {"index": 6, "section_id": "s2", "template": "hero-and-trio",
          "slots": [{"photo_id": "p008", "focal": [0.5, 0.5], "caption": None, "caption_position": "none"},
                    {"photo_id": "p009", "focal": [0.35, 0.5], "caption": "Abendessen draußen", "caption_position": "below"},
@@ -81,7 +83,7 @@ def good_layout(spread_count: int = 12, summary: str | None = None) -> dict:
          "options": {"side": "right"}, "note": "quiet page before the end"},
         {"index": 12, "section_id": "s2", "template": "text-page", "slots": [],
          "text": {"eyebrow": "Zum Schluss", "title": "Zurück", "body": "Das Licht ging schnell."},
-         "options": {"side": "left"}, "note": "closing text"},
+         "options": {"side": "left"}, "note": "closing text — the one deliberate pause"},
     ][:spread_count]
     return {
         "meta": {"title": "Sardinien 2026", "subtitle": "Zehn Tage am Meer",
