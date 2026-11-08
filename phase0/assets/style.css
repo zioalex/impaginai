@@ -68,6 +68,29 @@ img.slot {
   /* object-position is set inline from the model's focal point */
 }
 
+/* Per-photo treatments -------------------------------------------------
+ * Chosen by the user, not the planner. Each is deliberately restrained: a
+ * photo album is not a scrapbook, and anything heavier than these reads as
+ * decoration applied to pictures rather than a designed page. All are safe on
+ * a bleeding image because they inset rather than extend.
+ */
+img.slot.t-frame {
+  border: 1.2mm solid #ffffff;
+  outline: 0.25mm solid rgba(0, 0, 0, 0.18);
+  outline-offset: -1.45mm;
+}
+img.slot.t-rounded { border-radius: 3mm; }
+img.slot.t-vignette {
+  /* A printed vignette must be baked into the image box, not a CSS shadow —
+     shadows outside the element would be trimmed away at the page edge. */
+  -webkit-mask-image: radial-gradient(ellipse at center, #000 58%, rgba(0,0,0,0.82) 100%);
+  mask-image: radial-gradient(ellipse at center, #000 58%, rgba(0,0,0,0.82) 100%);
+}
+img.slot.t-soft-edge {
+  -webkit-mask-image: radial-gradient(ellipse at center, #000 70%, transparent 99%);
+  mask-image: radial-gradient(ellipse at center, #000 70%, transparent 99%);
+}
+
 /* Captions ------------------------------------------------------------- */
 .caption {
   font-family: var(--font-caption);

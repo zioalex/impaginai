@@ -23,3 +23,5 @@ venv/
 
 # OS
 .DS_Store
+demo_photos/
+places_cache.json

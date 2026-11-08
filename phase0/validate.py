@@ -8,6 +8,7 @@ actually stops a book going to the lab at 140 DPI.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from PIL import Image
@@ -39,6 +40,7 @@ class PhotoInfo:
     path: Path
     width: int
     height: int
+    taken_at: object = None     # datetime | None, for the chronology check
 
     @property
     def orientation(self) -> str:
@@ -57,16 +59,22 @@ def load_photos(photo_dir: Path) -> dict[str, PhotoInfo]:
     for p in sorted(photo_dir.iterdir()):
         if p.suffix.lower() not in exts:
             continue
+        taken = None
         with Image.open(p) as im:
             w, h = im.size
             # EXIF orientation 5-8 means the stored buffer is rotated.
             try:
-                orient = im.getexif().get(274, 1)
+                ex = im.getexif()
+                orient = ex.get(274, 1)
+                # DateTimeOriginal lives in the Exif sub-IFD, not the top level.
+                raw = ex.get_ifd(34665).get(36867)
+                if raw:
+                    taken = datetime.strptime(str(raw).strip(), "%Y:%m:%d %H:%M:%S")
             except Exception:
                 orient = 1
             if orient in (5, 6, 7, 8):
                 w, h = h, w
-        out[p.stem] = PhotoInfo(p.stem, p, w, h)
+        out[p.stem] = PhotoInfo(p.stem, p, w, h, taken)
     return out
 
 
@@ -162,6 +170,9 @@ def check(
                     if abs(focal_x_mm - g.fold_x) < g.fold_band:
                         issues.append(Issue("warning", "fold", slot_where, f"focal point sits {abs(focal_x_mm - g.fold_x):.1f}mm from the fold"))
 
+            if getattr(slot, "treatment", "none") != "none" and box.bleeds:
+                issues.append(Issue("warning", "treatment", slot_where, f"{photo.id} has a '{slot.treatment}' treatment but bleeds off the page — the effect will be trimmed away"))
+
             if box.caption_style == "overlay" and slot.caption:
                 issues.append(Issue("info", "caption", slot_where, "caption overlays the photo; check legibility on the proof"))
 
@@ -179,6 +190,24 @@ def check(
 
         if spec.slot_count == 0 and not (rendered.texts or rendered.chart):
             issues.append(Issue("info", "empty", where, "no slots and no text"))
+
+    # --- chronological order ---------------------------------------------
+    # A travel album runs forward in time unless there is a reason not to.
+    # The planner is told this; here it is checked, because an album that
+    # jumps back and forth reads as shuffled rather than designed.
+    seq = []
+    for sp in layout.spreads:
+        for slot in sp.slots:
+            info = photos.get(slot.photo_id)
+            if info is not None and getattr(info, "taken_at", None):
+                seq.append((sp.index, slot.photo_id, info.taken_at))
+    inversions = [
+        (a, b) for (si, a, ta), (sj, b, tb) in zip(seq, seq[1:]) if tb < ta
+    ]
+    if inversions:
+        shown = ", ".join(f"{a} before {b}" for a, b in inversions[:4])
+        more = f" (+{len(inversions) - 4} more)" if len(inversions) > 4 else ""
+        issues.append(Issue("warning", "chronology", "book", f"{len(inversions)} photo(s) run backwards in time: {shown}{more}"))
 
     # --- page density ---------------------------------------------------
     # A page that carries no photograph is a design choice; a book made mostly

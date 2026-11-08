@@ -241,6 +241,54 @@ def main() -> int:
     finally:
         sys.argv = saved
     assert rc == 0, "proof render failed"
+    # 9. the offline capabilities: geocoding, overrides, location stamping
+    import geocode, overrides as OV
+    alb = ALBUM / "ovtest"
+    alb.mkdir(parents=True, exist_ok=True)
+    (alb / "places.yaml").write_text(
+        "- name: Testbucht\n  lat: 40.1150\n  lon: 9.6900\n  radius_m: 3000\n")
+    demo = ROOT / "demo_photos"
+    if demo.exists():
+        dph = PH.load(demo, ROOT / "examples" / "demo_captions.yaml", g, 200, 150)
+        named = geocode.apply(dph, alb)
+        assert named, "no photo was located"
+        assert any(p.place == "Testbucht" for p in dph), "places.yaml did not win over the database"
+        dg = cluster.assign(dph)
+        assert all(x.place for x in dg), "a group has no place"
+        assert all(x.date_label for x in dg), "a group has no date"
+        print(f"\ngeocoding: {named} located, {len(dg)} groups, places {[x.place for x in dg]}")
+
+        small = next(p for p in dph if p.id == "p016")
+        assert small.can["full-page"] == "no" and small.can["small"] == "ok", \
+            "size capability not computed"
+        print(f"size guard: p016 full-page={small.can['full-page']} small={small.can['small']}")
+
+    ov = OV.Overrides(path=alb / "overrides.yaml")
+    ov.set("p009", size="full-page"); ov.set("p010", exclude=True)
+    ov.set("p008", treatment="frame", description="Eine Tür")
+    ov.save()
+    assert OV.Overrides.load(alb).get("p009").size == "full-page", "overrides did not round-trip"
+
+    lay = good_layout()
+    before = len(lay["spreads"])
+    notes = OV.apply_to_layout(lay, ov)
+    assert notes, "overrides produced no changes"
+    placed = [s["photo_id"] for sp in lay["spreads"] for s in sp.get("slots", [])]
+    assert "p010" not in placed, "excluded photo still present"
+    full = [sp for sp in lay["spreads"]
+            if sp["template"] == "full-bleed-single"
+            and any(s["photo_id"] == "p009" for s in sp.get("slots", []))]
+    assert full, "full-page override did not create its own spread"
+    assert len(lay["spreads"]) >= before, "spread lost"
+    treated = [s for sp in lay["spreads"] for s in sp.get("slots", [])
+               if s["photo_id"] == "p008"]
+    assert treated and treated[0]["treatment"] == "frame", "treatment not applied"
+    assert treated[0]["caption"] == "Eine Tür", "description did not become the caption"
+    print(f"overrides: {len(notes)} change(s) applied -> {'; '.join(notes)}")
+
+    stamped = OV.stamp_locations(lay, groups, {})
+    print(f"location stamping: {stamped} chapter opening(s)")
+
     print("\nALL CHECKS PASSED")
     return 0
 

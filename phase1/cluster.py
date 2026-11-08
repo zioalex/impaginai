@@ -29,6 +29,8 @@ class Group:
     id: str
     label: str
     photo_ids: list[str]
+    place: str | None = None
+    date_label: str | None = None
 
 
 def haversine_m(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -59,7 +61,10 @@ def assign(photos: list[Photo], gap_hours: float = 4.0, radius_m: float = 400.0)
         if not current:
             return
         gid = f"g{len(groups) + 1}"
-        groups.append(Group(gid, describe(current), [p.id for p in current]))
+        groups.append(
+            Group(gid, describe(current), [p.id for p in current],
+                  place=dominant_place(current), date_label=date_range(current))
+        )
         for p in current:
             p.group = gid
 
@@ -81,19 +86,31 @@ def assign(photos: list[Photo], gap_hours: float = 4.0, radius_m: float = 400.0)
     return groups
 
 
+def dominant_place(members: list[Photo]) -> str | None:
+    """The place most of the group was shot in — the one the album will print."""
+    places = [p.place for p in members if p.place]
+    return max(set(places), key=places.count) if places else None
+
+
+def date_range(members: list[Photo]) -> str | None:
+    times = [p.taken_at for p in members if p.taken_at]
+    if not times:
+        return None
+    lo, hi = min(times), max(times)
+    if lo.date() == hi.date():
+        return lo.strftime("%-d %B %Y")
+    if (lo.year, lo.month) == (hi.year, hi.month):
+        return f"{lo.strftime('%-d')}–{hi.strftime('%-d %B %Y')}"
+    return f"{lo.strftime('%-d %b')} – {hi.strftime('%-d %b %Y')}"
+
+
 def describe(members: list[Photo]) -> str:
     """A short human label so the group means something in the prompt."""
-    places = [p.place for p in members if p.place]
-    times = [p.taken_at for p in members if p.taken_at]
     bits = []
-    if places:
-        bits.append(max(set(places), key=places.count))
-    if times:
-        lo, hi = min(times), max(times)
-        bits.append(
-            lo.strftime("%d %b %H:%M")
-            + (f"–{hi.strftime('%H:%M')}" if lo.date() == hi.date() else f" – {hi.strftime('%d %b')}")
-        )
+    if (pl := dominant_place(members)):
+        bits.append(pl)
+    if (dr := date_range(members)):
+        bits.append(dr)
     bits.append(f"{len(members)} photo{'s' if len(members) > 1 else ''}")
     return ", ".join(bits)
 

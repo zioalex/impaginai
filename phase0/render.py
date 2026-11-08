@@ -159,8 +159,14 @@ def rect_style(r: Rect) -> str:
 
 
 def overlay_rect(g: Geometry, box, position: str) -> Rect:
-    """Caption laid over a bleeding image, kept inside the safe area."""
-    if g.crosses_fold(box.rect):
+    """Caption laid over a bleeding image, kept inside the safe area.
+
+    The test must be spans_fold, not crosses_fold: a single-page bleed runs one
+    bleed PAST the crease by design, so crosses_fold is true for it and the
+    caption was being placed on the facing page — which for a one-slot template
+    is blank paper.
+    """
+    if g.spans_fold(box.rect):
         side = "left" if position.endswith("left") else "right"
     else:
         side = "left" if box.rect.x2 <= g.fold_x + g.bleed else "right"
@@ -183,8 +189,10 @@ def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window:
         if src is None:
             continue
         fx, fy = slot.focal
+        treat = getattr(slot, "treatment", "none")
+        cls = "slot abs" + (f" t-{treat}" if treat and treat != "none" else "")
         parts.append(
-            f'<img class="slot abs" src="{src.as_posix()}" '
+            f'<img class="{cls}" src="{src.as_posix()}" '
             f'style="{rect_style(box.rect)}object-position:{fx * 100:.1f}% {fy * 100:.1f}%;">'
         )
         if slot.caption and box.caption_style != "none" and slot.caption_position != "none":

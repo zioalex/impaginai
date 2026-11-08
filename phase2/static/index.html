@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Album editor</title>
+<style>
+/* Everything inline and self-hosted: no CDN, no fonts to fetch, works with the
+   network unplugged. System font stack for the same reason. */
+:root{
+  --bg:#f6f5f3; --panel:#fff; --ink:#1a1a1a; --soft:#6b6b6b; --line:#e2e0dc;
+  --accent:#1f5f4a; --accent-soft:#e8f0ec; --warn:#8a5a00; --bad:#9b2c2c;
+  --radius:10px;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#161614;--panel:#1f1f1d;--ink:#ececea;--soft:#a0a09c;--line:#33332f;
+        --accent:#6fd3ad;--accent-soft:#1d3029;--warn:#d9a441;--bad:#e08585;}
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+     background:var(--bg);color:var(--ink);height:100vh;display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:16px;padding:12px 20px;
+       background:var(--panel);border-bottom:1px solid var(--line);flex-shrink:0;flex-wrap:wrap}
+h1{font-size:17px;font-weight:600}
+.sub{color:var(--soft);font-size:13px}
+.grow{flex:1}
+button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);
+       padding:8px 14px;border-radius:var(--radius);cursor:pointer}
+button:hover:not(:disabled){border-color:var(--accent)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+button.primary:hover:not(:disabled){filter:brightness(1.08)}
+main{flex:1;display:grid;grid-template-columns:1fr 380px;min-height:0}
+@media (max-width:900px){main{grid-template-columns:1fr}#panel{display:none}
+  body.picked #panel{display:flex;position:fixed;inset:0;z-index:20}
+  body.picked #grid{display:none}}
+
+#grid{overflow-y:auto;padding:18px}
+.group{margin-bottom:26px}
+.group h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;
+          color:var(--soft);margin-bottom:4px}
+.group .where{font-size:13px;color:var(--soft);margin-bottom:10px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:12px}
+.tile{position:relative;border-radius:var(--radius);overflow:hidden;cursor:pointer;
+      background:var(--panel);border:2px solid transparent;aspect-ratio:1}
+.tile img{width:100%;height:100%;object-fit:cover;display:block}
+.tile.sel{border-color:var(--accent)}
+.tile.off img{filter:grayscale(1);opacity:.32}
+.badges{position:absolute;left:5px;bottom:5px;display:flex;gap:4px;flex-wrap:wrap}
+.badge{font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+       background:rgba(0,0,0,.72);color:#fff;padding:2px 6px;border-radius:5px}
+.badge.warn{background:var(--warn)}
+.badge.bad{background:var(--bad)}
+
+#panel{background:var(--panel);border-left:1px solid var(--line);
+       display:flex;flex-direction:column;overflow-y:auto}
+#panel .pad{padding:18px}
+#preview{width:100%;background:#000;aspect-ratio:1;object-fit:contain;display:block}
+.meta{font-size:13px;color:var(--soft);margin:10px 0 16px;line-height:1.6}
+label.fld{display:block;font-size:12px;font-weight:600;text-transform:uppercase;
+          letter-spacing:.07em;color:var(--soft);margin:18px 0 7px}
+textarea{width:100%;min-height:76px;font:inherit;padding:10px;border:1px solid var(--line);
+         border-radius:var(--radius);background:var(--bg);color:var(--ink);resize:vertical}
+.opts{display:flex;flex-wrap:wrap;gap:7px}
+.opt{padding:7px 12px;border:1px solid var(--line);border-radius:var(--radius);
+     cursor:pointer;font-size:13px;background:var(--bg)}
+.opt[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+.opt.dead{opacity:.38;text-decoration:line-through;cursor:not-allowed}
+.opt.soft{border-style:dashed;border-color:var(--warn)}
+.hint{font-size:12px;color:var(--soft);margin-top:7px;line-height:1.5}
+.empty{padding:40px 20px;text-align:center;color:var(--soft)}
+
+#bar{display:none;align-items:center;gap:12px;padding:10px 20px;
+     background:var(--accent-soft);border-bottom:1px solid var(--line);flex-shrink:0}
+#bar.on{display:flex}
+.track{flex:1;height:6px;background:var(--line);border-radius:3px;overflow:hidden}
+.fill{height:100%;background:var(--accent);width:0;transition:width .4s}
+#msg{padding:10px 20px;font-size:13px;flex-shrink:0;display:none}
+#msg.on{display:block}
+#msg.err{background:#fdeaea;color:var(--bad)}
+@media (prefers-color-scheme:dark){#msg.err{background:#3a1f1f}}
+.saved{color:var(--accent);font-size:12px;opacity:0;transition:opacity .25s}
+.saved.on{opacity:1}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1 id="title">Album</h1>
+    <div class="sub" id="counts">loading…</div>
+  </div>
+  <div class="grow"></div>
+  <span class="saved" id="saved">saved</span>
+  <button id="btnProof" disabled>Open preview</button>
+  <button class="primary" id="btnPlan">Design the album</button>
+</header>
+
+<div id="bar"><span id="step">Working…</span><div class="track"><div class="fill" id="fill"></div></div></div>
+<div id="msg"></div>
+
+<main>
+  <div id="grid"></div>
+  <aside id="panel">
+    <div class="empty" id="noSel">Choose a photograph to describe it or change how it is used.</div>
+    <div id="editor" style="display:none">
+      <img id="preview" alt="">
+      <div class="pad">
+        <div class="meta" id="meta"></div>
+
+        <label class="fld" for="desc">Description</label>
+        <textarea id="desc" placeholder="What is happening here?"></textarea>
+        <div class="hint">Printed under the photograph when there is room for it.</div>
+
+        <label class="fld">How big</label>
+        <div class="opts" id="sizes"></div>
+        <div class="hint" id="sizeHint">Let the album decide.</div>
+
+        <label class="fld">Edge</label>
+        <div class="opts" id="treats"></div>
+        <div class="hint" id="treatHint">No border.</div>
+
+        <label class="fld">Use this photograph</label>
+        <div class="opts">
+          <div class="opt" id="optIn" role="button" aria-pressed="true">Include</div>
+          <div class="opt" id="optOut" role="button" aria-pressed="false">Leave out</div>
+        </div>
+        <div class="hint" id="exHint"></div>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<script>
+const SIZE_LABEL={auto:"Automatic","full-page":"Full page",large:"Large",small:"Small"};
+const SIZE_HINT={auto:"Let the album decide.",
+ "full-page":"Gets a page to itself.",
+ large:"Becomes the main photograph wherever it lands.",
+ small:"Kept small, never the main photograph on its page."};
+const TREAT_LABEL={none:"None",frame:"White frame",rounded:"Rounded",vignette:"Vignette","soft-edge":"Soft edge"};
+const TREAT_HINT={none:"No border.",frame:"A thin white border with a hairline edge.",
+ rounded:"Softly rounded corners.",vignette:"Darkens gently towards the corners.",
+ "soft-edge":"Fades out towards the edges.",};
+
+let photos=[], album=null, sel=null, polling=null;
+const $=id=>document.getElementById(id);
+
+async function get(u){const r=await fetch(u);if(!r.ok)throw new Error(await r.text());return r.json();}
+
+function note(text,isErr){const m=$("msg");m.textContent=text;m.className="on"+(isErr?" err":"");
+  if(!isErr)setTimeout(()=>m.className="",6000);}
+
+async function load(){
+  album=await get("/api/album"); photos=await get("/api/photos");
+  $("title").textContent=album.title;
+  const used=photos.filter(p=>!p.exclude).length;
+  $("counts").textContent=`${used} of ${photos.length} photographs · ${album.groups.length} groups · ${album.format} cm`;
+  if(!album.has_key) note("No API key is set, so the album cannot be designed yet. Everything else here works offline.",true);
+  renderGrid();
+  try{const r=await get("/api/report"); if(r.ready){$("btnProof").disabled=false;
+    $("btnPlan").textContent="Design again";}}catch(e){}
+}
+
+function renderGrid(){
+  const g=$("grid"); g.innerHTML="";
+  const byGroup={}; photos.forEach(p=>{(byGroup[p.group||"none"] ||= []).push(p);});
+  const order=album.groups.map(x=>x.id).concat(["none"]);
+  order.forEach(gid=>{
+    const list=byGroup[gid]; if(!list||!list.length)return;
+    const info=album.groups.find(x=>x.id===gid);
+    const sec=document.createElement("div"); sec.className="group";
+    const h=document.createElement("h2");
+    h.textContent=info?(info.place||"Unknown place"):"Not grouped";
+    const w=document.createElement("div"); w.className="where";
+    w.textContent=info?[info.dates,`${list.length} photographs`].filter(Boolean).join(" · "):"";
+    const tiles=document.createElement("div"); tiles.className="tiles";
+    list.forEach(p=>tiles.appendChild(tile(p)));
+    sec.append(h,w,tiles); g.appendChild(sec);
+  });
+}
+
+function tile(p){
+  const d=document.createElement("div");
+  d.className="tile"+(p.exclude?" off":"")+(sel===p.id?" sel":"");
+  d.innerHTML=`<img loading="lazy" src="/thumb/${p.id}.jpg" alt="${p.id}">`;
+  const b=document.createElement("div"); b.className="badges";
+  if(p.too_small) b.innerHTML+=`<span class="badge bad">too small</span>`;
+  if(p.exclude) b.innerHTML+=`<span class="badge">left out</span>`;
+  if(p.size!=="auto") b.innerHTML+=`<span class="badge">${SIZE_LABEL[p.size]}</span>`;
+  if(p.treatment!=="none") b.innerHTML+=`<span class="badge">${TREAT_LABEL[p.treatment]}</span>`;
+  d.appendChild(b);
+  d.onclick=()=>select(p.id);
+  return d;
+}
+
+function select(id){
+  sel=id; document.body.classList.add("picked");
+  const p=photos.find(x=>x.id===id);
+  $("noSel").style.display="none"; $("editor").style.display="block";
+  $("preview").src=`/thumb/${id}.jpg`;
+  const bits=[];
+  if(p.taken_at)bits.push(p.taken_at);
+  if(p.place)bits.push(p.place);
+  bits.push(`${p.width}×${p.height}`);
+  if(p.strength)bits.push(`quality ${p.strength}/5`);
+  let m=bits.join(" · ");
+  if(p.annotation)m+=`<br>${p.annotation}`;
+  if(p.too_small)m+=`<br><strong>Too small to print at any useful size.</strong>`;
+  $("meta").innerHTML=m;
+  $("desc").value=p.description||p.caption||"";
+  opts("sizes",album.sizes,SIZE_LABEL,p.size,v=>patch(id,{size:v}),p.can);
+  opts("treats",album.treatments,TREAT_LABEL,p.treatment,v=>patch(id,{treatment:v}));
+  $("sizeHint").textContent=SIZE_HINT[p.size]
+    +(p.can&&p.can["full-page"]==="no"?"  Crossed-out sizes need more pixels than this photograph has.":"");
+  $("treatHint").textContent=TREAT_HINT[p.treatment];
+  $("optIn").setAttribute("aria-pressed",String(!p.exclude));
+  $("optOut").setAttribute("aria-pressed",String(p.exclude));
+  $("exHint").textContent=p.exclude?"This photograph will not appear in the album.":"";
+  renderGrid();
+}
+
+function opts(hostId,values,labels,current,onPick,can){
+  const host=$(hostId); host.innerHTML="";
+  values.forEach(v=>{
+    const el=document.createElement("div");
+    const state=can?can[v]:"ok";
+    el.className="opt"+(state==="no"?" dead":"")+(state==="soft"?" soft":"");
+    el.setAttribute("role","button");
+    el.setAttribute("aria-pressed",String(v===current));
+    el.textContent=labels[v]||v;
+    if(state==="no"){
+      el.title=`Not enough detail — ${can[v+"_dpi"]} DPI at that size`;
+      el.onclick=()=>note(`This photograph is too small to print that big (${can[v+"_dpi"]} DPI). Choose a smaller size.`,true);
+    }else{
+      if(state==="soft")el.title=`A little soft at that size — ${can[v+"_dpi"]} DPI`;
+      el.onclick=()=>onPick(v);
+    }
+    host.appendChild(el);
+  });
+}
+
+async function patch(id,body){
+  const r=await fetch(`/api/photos/${id}`,{method:"PATCH",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(!r.ok){note(await r.text(),true);return;}
+  photos=await get("/api/photos"); album=await get("/api/album");
+  const used=photos.filter(p=>!p.exclude).length;
+  $("counts").textContent=`${used} of ${photos.length} photographs · ${album.groups.length} groups · ${album.format} cm`;
+  const s=$("saved"); s.className="saved on"; setTimeout(()=>s.className="saved",1100);
+  if(sel)select(sel); else renderGrid();
+}
+
+let typing=null;
+$("desc").addEventListener("input",()=>{clearTimeout(typing);
+  typing=setTimeout(()=>sel&&patch(sel,{description:$("desc").value}),600);});
+$("optIn").onclick=()=>sel&&patch(sel,{exclude:false});
+$("optOut").onclick=()=>sel&&patch(sel,{exclude:true});
+$("btnProof").onclick=()=>window.open("/proof.pdf","_blank");
+
+$("btnPlan").onclick=async()=>{
+  const first=$("btnPlan").textContent==="Design the album";
+  let comment=null;
+  if(!first){
+    comment=prompt("What should change?\n\nFor example: “page 4 is too crowded” or “put the harbour photographs earlier”.\n\nLeave empty to start again from scratch.");
+    if(comment===null)return;
+    if(!comment.trim())comment=null;
+  }
+  const r=await fetch("/api/plan",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({comment})});
+  if(!r.ok){note(await r.text(),true);return;}
+  $("btnPlan").disabled=true; $("bar").className="on"; poll();
+};
+
+function poll(){
+  clearInterval(polling);
+  polling=setInterval(async()=>{
+    const j=await get("/api/job");
+    $("step").textContent=j.step; $("fill").style.width=j.progress+"%";
+    if(j.error){clearInterval(polling);$("bar").className="";$("btnPlan").disabled=false;
+      note(j.error,true);return;}
+    if(j.done){clearInterval(polling);
+      setTimeout(()=>{$("bar").className="";},900);
+      $("btnPlan").disabled=false; $("btnProof").disabled=false;
+      $("btnPlan").textContent="Design again";
+      const rep=await get("/api/report");
+      const bad=rep.issues.filter(i=>i.level==="error").length;
+      const warn=rep.issues.filter(i=>i.level==="warning").length;
+      note(bad? `${rep.pages} pages — ${bad} problem(s) to fix before printing.`
+              : `${rep.pages} pages, ${rep.min_dpi} DPI at the smallest${warn?`, ${warn} thing(s) to check`:""}. Open the preview.`);
+      load();
+    }
+  },900);
+}
+
+load();
+</script>
+</body>
+</html>

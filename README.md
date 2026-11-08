@@ -16,7 +16,7 @@ Read it before changing anything.
 |---|---|---|
 | **0** | Validate the print chain: hand-written layout JSON → Saal-Digital-spec PDFs | code complete, **awaiting the physical test print** |
 | **1** | Core loop, CLI only: annotate → plan → proof → revise, with version history | built, covered by an offline test, not yet run against the real model |
-| 2 | Web frontend (FastAPI + Postgres + RQ behind four screens) | not started |
+| **2** | Web editor: photo grid, descriptions, per-photo size and treatment | **built** — `phase2/`, no build step, works offline |
 | 3 | 300 DPI export path and web album | cover generator and print path already done in Phase 0 |
 | 4 | Multi-language albums, map page, suggested captions | not started |
 
@@ -25,6 +25,19 @@ measured with a ruler before the template library is worth tuning — a layout
 that scores well in JSON can still look flat on paper.
 
 ## Quick start
+
+The editor is the easiest way in:
+
+```bash
+pip install -r requirements.txt && playwright install chromium
+python phase1/tools/make_demo_photos.py        # or use your own
+python phase2/server.py --album ./albums/demo --photos phase1/demo_photos
+```
+
+See `OFFLINE.md` for installing and running with no internet connection, and
+for what the one online dependency actually is.
+
+## Command line
 
 ```bash
 pip install -r requirements.txt
@@ -71,6 +84,17 @@ rectangle, only caption.
 time and caches subject, people, scene, focal point and a strength rating to
 `annotations.json`. Planning and every revision afterwards are text-only, so
 schema retries cost nothing extra.
+
+**Place names come from an offline database.** GPS resolves to a settlement
+without a network or an API key, and `places.yaml` lets the user override any
+of them — the beach below Baunei is "Cala Goloritzé" to anyone who went there.
+The place and date are stamped on each chapter opening by the system, once per
+group, rather than left to the model.
+
+**The user outranks the planner.** `overrides.yaml` holds per-photo
+instructions — description, how big, edge treatment, leave out — and they are
+re-applied to every layout version, so a choice made once survives every later
+revision without being re-argued with the model.
 
 **Empty pages are counted, not noticed too late.** Chapter titles face the
 chapter's opening photograph rather than spending a whole spread on three

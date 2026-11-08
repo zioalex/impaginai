@@ -45,6 +45,11 @@ class Photo:
     upload_order: int = 0
     avoid: list[str] = field(default_factory=list)
     group: str | None = None                       # from cluster.assign
+    # Which of the UI's size choices this photograph actually has the pixels
+    # for: {"full-page": "ok"|"soft"|"no", ...}. Computed, never guessed, so the
+    # editor can refuse a choice before the user makes it rather than failing at
+    # export when the book is otherwise finished.
+    can: dict = field(default_factory=dict)
     annotation: str = ""                           # from annotate.run
     strength: int = 0                              # 1-5, from annotate.run
     suggested_focal: tuple[float, float] | None = None
@@ -151,6 +156,35 @@ def apply_captions(photos: list[Photo], captions_file: Path) -> None:
         photos.sort(key=lambda p: p.upload_order)
 
 
+def size_capability(photos: list[Photo], g: Geometry, warn_dpi: float, block_dpi: float) -> None:
+    """What each photograph can physically be printed as.
+
+    Measured against the real slot rectangles, not a rule of thumb:
+      full-page -> the full-bleed rectangle
+      large     -> the feature slot of a composed page
+      small     -> the smallest slot in the library
+    """
+    import compose
+
+    full = g.full_bleed("right")
+    large = templates_lib.build("single-centered", g, {}).slots[0].rect
+    smalls = []
+    for name, spec in templates_lib.REGISTRY.items():
+        if not spec.planner_visible or spec.slot_count == 0:
+            continue
+        for b in templates_lib.build(name, g, {}).slots:
+            smalls.append(b.rect)
+    smallest = min(smalls, key=lambda r: r.w * r.h)
+
+    for p in photos:
+        p.can = {}
+        for key, rect in (("full-page", full), ("large", large), ("small", smallest)):
+            dpi = effective_dpi(p.width, p.height, rect)
+            p.can[key] = "ok" if dpi >= warn_dpi else ("soft" if dpi >= block_dpi else "no")
+            p.can[key + "_dpi"] = round(dpi)
+        p.can["auto"] = "ok"
+
+
 def annotate_limits(photos: list[Photo], g: Geometry, warn_dpi: float) -> None:
     """Mark which templates each photo is too small for, at the warn threshold."""
     slot_sizes: dict[str, float] = {}
@@ -172,9 +206,11 @@ def annotate_limits(photos: list[Photo], g: Geometry, warn_dpi: float) -> None:
         p.unusable = len(avoid) == len(slot_sizes)
 
 
-def load(photo_dir: Path, captions_file: Path | None, g: Geometry, warn_dpi: float) -> list[Photo]:
+def load(photo_dir: Path, captions_file: Path | None, g: Geometry, warn_dpi: float,
+         block_dpi: float = 150.0) -> list[Photo]:
     photos = read_dir(photo_dir)
     if captions_file and captions_file.exists():
         apply_captions(photos, captions_file)
     annotate_limits(photos, g, warn_dpi)
+    size_capability(photos, g, warn_dpi, block_dpi)
     return photos
