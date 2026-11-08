@@ -3,7 +3,7 @@
 
 # --- rendering and print chain (Phase 0) ---
 playwright==1.63.0
-pillow==12.3.0
+pillow==13.0.0
 pypdf==6.17.0
 
 # --- schema, config, planning (Phase 1) ---
