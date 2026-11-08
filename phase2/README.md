@@ -3,11 +3,22 @@
 A local web app for the person who owns the photographs, not the person who
 wrote the code.
 
+From the repository root:
+
 ```bash
 export ANTHROPIC_API_KEY=...          # only needed to design the album
-python phase2/server.py --album ./albums/sardinien --photos ./photos
-# open http://localhost:8000
+python phase2/server.py --album ./albums/sardinien --photos ~/Pictures/sardinien \
+       --title "Sardinien 2026" --language de
+# open http://127.0.0.1:8000
 ```
+
+To try it first, use the synthetic set in the repository and no key at all:
+
+```bash
+python phase2/server.py --album ./albums/demo --photos phase1/demo_photos
+```
+
+`RUNNING.md` has the full guide, including flags, Docker and troubleshooting.
 
 ## What the user can do
 

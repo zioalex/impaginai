@@ -20,23 +20,31 @@ a spread mixes them.
 
 ## Run it
 
+Run these **from inside `phase1/`**. `--photos` is your own folder;
+`./demo_photos` is the synthetic set shipped with the repository.
+
 ```bash
+cd phase1
 export ANTHROPIC_API_KEY=...
 
-python album.py annotate --album ./albums/sardinien --photos ./photos
+python album.py annotate --album ../albums/sardinien --photos ./demo_photos
 
-python album.py plan  --album ./albums/sardinien --photos ./photos \
-                      --captions examples/captions.yaml \
+python album.py plan  --album ../albums/sardinien --photos ./demo_photos \
                       --title "Sardinien 2026" --subtitle "Zehn Tage am Meer"
 
-python album.py proof --album ./albums/sardinien --photos ./photos
+python album.py proof --album ../albums/sardinien --photos ./demo_photos
 
-python album.py revise --album ./albums/sardinien --photos ./photos \
+python album.py revise --album ../albums/sardinien --photos ./demo_photos \
                        --comment "Seite 4 ist überladen, und die Kirchenbilder früher"
 
-python album.py history  --album ./albums/sardinien
-python album.py rollback --album ./albums/sardinien --to 2
+python album.py history  --album ../albums/sardinien
+python album.py rollback --album ../albums/sardinien --to 2
 ```
+
+Captions can come from a file with `--captions my-captions.yaml`
+(`photo_id: caption`, see `examples/demo_captions.yaml`). A description set in
+the editor wins over one in that file. The editor and the CLI share every file
+in the album directory, so you can move between them freely.
 
 `annotate` is the only call that pays for vision, and it pays once. Skip it and
 the planner still works, but it is grouping on timestamps, GPS and your captions

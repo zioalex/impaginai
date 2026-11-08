@@ -26,16 +26,30 @@ that scores well in JSON can still look flat on paper.
 
 ## Quick start
 
-The editor is the easiest way in:
+**`RUNNING.md` is the guide** — install, use, print, troubleshoot. Every
+command in it was run from a clean clone.
+
+The short version:
 
 ```bash
-pip install -r requirements.txt && playwright install chromium
-python phase1/tools/make_demo_photos.py        # or use your own
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+playwright install chromium
+
 python phase2/server.py --album ./albums/demo --photos phase1/demo_photos
 ```
 
-See `OFFLINE.md` for installing and running with no internet connection, and
-for what the one online dependency actually is.
+Open the address it prints. The repository ships 22 synthetic photographs with
+real EXIF, so this works before you supply any of your own. Designing an album
+needs `ANTHROPIC_API_KEY`; everything else — grouping, descriptions, sizes,
+preview rendering — runs locally without one.
+
+For your own pictures, point `--photos` at the folder and give it a title:
+
+```bash
+python phase2/server.py --album ./albums/sardinien --photos ~/Pictures/sardinien \
+       --title "Sardinien 2026" --language de
+```
 
 ## Command line
 
@@ -43,6 +57,8 @@ for what the one online dependency actually is.
 pip install -r requirements.txt
 playwright install chromium
 ```
+
+The editor and the CLI read and write the same files, so you can mix them.
 
 **Phase 0** — render the calibration book:
 
@@ -54,16 +70,18 @@ python render.py proof --layout examples/layout_test24.json --photos ./photos --
 python render.py cover --layout examples/layout_test24.json --photos ./photos
 ```
 
-**Phase 1** — the core loop:
+**Phase 1** — the core loop (run from inside `phase1/`):
 
 ```bash
 cd phase1
 export ANTHROPIC_API_KEY=...
-python album.py annotate --album ./albums/sardinien --photos ./photos
-python album.py plan     --album ./albums/sardinien --photos ./photos --title "Sardinien 2026"
-python album.py proof    --album ./albums/sardinien --photos ./photos
-python album.py revise   --album ./albums/sardinien --photos ./photos --comment "Seite 4 ist überladen"
-python tests/test_loop.py   # offline, no API key, no network
+python album.py annotate --album ../albums/sardinien --photos ./demo_photos
+python album.py plan     --album ../albums/sardinien --photos ./demo_photos --title "Sardinien 2026"
+python album.py proof    --album ../albums/sardinien --photos ./demo_photos
+python album.py revise   --album ../albums/sardinien --photos ./demo_photos --comment "Seite 4 ist überladen"
+
+python album.py plan --album ../albums/x --photos ./demo_photos --dry-run   # no key needed
+python tests/test_loop.py                                                    # no key, no network
 ```
 
 ## The three ideas worth knowing
