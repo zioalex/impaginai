@@ -132,7 +132,14 @@ on a page of their own.
 - Vary the density. A composed page wants a quiet one facing it or next to it; \
 `mosaic-spread` is the densest layout in the catalogue and rarely right more than once \
 in a book.
-- White space is not waste. It is the only thing that makes the next full-bleed land.
+- White space is not waste — but an empty PAGE is different from white space around a
+photograph. A template whose description says FACING PAGE LEFT EMPTY spends a whole
+sheet of paper on nothing. That is a strong effect and the reader feels it; used three
+or four times in a book it is pacing, used throughout it is a slideshow.
+- **Budget: at most about one page in six should carry no photograph**, counting both
+halves of every spread. Prefer `section-divider` (chapter title on black facing the
+chapter's opening image) over `section-divider-plain`, and `title-page` over
+`text-page`, unless you specifically want the full stop.
 
 ## How to sequence
 

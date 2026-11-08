@@ -72,6 +72,11 @@ time and caches subject, people, scene, focal point and a strength rating to
 `annotations.json`. Planning and every revision afterwards are text-only, so
 schema retries cost nothing extra.
 
+**Empty pages are counted, not noticed too late.** Chapter titles face the
+chapter's opening photograph rather than spending a whole spread on three
+words, and the validator reports how many pages carry no photograph — and how
+many carry nothing at all — on every run.
+
 **Every print constraint is executable.** Bleed, page-count increments, effective
 DPI per slot, spine width, fold crossing — all enforced in `phase0/validate.py`,
 not merely requested in a prompt. Lab specifications live in `phase0/labs/*.yaml`.

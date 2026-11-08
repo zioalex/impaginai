@@ -208,7 +208,7 @@ def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window:
         if not tb.rect.intersects(window):
             continue
         cls = f"tb {tb.role}"
-        if tb.invert or rendered.background == "ink":
+        if tb.invert or rendered.background.startswith("ink"):
             cls += " invert"
         style = rect_style(tb.rect) + f"text-align:{tb.align};"
         parts.append(f'<div class="{cls} abs" style="{style}">{esc(value)}</div>')
@@ -233,7 +233,10 @@ def build_inner_html(
                     break
             offset = g.page_offset(side)
             body = canvas_html(sp, rendered, g, photo_paths, window)
-            ink = " ink" if rendered.background == "ink" else ""
+            # "ink" inks the whole spread; "ink-left"/"ink-right" ink only that
+            # page, so a chapter title can sit on black facing a photograph.
+            bg = rendered.background
+            ink = " ink" if (bg == "ink" or bg == f"ink-{side}") else ""
             sheets.append(
                 f'<div class="sheet" style="width:{g.media_w:.2f}mm;height:{g.media_h:.2f}mm;">'
                 f'<div class="canvas{ink}" style="left:{-offset:.2f}mm;'
