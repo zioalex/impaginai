@@ -10,6 +10,8 @@ layout-v*.json
 prompt-plan.txt
 
 # Input photographs are the user's own and are never committed.
+# phase1/demo_photos/ IS committed on purpose: it is the synthetic demo set,
+# so a fresh clone can be run end to end without supplying pictures.
 phase0/photos/
 phase1/photos/
 photos/
@@ -23,5 +25,4 @@ venv/
 
 # OS
 .DS_Store
-demo_photos/
 places_cache.json
