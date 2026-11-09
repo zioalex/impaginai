@@ -225,7 +225,14 @@ _SCHEMA_CACHE: dict = {}
 # words are legitimate field names. ("title" is both a JSON Schema annotation
 # and a field of this project's `meta` object; an earlier version of this
 # function deleted the album title from the schema because of that.)
-_DROP_KEYWORDS = {"$defs", "default", "title", "discriminator", "examples"}
+_DROP_KEYWORDS = {"$defs", "default", "title", "discriminator", "examples",
+                  # Value constraints. Anthropic's structured output rejects
+                  # every one of these ("numerical constraints", "string
+                  # length", "maxItems"), others ignore them, and Pydantic
+                  # enforces them after decoding anyway.
+                  "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+                  "multipleOf", "minLength", "maxLength", "maxItems",
+                  "minProperties", "maxProperties"}
 
 # Keys whose values are maps of name -> schema, not schemas themselves.
 _SCHEMA_MAPS = {"properties", "patternProperties", "$defs", "definitions"}
@@ -244,6 +251,14 @@ def simplify_schema(node, defs=None):
                     the same thing everywhere.
       $ref / $defs  inlined, because several endpoints do not resolve them.
       default       ignored by some, rejected by others; dropped.
+      minimum, maxItems, minLength, ...
+                    Anthropic rejects numeric and length constraints and any
+                    minItems other than 0 or 1. Dropped; minItems above 1
+                    is dropped too.
+      additionalProperties: true
+                    Anthropic only accepts `false`. An open map is closed
+                    over the properties it declares (none, for a bare dict),
+                    which _layout_schema then fills in where it matters.
 
     The result constrains less than the original — a tuple becomes "an array
     of two numbers" rather than "exactly these two" — but the Pydantic model
@@ -277,8 +292,13 @@ def simplify_schema(node, defs=None):
             items = [simplify_schema(x, defs) for x in v]
             types = {i.get("type") for i in items if isinstance(i, dict)}
             out["items"] = items[0] if len(types) == 1 and items else {}
-            out.setdefault("minItems", len(items))
-            out.setdefault("maxItems", len(items))
+            continue
+        if k == "minItems":
+            if isinstance(v, int) and v <= 1:
+                out[k] = v
+            continue
+        if k == "additionalProperties" and v is not False:
+            out[k] = False
             continue
         out[k] = simplify_schema(v, defs)
     return out
@@ -295,7 +315,16 @@ def _layout_schema():
     try:
         from schema import Layout
 
-        _SCHEMA_CACHE["v"] = simplify_schema(Layout.model_json_schema())
+        schema = simplify_schema(Layout.model_json_schema())
+        # `options` is a free dict in the model, which a closed schema would
+        # force to {}. The only option the planner is told about is `side`.
+        spread = schema["properties"]["spreads"]["items"]
+        spread["properties"]["options"] = {
+            "type": "object",
+            "properties": {"side": {"type": "string", "enum": ["left", "right"]}},
+            "additionalProperties": False,
+        }
+        _SCHEMA_CACHE["v"] = schema
     except Exception:
         _SCHEMA_CACHE["v"] = None
     return _SCHEMA_CACHE["v"]
@@ -308,6 +337,26 @@ _WARNED: dict[str, bool] = {}
 # requests each time — on a multi-batch annotate pass that is most of the
 # traffic.
 _MODE_CACHE: dict[tuple, str] = {}
+
+
+def _error_text(raw: str) -> str:
+    """The innermost error message. OpenRouter wraps the upstream provider's
+    JSON error as a string inside its own, so the useful part is otherwise
+    cut off behind two layers of escaping."""
+    msg = raw
+    for _ in range(3):
+        try:
+            d = json.loads(msg)
+        except (ValueError, TypeError):
+            break
+        err = d.get("error", d) if isinstance(d, dict) else {}
+        if not isinstance(err, dict):
+            break
+        inner = (err.get("metadata") or {}).get("raw") or err.get("message")
+        if not inner or inner == msg:
+            break
+        msg = inner
+    return str(msg)
 
 
 def _openai(p: Provider):
@@ -361,7 +410,7 @@ def _openai(p: Provider):
         # response_format is in play is treated as a capability problem and the
         # request is retried with progressively weaker constraints.
         if 400 <= r.status_code < 500 and body.get("response_format"):
-            first = r.text[:300]
+            first = _error_text(r.text)
             if body["response_format"].get("type") == "json_schema":
                 body["response_format"] = {"type": "json_object"}
                 r = httpx.post(url, headers=headers, json=body, timeout=600.0)
@@ -374,7 +423,7 @@ def _openai(p: Provider):
                 _WARNED[p.model] = True
                 print(f"  note: {p.model} rejected structured output, continuing "
                       f"without it. Schema failures are still caught and retried.\n"
-                      f"        ({first.strip()[:160]})")
+                      f"        ({first.strip()[:300]})")
         elif r.status_code < 400 and body.get("response_format"):
             _MODE_CACHE[mode_key] = body["response_format"]["type"]
         if r.status_code >= 400:
