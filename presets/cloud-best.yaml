@@ -1,25 +1,65 @@
 # ALL CLOUD, BEST RESULT — no GPU needed, when the book matters.
 #
-# Cost for a 100-photograph album with three revisions: about $1.10.
-# A Saal Professional Line print costs CHF 40-100, so this is noise.
+# Cost for a 100-photograph album with three revisions: about $0.46
+#   annotate $0.10 + plan $0.14 + three revisions $0.22
+# Revisions, not planning, are the largest line once you make more than one.
+# A Saal Professional Line print costs CHF 40-100, so the model is noise.
 #
 #   python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
 #          --models presets/cloud-best.yaml
 #
 # Needs: OPENROUTER_API_KEY
+#
+# Nothing here is a settled fact. "Best" at the frontier is a matter of taste
+# and changes every few months, and no public benchmark measures the thing
+# this project needs — obeying a 9,000-character layout brief. Treat the
+# choices below as a starting point and settle it yourself:
+#
+#   python phase1/tools/bench_model.py --photos ~/Pictures/x \
+#          --base-url openrouter \
+#          --compare anthropic/claude-opus-5.5 google/gemini-4-argon \
+#                    moonshotai/kimi-k3 openai/gpt-6-astra
 
 default:
   base_url: openrouter
   model: anthropic/claude-sonnet-5.5
+  json_mode: true
 
 annotate:
   model: anthropic/claude-sonnet-5.5     # strong captions feed a strong plan
-  # vision stays on; this is the only role that sees images
+  # vision stays on; this is the only role that sees images.
+  # Alternatives, all capable at this job:
+  #   google/gemini-4-argon        $2/$10   strong multimodal, long context
+  #   openai/gpt-6-astra           $10/$50  frontier; overkill for a face count
+  #   anthropic/claude-haiku-5.5   $0.10/$0.50  saves ~$0.25, barely worse here
+  #
+  # Annotation is where the money goes in an all-cloud setup, because images
+  # cost tokens and there is one call per eight photographs. If you want to
+  # economise anywhere, economise here, not on the planner.
 
 plan:
   model: anthropic/claude-opus-5.5       # one call, decides the whole book
+  # Alternatives worth benchmarking against it — plan cost per album in
+  # brackets, since this is a single call:
+  #   openai/gpt-6-astra           $10/$50    [$0.36]  the expensive end
+  #   moonshotai/kimi-k3           $3/$15     [$0.11]
+  #   google/gemini-4-argon        $2/$10     [$0.07]  strongest non-Anthropic
+  #                                                     option at this tier
+  #   z-ai/glm-5.3                 $1.40/$4.40 [$0.03]
+  #   anthropic/claude-sonnet-5.5  $2/$10     [$0.07]  often indistinguishable
+  #                                                     from Opus here
+  #
+  # The gap between any of these and a cheap model is far larger than the gap
+  # between them. If Opus and Sonnet produce the same album on your
+  # photographs — quite likely — use Sonnet.
   json_mode: true
 
 revise:
   model: anthropic/claude-sonnet-5.5     # targeted edits; Opus is overkill
+  # A revision has the whole layout in context and is asked to change one
+  # thing. That needs obedience, not invention.
+  # Alternatives:
+  #   google/gemini-4-argon        $2/$10
+  #   anthropic/claude-opus-5.5    $4/$20   if revisions keep missing the point
+  #   anthropic/claude-haiku-5.5   $0.10/$0.50
   json_mode: true

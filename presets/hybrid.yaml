@@ -6,8 +6,15 @@
 # first run. Planning is a single text call where judgement decides whether the
 # book is any good, so that one is worth paying for.
 #
-# Cost for a 100-photograph album with three revisions: about $0.07.
-# Your photographs never leave the house.
+# Cost for a 100-photograph album with three revisions: about $0.29
+#   annotate $0.00 (local) + plan $0.07 + three revisions $0.22
+#
+# With annotation local, REVISIONS become the whole bill: each one is a full
+# planning-sized call and you will make several. Dropping the revise role to
+# Haiku takes the album to $0.08 — see the note under `revise` below.
+#
+# Your photographs never leave the house either way: only the planner and the
+# reviser see text, never an image.
 #
 #   ollama pull qwen3-vl:32b
 #   python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
@@ -33,3 +40,12 @@ plan:
 
 revise:
   model: anthropic/claude-sonnet-5.5
+  # Worth trying: anthropic/claude-haiku-5.5 takes the album from $0.29 to
+  # $0.08, because three revisions at Sonnet cost more than everything else
+  # combined. A revision is obedience rather than invention — the whole layout
+  # is in context and one thing is being changed — so a small model can do it.
+  #
+  # The risk is real though: the model must re-emit the ENTIRE layout, and a
+  # weak one can quietly disturb spreads you did not ask about. Version history
+  # and rollback make that recoverable, and `change_summary` tells you what it
+  # thinks it did. Try it, read one summary, and keep it if it behaves.

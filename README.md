@@ -187,10 +187,15 @@ python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
 
 | Preset | annotate | plan | revise | 100-photo album |
 |---|---|---|---|---|
-| `cloud-best.yaml` | Sonnet 5.5 | **Opus 5.5** | Sonnet 5.5 | ~$1.10 |
-| `cloud-cheap.yaml` | Haiku 5.5 | Haiku 5.5 | Haiku 5.5 | ~$0.03 |
-| `hybrid.yaml` **(24 GB GPU: start here)** | **Qwen3-VL 32B, local** | Sonnet 5.5 | Sonnet 5.5 | ~$0.07 |
+| `cloud-best.yaml` | Sonnet 5.5 | **Opus 5.5** | Sonnet 5.5 | ~$0.46 |
+| `cloud-cheap.yaml` | Haiku 5.5 | Haiku 5.5 | Haiku 5.5 | ~$0.02 |
+| `hybrid.yaml` **(24 GB GPU: start here)** | **Qwen3-VL 32B, local** | Sonnet 5.5 | Sonnet 5.5 | ~$0.29 |
 | `local.yaml` | Qwen3-VL 32B | Qwen3-VL 32B | Qwen3-VL 32B | free, offline |
+
+Those totals assume three revisions. **Revisions are the largest line in every
+paid setup**, because each one is a full planning-sized call and you will make
+several — in `hybrid.yaml`, $0.22 of the $0.29. Setting `revise` to Haiku 5.5
+takes that album to $0.08; the presets say where and what the risk is.
 
 **All cloud** needs no GPU and only `OPENROUTER_API_KEY`. **Hybrid** is the
 pick for a 24 GB card: annotation on your own GPU, because it dominates the
@@ -200,9 +205,9 @@ keeps everything in the house at the cost of a weaker planner.
 
 ### Why those, and how to check them
 
-A whole album costs roughly **$1 on the most expensive model available** and
-about **$0.02 on a cheap one** — against a print that costs CHF 40-100. Cost is
-not the reason to pick one; capability is, and the capability that matters is
+A whole album costs roughly **$0.46 on the most expensive setup here** and
+about **$0.02 on the cheapest cloud one** — against a print that costs
+CHF 40-100. Cost is not the reason to pick one; capability is, and the capability that matters is
 following a 9,000-character layout brief, which no published benchmark
 measures.
 
