@@ -202,3 +202,34 @@ def spine_width_mm(
         raise ValueError("page_count must be even")
     leaves = page_count // 2
     return round(leaves * leaf_thickness_mm + 2 * board_mm, 2)
+
+
+# How much of a photograph a slot may cut away before the photograph is fitted
+# inside the slot instead. object-fit: cover on a 4:3 picture in a square slot
+# discards a quarter of the frame, and that quarter is very often the person at
+# the edge of a group. Below this fraction the slot shrinks to the photograph's
+# own shape, centred, so nothing is lost and the page keeps its white space.
+MIN_CROP_KEEP = 0.82
+
+
+def crop_keep(slot: Rect, aspect: float) -> float:
+    """Fraction of the photograph's long cropped axis that survives a cover fit."""
+    slot_ar = slot.w / slot.h
+    return min(slot_ar, aspect) / max(slot_ar, aspect)
+
+
+def fit_rect(slot: Rect, aspect: float, min_keep: float = MIN_CROP_KEEP) -> Rect:
+    """The rectangle a photograph of `aspect` (w/h) should actually occupy.
+
+    The slot itself when a cover crop keeps at least `min_keep` of the frame;
+    otherwise the largest rectangle of the photograph's own shape inside the
+    slot, centred.
+    """
+    if aspect <= 0 or crop_keep(slot, aspect) >= min_keep:
+        return slot
+    if aspect > slot.w / slot.h:
+        w, h = slot.w, slot.w / aspect
+    else:
+        w, h = slot.h * aspect, slot.h
+    return Rect(round(slot.x + (slot.w - w) / 2, 2), round(slot.y + (slot.h - h) / 2, 2),
+                round(w, 2), round(h, 2))

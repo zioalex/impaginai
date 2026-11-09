@@ -72,7 +72,8 @@ slot is allowed but the crop will discard a lot of the frame, so do it deliberat
 ## Focal point
 
 `focal` is [x, y], normalised 0–1, marking what must survive the crop — usually a \
-face, a horizon, or the subject's eyes. It is not a crop rectangle. The renderer \
+face, a horizon, or the subject's eyes. For a group of people, the centre of the group, \
+not one face. Where a photo line already gives a focal point, use it. It is not a crop rectangle. The renderer \
 scales the image to fill the slot and centres it on this point.
 
 ## The physical book
@@ -82,8 +83,8 @@ so images may cross the fold without loss.
 - One spread is two pages. The lab requires between {lab['pages']['min']} and \
 {lab['pages']['max']} pages, in multiples of {inc} — so at least \
 {lab['pages']['min'] // 2} spreads and at most {lab['pages']['max'] // 2}. A book below \
-the minimum cannot be printed at all, so pad with `single-centered`, `text-page` or a \
-section divider rather than coming in short.
+the minimum cannot be printed at all, so use lighter compositions (fewer photographs \
+per page) rather than coming in short.
 - Photographs printed below {res['warn_below_dpi']} DPI look soft. Where a photo line says \
 "too small for", do not use that photo in those templates — and where an entry names a slot \
 ("column-and-solo slot 1"), do not put it in that position; slot N is the Nth photograph you \
@@ -141,20 +142,17 @@ in a book.
 photograph. A template whose description says FACING PAGE LEFT EMPTY spends a whole
 sheet of paper on nothing. That is a strong effect and the reader feels it; used three
 or four times in a book it is pacing, used throughout it is a slideshow.
-- **Budget: at most about one page in six should carry no photograph**, counting both
-halves of every spread. Prefer `section-divider` (chapter title on black facing the
-chapter's opening image) over `section-divider-plain`, and `title-page` over
-`text-page`, unless you specifically want the full stop.
+- **Only the first spread may carry text instead of a photograph.** Open the book with `title-page`. After that, do not use `section-divider`, `section-divider-plain`, `text-page` or `photo-and-text`: the place and date of every location are printed automatically on the page of that location's first photograph, so a chapter needs no page of its own. Any page you leave empty after the first spread is closed up afterwards, so plan the photographs, not the blank paper.
 
 ## How to sequence
 
-- Open strongly. A `full-bleed-single` or `panorama-spread` in the first two spreads.
+- Open strongly: `title-page`, then a `full-bleed-single` or a `two-up-hero` in the next spread.
 - Vary the rhythm. Never use the same template three spreads running. Follow a dense \
 spread with a quiet one; `single-centered` is how the book breathes.
 - Group by place and time, not by visual similarity alone. Chronology is the default \
 spine of a travel album; break it only for a reason you can state in `note`.
-- Use `section-divider` between chapters, and `grid-four` for supporting detail shots \
-rather than for your best frames.
+- Start each location with its strongest photograph, and use `grid-four` for supporting \
+detail shots rather than for your best frames.
 - Captions: keep the user's wording. Shorten only if it is unwieldy. Leave a caption out \
 entirely when the photograph is doing the talking — a full-bleed hero rarely needs one.
 - Write section titles, `intro_text` and any `text` blocks in the album's language \

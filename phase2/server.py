@@ -50,6 +50,7 @@ import cluster
 import imaging
 import geocode
 import overrides as OV
+import pages as PG
 import photos as PH
 import planner
 import providers
@@ -270,7 +271,8 @@ def _build(do_plan: bool, comment: str | None):
         set_job("Applying your settings", 70)
         data = res.layout.model_dump(mode="json", exclude_none=False)
         OV.apply_to_layout(data, STATE["ov"])
-        OV.stamp_locations(data, groups, {p.id: p for p in usable})
+        PG.apply_focal(data, {p.id: p for p in usable})
+        PG.repack(data, groups, STATE["lab"])
         v = store.add(data, parent=parent, user_comment=comment_txt, change_summary=summary)
 
         set_job("Printing the preview", 85)
