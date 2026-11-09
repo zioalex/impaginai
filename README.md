@@ -119,6 +119,13 @@ both the Anthropic Messages API and the OpenAI `/chat/completions` contract, so
 OpenRouter, OpenAI, Together, Groq, vLLM, Ollama and llama.cpp all work.
 Localhost endpoints are treated as keyless.
 
+**Images are sent small, on purpose.** Vision cost scales with image
+dimensions, not file size, so JPEG quality changes the upload and not the bill.
+The annotate pass gets its own 512px copies rather than the 1200px proof
+derivatives — a fifth of the tokens for work that is really contact-sheet
+reading. `phase1/tools/bench_vision.py` finds the smallest size that still
+annotates *your* photographs correctly.
+
 **Vision is paid for once.** An `annotate` pass looks at each photograph a single
 time and caches subject, people, scene, focal point and a strength rating to
 `annotations.json`. Planning and every revision afterwards are text-only, so

@@ -28,6 +28,30 @@ from photos import Photo
 
 BATCH = 8
 
+# How large a photograph is sent to the vision model.
+#
+# Vision cost is driven by DIMENSIONS, not file size: Anthropic charges about
+# (w x h) / 750 tokens, and OpenAI-compatible endpoints tile at 512px. JPEG
+# quality therefore changes the upload but not the bill — compressing harder
+# saves bandwidth and nothing else.
+#
+# 512px on the long edge is the default because of what this pass is actually
+# asked for: a subject in a few words, a count of faces, a scene type, a focal
+# point and a 1-5 rating. That is contact-sheet work. Measured against the
+# 1200px proof derivatives the project already builds, 512px costs 5.4x fewer
+# tokens on Anthropic and 2.5x fewer on OpenAI, for 100 photographs:
+#
+#     1200px   140,000 anthropic tokens    64,000 openai
+#      512px    26,000 anthropic tokens    25,500 openai
+#
+# A focal point read off a 512px frame is accurate to about 0.2% of the frame
+# width, which is far finer than the decision it informs.
+#
+# Raise it if annotations come back vague on detailed photographs; 768px is the
+# next sensible step. Do not lower it below 384px — faces stop being countable.
+VISION_PX = 512
+VISION_QUALITY = 72
+
 SYSTEM = """You are a picture editor's assistant. For each photograph you are shown, \
 return the few facts needed to sequence an album. Be terse and literal. Do not \
 interpret, do not praise, do not write prose.
@@ -90,6 +114,44 @@ class Annotations:
 
     def missing(self, photos: list[Photo]) -> list[Photo]:
         return [p for p in photos if p.id not in self.by_id]
+
+
+def build_vision_copies(photos: list[Photo], dst: Path,
+                        px: int = VISION_PX, quality: int = VISION_QUALITY) -> Path:
+    """Small sRGB copies for the vision pass only.
+
+    Kept separate from the 1200px proof derivatives, which exist to render a
+    readable proof PDF and must stay that size. ICC profiles and EXIF are
+    dropped: they cost bytes on every upload and the model cannot use them.
+    """
+    import render as R
+    from PIL import Image
+
+    dst.mkdir(parents=True, exist_ok=True)
+    for p in photos:
+        out = dst / f"{p.id}.jpg"
+        if out.exists():
+            continue
+        with Image.open(p.path) as im:
+            im = R.to_srgb(im)
+            im.thumbnail((px, px), Image.LANCZOS)
+            im.save(out, "JPEG", quality=quality, optimize=True)
+    return dst
+
+
+def estimate_tokens(photos: list[Photo], thumb_dir: Path) -> int:
+    """Roughly what the images in an annotate pass will cost, Anthropic-style."""
+    from PIL import Image
+
+    total = 0
+    for p in photos:
+        f = thumb_dir / f"{p.id}.jpg"
+        if not f.exists():
+            continue
+        with Image.open(f) as im:
+            w, h = im.size
+        total += (w * h) // 750
+    return total
 
 
 def _batch_message(batch: list[Photo], thumb_dir: Path) -> list[dict]:

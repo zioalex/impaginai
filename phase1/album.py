@@ -91,8 +91,12 @@ def do_annotate(args) -> int:
     if not prov.vision:
         print("this model cannot see images — nothing to annotate")
         return 0
-    thumbs = make_thumbnails(ph, args.album / "derivatives" / "proof")
-    print(f"looking at {len(ph)} photographs in batches of {annotate.BATCH}...")
+    px = args.vision_px
+    thumbs = annotate.build_vision_copies(
+        ph, args.album / "derivatives" / f"vision{px}", px)
+    est = annotate.estimate_tokens(ph, thumbs)
+    print(f"looking at {len(ph)} photographs at {px}px, "
+          f"{annotate.BATCH} per call (~{est:,} image tokens)")
     anns, usage = annotate.run(ph, thumbs, args.album / "annotations.json",
                                providers.make_completer(prov), force=args.force)
     print(f"  {usage.line(priced=prov.name == 'anthropic' and not prov.base_url)}")
@@ -269,6 +273,9 @@ def main() -> int:
 
     p = sub.add_parser("annotate"); common(p)
     p.add_argument("--force", action="store_true", help="re-annotate everything")
+    p.add_argument("--vision-px", type=int, default=annotate.VISION_PX,
+                   help=f"long edge sent to the vision model (default "
+                        f"{annotate.VISION_PX}; cost scales with area, not file size)")
     p.set_defaults(fn=do_annotate)
 
     p = sub.add_parser("revise"); common(p)

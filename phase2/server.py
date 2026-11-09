@@ -238,7 +238,12 @@ def _build(do_plan: bool, comment: str | None):
         todo = anns.missing(usable)
         if todo and roles["annotate"].vision and roles["annotate"].usable:
             set_job(f"Looking at {len(todo)} photographs", 15)
-            anns, _ = annotate.run(usable, thumb_dir(), a / "annotations.json",
+            # Small copies for the model; the 1200px proof derivatives stay as
+            # they are, because the proof PDF needs them.
+            vdir = annotate.build_vision_copies(
+                todo, a / "derivatives" / f"vision{STATE['vision_px']}",
+                STATE["vision_px"])
+            anns, _ = annotate.run(usable, vdir, a / "annotations.json",
                                    providers.make_completer(roles["annotate"]))
         annotate.apply(usable, anns)
 
@@ -360,6 +365,8 @@ def main():
     ap.add_argument("--gap-hours", type=float, default=4.0)
     ap.add_argument("--radius-m", type=float, default=400.0)
     ap.add_argument("--no-geocode", action="store_true")
+    ap.add_argument("--vision-px", type=int, default=annotate.VISION_PX,
+                    help=f"long edge sent to the vision model (default {annotate.VISION_PX})")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
@@ -377,6 +384,7 @@ def main():
         language=args.language,
         gap_hours=args.gap_hours, radius_m=args.radius_m,
         geocode=not args.no_geocode,
+        vision_px=args.vision_px,
     )
     roles = providers.resolve_all(args, args.models)
     STATE["providers"] = roles

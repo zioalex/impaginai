@@ -465,6 +465,66 @@ frequently are not. On OpenRouter you can also send
 `provider.require_parameters: true` so a provider that would silently ignore
 JSON mode is skipped.
 
+### Shrinking the images, which is the real saving
+
+Vision cost is driven by image **dimensions**, not file size. Anthropic charges
+about (w x h) / 750 tokens; OpenAI-compatible endpoints tile at 512px. **JPEG
+quality therefore changes your upload and not your bill** — compressing harder
+saves bandwidth and nothing else, which is the opposite of most people's
+intuition.
+
+What this project sends is a separate, small copy built for the purpose
+(`derivatives/vision512/`), not the 1200px proof derivatives, which exist to
+render a readable proof PDF and stay that size. Measured over 100 photographs:
+
+| Long edge | Anthropic tokens | OpenAI tokens | vs 1200px |
+|---|---|---|---|
+| 1200px | 140,000 | 64,000 | — |
+| 768px | 59,000 | 64,000 | 0.42x |
+| **512px (default)** | **26,000** | **25,500** | **0.19x** |
+| 448px | 20,000 | 25,500 | 0.14x |
+
+512px is the default because of what the pass is actually asked for: a subject
+in a few words, a count of faces, a scene type, a focal point and a 1-5 rating.
+That is contact-sheet work. A focal point read from a 512px frame is accurate
+to about 0.2% of the frame width, far finer than the decision it informs.
+
+Because annotation is cached, this is paid once per album either way — but it
+is still the largest single lever, since images dominate the token count while
+planning is one text call.
+
+To change it:
+
+```bash
+python phase1/album.py annotate --album ../albums/x --photos ~/Pictures/x --vision-px 768
+python phase2/server.py --album ./albums/x --photos ~/Pictures/x --vision-px 448
+```
+
+**How small is too small depends on your photographs, not on this table.**
+Landscapes survive aggressive downscaling; group shots where the model must
+count faces do not. Measure it on your own pictures:
+
+```bash
+python phase1/tools/bench_vision.py --photos ~/Pictures/sardinien \
+       --base-url ollama --model qwen3-vl:32b \
+       --sizes 1200 768 512 384 --sample 12
+```
+
+It annotates the same photographs at each size, treats the largest as the
+reference, and reports how often the smaller ones agree:
+
+```
+    size  tok vs ref  SUBJECT   PEOPLE    SCENE    FOCAL STRENGTH
+     768       0.41x     100%     100%     100%     100%     100%
+     512       0.18x     100%     100%     100%     100%     100%
+     384       0.10x     100%     100%     100%      60%     100%
+```
+
+Take the smallest size where **PEOPLE and FOCAL** still hold — those two decide
+cropping and how prominently a photograph is placed. SUBJECT and SCENE drift
+harmlessly. In the run above, 512px is free of charge relative to 384px in
+quality terms and costs a fifth of the reference.
+
 ### Benchmark a model instead of trusting a table
 
 Published benchmarks measure OCR and exam questions. None of them measure
