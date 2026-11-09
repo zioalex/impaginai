@@ -5,7 +5,7 @@
 # (a subject, a face count, a scene type, a focal point) and competent at
 # planning; schema-constrained decoding keeps the output valid.
 #
-# Cost for a 100-photograph album with three revisions: about $0.028.
+# Cost for a 100-photograph album with three revisions: about $0.02.
 #
 #   python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
 #          --models presets/cloud-cheap.yaml

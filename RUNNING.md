@@ -303,10 +303,15 @@ python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
 
 | Preset | annotate | plan | revise | 100-photo album |
 |---|---|---|---|---|
-| `cloud-best.yaml` | Sonnet 5.5 | **Opus 5.5** | Sonnet 5.5 | ~$1.10 |
-| `cloud-cheap.yaml` | Haiku 5.5 | Haiku 5.5 | Haiku 5.5 | ~$0.03 |
-| `hybrid.yaml` **(24 GB GPU: start here)** | **Qwen3-VL 32B, local** | Sonnet 5.5 | Sonnet 5.5 | ~$0.07 |
+| `cloud-best.yaml` | Sonnet 5.5 | **Opus 5.5** | Sonnet 5.5 | ~$0.46 |
+| `cloud-cheap.yaml` | Haiku 5.5 | Haiku 5.5 | Haiku 5.5 | ~$0.02 |
+| `hybrid.yaml` **(24 GB GPU: start here)** | **Qwen3-VL 32B, local** | Sonnet 5.5 | Sonnet 5.5 | ~$0.29 |
 | `local.yaml` | Qwen3-VL 32B | Qwen3-VL 32B | Qwen3-VL 32B | free, offline |
+
+Those totals assume three revisions. **Revisions are the largest line in every
+paid setup**, because each one is a full planning-sized call and you will make
+several — in `hybrid.yaml`, $0.22 of the $0.29. Setting `revise` to Haiku 5.5
+takes that album to $0.08; the presets say where and what the risk is.
 
 **All cloud** — nothing to install, works on a laptop or a NAS with no GPU.
 `cloud-cheap.yaml` runs the whole album through Haiku 5.5 for about three
@@ -452,19 +457,21 @@ Measure before optimising. Using the token counts this project really produces
 — annotate at roughly 8 images plus 400 tokens per batch, planning at 6k in and
 6k out — a whole album including three revisions costs:
 
+One model doing all three roles, 512px vision copies, three revisions:
+
 | Model | in / out per 1M | 40 photographs | 100 photographs |
 |---|---|---|---|
-| `anthropic/claude-opus-5.5` | $4 / $20 | $0.79 | $1.12 |
-| `anthropic/claude-sonnet-5.5` | $2 / $10 | $0.39 | $0.56 |
-| `google/gemini-4-argon` | $2 / $10 | $0.39 | $0.56 |
-| `deepseek/deepseek-v4.1-flash` | $0.15 / $0.60 | $0.026 | $0.038 |
-| `anthropic/claude-haiku-5.5` | $0.10 / $0.50 | $0.020 | $0.028 |
-| `openai/gpt-6-luna` | $0.10 / $0.50 | $0.020 | $0.028 |
-| `z-ai/glm-5.3-flash` | $0.028 / $0.21 | $0.007 | $0.010 |
-| `qwen/qwen3.6-35b-a3b` | $0.01 / $0.09 | $0.003 | $0.004 |
-| `openai/gpt-oss-20b` | $0.008 / $0.03 | $0.001 | $0.002 |
+| `anthropic/claude-opus-5.5` | $4 / $20 | $0.56 | $0.68 |
+| `anthropic/claude-sonnet-5.5` | $2 / $10 | $0.28 | $0.34 |
+| `google/gemini-4-argon` | $2 / $10 | $0.28 | $0.34 |
+| `deepseek/deepseek-v4.1-flash` | $0.15 / $0.60 | $0.021 | $0.025 |
+| `anthropic/claude-haiku-5.5` | $0.10 / $0.50 | $0.016 | $0.019 |
+| `openai/gpt-6-luna` | $0.10 / $0.50 | $0.016 | $0.019 |
+| `z-ai/glm-5.3-flash` | $0.028 / $0.21 | $0.006 | $0.007 |
+| `qwen/qwen3.6-35b-a3b` | $0.01 / $0.09 | $0.003 | $0.003 |
 
-**A whole album costs about a dollar on the most expensive model available.**
+**A whole album costs well under a dollar even on the most expensive model
+available**, now that images are sent at 512px.
 So switching to a cheap model saves roughly one dollar per book — against a
 print that costs CHF 40-100. If money is the only reason to go cheaper, it is
 not a good reason here.
@@ -473,10 +480,11 @@ The reasons that are good: keeping your photographs off third-party servers,
 working without a connection, or not wanting an account. Those all point at a
 local model, not a cheap hosted one.
 
-Note which call dominates: **annotate, not planning**, because images are
-expensive and planning is one text call. That is why the recommended split
-puts annotate on your own GPU — it removes most of the cost and all of the
-privacy question at once.
+Which call dominates depends on what you have already optimised. With 1200px
+images it was annotate. At the current 512px default, **revisions are the
+largest line** — each is a full planning-sized call and you make several —
+followed by planning, with annotation last. Moving annotate to a local GPU
+still removes the whole privacy question, which is the better reason for it.
 
 If you want to go cheaper than `balanced.yaml`, the next step down is
 `anthropic/claude-haiku-5.5` for all three roles at about $0.028 per album, or
