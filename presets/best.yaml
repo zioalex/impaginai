@@ -1,0 +1,25 @@
+# BEST RESULT — when the book matters more than a dollar.
+#
+# Cost for a 100-photograph album with three revisions: about $1.10.
+# A Saal Professional Line print costs CHF 40-100, so this is noise.
+#
+#   python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
+#          --models presets/best.yaml
+#
+# Needs: OPENROUTER_API_KEY
+
+default:
+  base_url: openrouter
+  model: anthropic/claude-sonnet-5.5
+
+annotate:
+  model: anthropic/claude-sonnet-5.5     # strong captions feed a strong plan
+  # vision stays on; this is the only role that sees images
+
+plan:
+  model: anthropic/claude-opus-5.5       # one call, decides the whole book
+  json_mode: true
+
+revise:
+  model: anthropic/claude-sonnet-5.5     # targeted edits; Opus is overkill
+  json_mode: true

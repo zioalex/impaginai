@@ -292,6 +292,32 @@ is the thing that fails:
 3. **Vision, for the annotate pass only.** Optional. Without it the planner
    works from captions, timestamps, GPS and pixel dimensions.
 
+### Just tell me what to use
+
+Three presets ship in `presets/`. Pass one and you are done.
+
+```bash
+python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
+       --models presets/balanced.yaml
+```
+
+| Preset | annotate | plan | revise | 100-photo album |
+|---|---|---|---|---|
+| `best.yaml` | Sonnet 5.5 | **Opus 5.5** | Sonnet 5.5 | ~$1.10 |
+| `balanced.yaml` **(start here)** | **Qwen3-VL 32B, local** | Sonnet 5.5 | Sonnet 5.5 | ~$0.07 |
+| `local.yaml` | Qwen3-VL 32B | Qwen3-VL 32B | Qwen3-VL 32B | free, offline |
+
+**`balanced.yaml` is the recommendation on a 24 GB card.** Annotation runs on
+your own GPU because it is the call that dominates token cost, the only one
+that touches your actual photographs, and it is cached after the first run.
+Planning stays remote because it is one call that decides whether the book is
+good, and one call costs seven cents.
+
+Go to `best.yaml` for a book that matters — a dollar against a CHF 40-100
+print is not a real trade-off. Go to `local.yaml` when the photographs must not
+leave the house at all, and accept that you will press *Design again* more
+often.
+
 ### A different model per job
 
 The three calls are not the same job, and one model for all of them is either
@@ -436,28 +462,17 @@ expensive and planning is one text call. That is why the recommended split
 puts annotate on your own GPU — it removes most of the cost and all of the
 privacy question at once.
 
-A reasonable cheap stack, if you want one:
+If you want to go cheaper than `balanced.yaml`, the next step down is
+`anthropic/claude-haiku-5.5` for all three roles at about $0.028 per album, or
+`openai/gpt-6-luna` at the same price. Below that the savings are fractions of
+a cent and the risk is a worse book. Benchmark before committing.
 
-```yaml
-default:
-  base_url: openrouter
-  model: anthropic/claude-haiku-5.5    # ~$0.02 per album, all three roles
-plan:
-  model: deepseek/deepseek-v4.1-flash  # or keep Haiku; benchmark both
-  json_mode: true
-```
-
-And the cheapest sensible arrangement, which is also the most private:
-
-```yaml
-default:
-  base_url: ollama
-  model: qwen3-vl:32b                  # everything local, $0.00
-plan:
-  base_url: openrouter
-  model: anthropic/claude-sonnet-5.5   # ~$0.07 per album for the one call
-  json_mode: true                      #   that decides the result
-```
+**Schema-constrained decoding does a lot of the work here.** With
+`json_mode: true` the project sends the actual layout JSON schema, not just
+"please return JSON", and OpenAI, vLLM, Ollama and llama.cpp all constrain
+decoding to it. That removes most of the structural failure mode and is what
+makes a 32B local model a plausible planner at all. Endpoints that do not
+understand it fall back automatically.
 
 Verify vision and structured-output support on each model's own OpenRouter
 page — the capability flags there are authoritative and third-party summaries

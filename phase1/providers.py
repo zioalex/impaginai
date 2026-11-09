@@ -217,6 +217,26 @@ def _anthropic(p: Provider):
     return complete
 
 
+_SCHEMA_CACHE: dict = {}
+
+
+def _layout_schema():
+    """The layout JSON schema, for endpoints that constrain decoding to it.
+
+    Only used for the planning and revision calls; the annotate pass returns a
+    bare array and is left alone.
+    """
+    if "v" in _SCHEMA_CACHE:
+        return _SCHEMA_CACHE["v"]
+    try:
+        from schema import Layout
+
+        _SCHEMA_CACHE["v"] = Layout.model_json_schema()
+    except Exception:
+        _SCHEMA_CACHE["v"] = None
+    return _SCHEMA_CACHE["v"]
+
+
 def _openai(p: Provider):
     import httpx
 
@@ -232,11 +252,40 @@ def _openai(p: Provider):
             "messages": _to_openai(system, msgs),
             "max_tokens": p.max_tokens,
         }
-        if p.json_mode:
-            body["response_format"] = {"type": "json_object"}
+        # The annotate pass returns a bare array, which the layout schema does
+        # not describe; detect it and leave json_mode off for that call.
+        if system.startswith("You are a picture editor"):
+            body["_skip_schema"] = True
+        if body.pop("_skip_schema", False):
+            pass
+        elif p.json_mode:
+            # Prefer a real schema over bare JSON mode. OpenAI, vLLM, Ollama
+            # and llama.cpp all constrain decoding to the grammar, which turns
+            # "will this model emit valid JSON" from a gamble into a near
+            # certainty — and that is what makes small local models usable as
+            # planners at all. Endpoints that only understand json_object are
+            # handled by the retry below.
+            schema = _layout_schema()
+            if schema is not None:
+                body["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {"name": "album_layout", "strict": False,
+                                    "schema": schema},
+                }
+            else:
+                body["response_format"] = {"type": "json_object"}
         # Generous timeout: a local model on CPU is slow, and a planning call
         # is one request per album, not a hot path.
         r = httpx.post(url, headers=headers, json=body, timeout=600.0)
+        # Not every endpoint understands json_schema. Fall back rather than
+        # fail: a 400 mentioning response_format is a capability problem, not a
+        # prompt problem.
+        if r.status_code >= 400 and "response_format" in body and "response_format" in r.text:
+            body["response_format"] = {"type": "json_object"}
+            r = httpx.post(url, headers=headers, json=body, timeout=600.0)
+            if r.status_code >= 400:
+                body.pop("response_format")
+                r = httpx.post(url, headers=headers, json=body, timeout=600.0)
         if r.status_code >= 400:
             raise RuntimeError(f"{r.status_code} from {url}: {r.text[:400]}")
         data = r.json()

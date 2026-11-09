@@ -1,0 +1,35 @@
+# RECOMMENDED — the default worth starting from on a 24 GB GPU.
+#
+# Annotation runs on your own machine: it is the call that dominates token
+# cost (images are expensive, and there is one per 8 photographs), it is the
+# only call that touches your actual photographs, and it is cached after the
+# first run. Planning is a single text call where judgement decides whether the
+# book is any good, so that one is worth paying for.
+#
+# Cost for a 100-photograph album with three revisions: about $0.07.
+# Your photographs never leave the house.
+#
+#   ollama pull qwen3-vl:32b
+#   python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
+#          --models presets/balanced.yaml
+#
+# Needs: OPENROUTER_API_KEY. Ollama needs no key.
+
+default:
+  base_url: openrouter
+  model: anthropic/claude-sonnet-5.5
+  json_mode: true
+
+annotate:
+  base_url: ollama
+  model: qwen3-vl:32b          # ~21 GB at Q4; leaves headroom for image spikes
+  # Alternatives if this disappoints:
+  #   gemma4:31b          ~20 GB, strongest vision benchmarks of this tier
+  #   gemma3:27b          ~14 GB int4 QAT, most headroom, still good
+  #   qwen3-vl:8b         ~7 GB, if you want the GPU free for other work
+
+plan:
+  model: anthropic/claude-sonnet-5.5
+
+revise:
+  model: anthropic/claude-sonnet-5.5

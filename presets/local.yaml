@@ -1,0 +1,35 @@
+# FULLY LOCAL — nothing leaves the machine, no account, no cost, works offline.
+#
+# The honest trade: planning is the call that needs to follow a
+# 9,000-character layout brief, and a 32B model at Q4 is weaker at that than a
+# frontier model. Schema-constrained decoding (json_mode below) makes the
+# output structurally valid; it does not make the sequencing good. Expect to
+# use "Design again" more often.
+#
+# Benchmark it on your own photographs before trusting it:
+#   python phase1/tools/bench_model.py --photos ~/Pictures/x \
+#          --base-url ollama --compare qwen3-vl:32b gemma4:31b
+#
+#   ollama pull qwen3-vl:32b
+#   python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
+#          --models presets/local.yaml
+#
+# Needs: nothing. Ollama on localhost is treated as keyless.
+
+default:
+  base_url: ollama
+  model: qwen3-vl:32b
+  json_mode: true          # Ollama constrains decoding to the schema
+
+annotate:
+  model: qwen3-vl:32b
+
+plan:
+  model: qwen3-vl:32b
+  # If planning disappoints, a text-only model is often the better planner —
+  # it need not spend parameters on vision, and plan/revise never see images:
+  #   model: qwen3.6:27b
+  #   model: gemma4:31b
+
+revise:
+  model: qwen3-vl:32b
