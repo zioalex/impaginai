@@ -188,24 +188,37 @@ def size_capability(photos: list[Photo], g: Geometry, warn_dpi: float, block_dpi
 
 
 def annotate_limits(photos: list[Photo], g: Geometry, warn_dpi: float) -> None:
-    """Mark which templates each photo is too small for, at the warn threshold."""
-    slot_sizes: dict[str, float] = {}
-    for spec in templates_lib.REGISTRY.values():
-        if not spec.planner_visible or spec.slot_count == 0:
-            continue
-        rendered = templates_lib.build(spec.name, g, {})
-        slot_sizes[spec.name] = max(
-            (b.rect.w * b.rect.h for b in rendered.slots), default=0.0
-        )
+    """Mark which templates — or which slots of them — each photo is too small for.
+
+    Every slot is measured, not just the largest by area. Cover-cropping makes
+    the slot's shape matter as much as its size: a landscape frame in a tall
+    column is scaled by its height and loses most of its width, so the tall
+    column can need far more pixels than a bigger, squarer slot beside it.
+
+    `avoid` holds a template name when the photo fits none of its slots, and
+    "template slot N" (1-based, the order photographs are listed) when it fits
+    some positions but not that one.
+    """
+    rendered = {
+        spec.name: templates_lib.build(spec.name, g, {})
+        for spec in templates_lib.REGISTRY.values()
+        if spec.planner_visible and spec.slot_count > 0
+    }
+    biggest = {n: max(b.rect.w * b.rect.h for b in r.slots) for n, r in rendered.items()}
     for p in photos:
-        avoid = []
-        for name in sorted(slot_sizes, key=lambda n: -slot_sizes[n]):
-            rendered = templates_lib.build(name, g, {})
-            biggest = max(rendered.slots, key=lambda b: b.rect.w * b.rect.h)
-            if effective_dpi(p.width, p.height, biggest.rect) < warn_dpi:
+        avoid, whole = [], 0
+        for name in sorted(rendered, key=lambda n: -biggest[n]):
+            bad = [i for i, b in enumerate(rendered[name].slots, 1)
+                   if effective_dpi(p.width, p.height, b.rect) < warn_dpi]
+            if not bad:
+                continue
+            if len(bad) == len(rendered[name].slots):
                 avoid.append(name)
+                whole += 1
+            else:
+                avoid.extend(f"{name} slot {i}" for i in bad)
         p.avoid = avoid
-        p.unusable = len(avoid) == len(slot_sizes)
+        p.unusable = whole == len(rendered)
 
 
 def load(photo_dir: Path, captions_file: Path | None, g: Geometry, warn_dpi: float,

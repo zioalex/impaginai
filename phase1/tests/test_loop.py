@@ -439,8 +439,31 @@ def main() -> int:
         "meta.title was stripped as if it were a schema annotation"
     focal = (sch["properties"]["spreads"]["items"]["properties"]["slots"]
              ["items"]["properties"]["focal"])
-    assert focal.get("minItems") == 2 and focal.get("maxItems") == 2, \
-        "tuple bounds lost when prefixItems was rewritten"
+    assert focal.get("type") == "array" and focal.get("items", {}).get("type") == "number", \
+        "focal lost its shape when prefixItems was rewritten"
+    # Anthropic's structured output rejects value constraints, minItems above
+    # 1 and any additionalProperties other than false. Pydantic still checks
+    # all of these after decoding, so the schema only steers.
+    def _walk(n):
+        if isinstance(n, dict):
+            for k, v in n.items():
+                if k == "properties":
+                    for sub in v.values():
+                        yield from _walk(sub)
+                    continue
+                yield k, v
+                yield from _walk(v)
+        elif isinstance(n, list):
+            for x in n:
+                yield from _walk(x)
+    for k, v in _walk(sch):
+        assert k not in ("minimum", "maximum", "maxItems", "minLength", "maxLength"), \
+            f"{k} survives; Anthropic rejects it"
+        assert not (k == "minItems" and v > 1), "minItems above 1 survives"
+        assert not (k == "additionalProperties" and v is not False), \
+            "open additionalProperties survives; Anthropic only accepts false"
+    opts = sch["properties"]["spreads"]["items"]["properties"]["options"]
+    assert "side" in opts["properties"], "options closed without declaring side"
     try:
         import jsonschema
 
