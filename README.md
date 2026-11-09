@@ -178,20 +178,25 @@ exactly what to measure when the book arrives.
 
 ## Which model
 
-Three presets ship in `presets/` — pass one and you are done:
+Four presets ship in `presets/` — pass one and you are done:
 
 ```bash
 python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
-       --models presets/balanced.yaml
+       --models presets/hybrid.yaml
 ```
 
-| Preset | annotate | plan / revise | 100-photo album |
-|---|---|---|---|
-| `best.yaml` | Sonnet 5.5 | Opus 5.5 / Sonnet 5.5 | ~$1.10 |
-| `balanced.yaml` **(start here)** | Qwen3-VL 32B, on your GPU | Sonnet 5.5 | ~$0.07 |
-| `local.yaml` | Qwen3-VL 32B | Qwen3-VL 32B | free, offline |
+| Preset | annotate | plan | revise | 100-photo album |
+|---|---|---|---|---|
+| `cloud-best.yaml` | Sonnet 5.5 | **Opus 5.5** | Sonnet 5.5 | ~$1.10 |
+| `cloud-cheap.yaml` | Haiku 5.5 | Haiku 5.5 | Haiku 5.5 | ~$0.03 |
+| `hybrid.yaml` **(24 GB GPU: start here)** | **Qwen3-VL 32B, local** | Sonnet 5.5 | Sonnet 5.5 | ~$0.07 |
+| `local.yaml` | Qwen3-VL 32B | Qwen3-VL 32B | Qwen3-VL 32B | free, offline |
 
-
+**All cloud** needs no GPU and only `OPENROUTER_API_KEY`. **Hybrid** is the
+pick for a 24 GB card: annotation on your own GPU, because it dominates the
+token cost and is the only call that sees your photographs, with planning in
+the cloud because that single call decides whether the book is good. **Local**
+keeps everything in the house at the cost of a weaker planner.
 
 ### Why those, and how to check them
 

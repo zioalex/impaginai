@@ -1,10 +1,10 @@
-# BEST RESULT — when the book matters more than a dollar.
+# ALL CLOUD, BEST RESULT — no GPU needed, when the book matters.
 #
 # Cost for a 100-photograph album with three revisions: about $1.10.
 # A Saal Professional Line print costs CHF 40-100, so this is noise.
 #
 #   python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
-#          --models presets/best.yaml
+#          --models presets/cloud-best.yaml
 #
 # Needs: OPENROUTER_API_KEY
 

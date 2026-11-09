@@ -294,29 +294,45 @@ is the thing that fails:
 
 ### Just tell me what to use
 
-Three presets ship in `presets/`. Pass one and you are done.
+Four presets ship in `presets/`. Pass one and you are done.
 
 ```bash
 python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
-       --models presets/balanced.yaml
+       --models presets/hybrid.yaml
 ```
 
 | Preset | annotate | plan | revise | 100-photo album |
 |---|---|---|---|---|
-| `best.yaml` | Sonnet 5.5 | **Opus 5.5** | Sonnet 5.5 | ~$1.10 |
-| `balanced.yaml` **(start here)** | **Qwen3-VL 32B, local** | Sonnet 5.5 | Sonnet 5.5 | ~$0.07 |
+| `cloud-best.yaml` | Sonnet 5.5 | **Opus 5.5** | Sonnet 5.5 | ~$1.10 |
+| `cloud-cheap.yaml` | Haiku 5.5 | Haiku 5.5 | Haiku 5.5 | ~$0.03 |
+| `hybrid.yaml` **(24 GB GPU: start here)** | **Qwen3-VL 32B, local** | Sonnet 5.5 | Sonnet 5.5 | ~$0.07 |
 | `local.yaml` | Qwen3-VL 32B | Qwen3-VL 32B | Qwen3-VL 32B | free, offline |
 
-**`balanced.yaml` is the recommendation on a 24 GB card.** Annotation runs on
-your own GPU because it is the call that dominates token cost, the only one
-that touches your actual photographs, and it is cached after the first run.
-Planning stays remote because it is one call that decides whether the book is
-good, and one call costs seven cents.
+**All cloud** — nothing to install, works on a laptop or a NAS with no GPU.
+`cloud-cheap.yaml` runs the whole album through Haiku 5.5 for about three
+cents; `cloud-best.yaml` puts Opus 5.5 on the one call that decides the book
+for about a dollar. Both need only `OPENROUTER_API_KEY`.
 
-Go to `best.yaml` for a book that matters — a dollar against a CHF 40-100
-print is not a real trade-off. Go to `local.yaml` when the photographs must not
-leave the house at all, and accept that you will press *Design again* more
+**Hybrid** — the recommendation for your 24 GB card. Annotation runs on the
+GPU because it is the call that dominates token cost (images are expensive,
+one call per eight photographs), the only call that touches your actual
+photographs, and it is cached after the first run. Planning stays in the cloud
+because it is a single call that decides whether the book is good, and a single
+call costs seven cents. You get local privacy on the photographs and frontier
+judgement on the layout.
+
+**Fully local** — nothing leaves the machine, no account, works offline. The
+honest trade is that a 32B model at Q4 follows a 9,000-character layout brief
+less reliably than a frontier model, so expect to press *Design again* more
 often.
+
+Moving one role is a one-line change, because the roles are independent:
+
+```bash
+# cheap everywhere, but spend on the call that matters
+python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
+       --models presets/cloud-cheap.yaml --plan-model anthropic/claude-sonnet-5.5
+```
 
 ### A different model per job
 

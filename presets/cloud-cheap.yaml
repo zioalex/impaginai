@@ -1,0 +1,38 @@
+# ALL CLOUD, BUDGET — no GPU needed, nothing to install, ~$0.03 per album.
+#
+# Everything runs on OpenRouter. Use this on a laptop, a NAS, or any box
+# without a usable GPU. Haiku 5.5 is strong enough for the annotate pass
+# (a subject, a face count, a scene type, a focal point) and competent at
+# planning; schema-constrained decoding keeps the output valid.
+#
+# Cost for a 100-photograph album with three revisions: about $0.028.
+#
+#   python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
+#          --models presets/cloud-cheap.yaml
+#
+# Needs: OPENROUTER_API_KEY
+#
+# If planning disappoints, move just that one role up — it is a single call:
+#   plan: {model: anthropic/claude-sonnet-5.5}     # +$0.07, nothing else changes
+
+default:
+  base_url: openrouter
+  model: anthropic/claude-haiku-5.5
+  json_mode: true
+
+annotate:
+  model: anthropic/claude-haiku-5.5
+  # Alternatives at the same price:
+  #   openai/gpt-6-luna          $0.10/$0.50
+  #   z-ai/glm-5.3-flash         $0.028/$0.21, cheaper still
+  #   qwen/qwen3.6-35b-a3b       $0.01/$0.09, cheapest vision on OpenRouter
+
+plan:
+  model: anthropic/claude-haiku-5.5
+  # Benchmark before trusting a cheaper planner than this:
+  #   python phase1/tools/bench_model.py --photos ~/Pictures/x \
+  #          --base-url openrouter --compare anthropic/claude-haiku-5.5 \
+  #                 deepseek/deepseek-v4.1-flash z-ai/glm-5.3-flash
+
+revise:
+  model: anthropic/claude-haiku-5.5
