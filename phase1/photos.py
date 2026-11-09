@@ -19,6 +19,7 @@ from PIL import Image, ExifTags
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "phase0"))
 
+import imaging  # noqa: E402  (registers HEIC/HEIF decoders on import)
 import templates_lib  # noqa: E402
 from geometry import Geometry, effective_dpi  # noqa: E402
 
@@ -104,11 +105,12 @@ def _gps(raw: dict) -> tuple[float, float] | None:
 
 
 def read_dir(photo_dir: Path) -> list[Photo]:
-    exts = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".heic"}
+    exts = imaging.EXTENSIONS
+    candidates = [p for p in sorted(photo_dir.iterdir()) if p.suffix.lower() in exts]
+    if (problem := imaging.check(candidates)):
+        raise SystemExit(problem)
     out: list[Photo] = []
-    for order, p in enumerate(sorted(photo_dir.iterdir())):
-        if p.suffix.lower() not in exts:
-            continue
+    for order, p in enumerate(candidates):
         with Image.open(p) as im:
             w, h = im.size
             # DateTimeOriginal and GPS live in their own sub-IFDs, NOT in the

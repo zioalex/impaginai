@@ -47,6 +47,7 @@ from pydantic import BaseModel
 
 import annotate
 import cluster
+import imaging
 import geocode
 import overrides as OV
 import photos as PH
@@ -391,6 +392,10 @@ def main():
     # Planning is the call that cannot be skipped, so its key decides whether
     # the album can be designed at all; annotate degrades gracefully.
     STATE["has_key"] = roles["plan"].usable
+    heic = sorted(p for p in args.photos.iterdir()
+                  if p.suffix.lower() in imaging.HEIF_EXTENSIONS) if args.photos.is_dir() else []
+    if (problem := imaging.check(heic)):
+        raise SystemExit(problem)
     ph = reload_photos()
     ensure_thumbs(ph)
     print(f"\n  {len(ph)} photographs · {len(STATE['groups'])} groups · {args.format}")

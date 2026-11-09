@@ -115,7 +115,6 @@ are cheap. If revisions stop feeling cheap, something has turned vision back on.
 
 ## Not done yet
 
-- HEIC needs `pillow-heif` if the source photographs come off an iPhone.
 - `who` in the annotations is a per-batch description ("two children"), not
   identity recognition, so it will not reliably link one person across an album
   shot over ten days. Face embeddings computed locally, or letting the user tag

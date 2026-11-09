@@ -26,6 +26,7 @@ import yaml
 from PIL import Image, ImageCms, ImageOps
 
 import charts
+import imaging  # registers HEIC/HEIF decoders on import
 import templates_lib
 from geometry import Geometry, Rect, spine_width_mm, MM_PER_INCH
 from schema import Layout
