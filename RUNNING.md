@@ -292,6 +292,75 @@ is the thing that fails:
 3. **Vision, for the annotate pass only.** Optional. Without it the planner
    works from captions, timestamps, GPS and pixel dimensions.
 
+### A different model per job
+
+The three calls are not the same job, and one model for all of them is either
+overpaying or underperforming. What each actually needs:
+
+| Role | Calls per album | Vision | Output | What decides success |
+|---|---|---|---|---|
+| `annotate` | one per 8 photographs, **then cached forever** | **required** | a small JSON array | nothing much — a soft subject line barely moves the layout |
+| `plan` | exactly one | no | 1.4k–6k tokens of schema-valid JSON | obeying a ~9,000-character brief; this is what makes the book good or flat |
+| `revise` | one per comment | no | a complete new layout | changing what was asked and leaving the rest alone |
+
+So the sensible split is: **annotate on whatever is cheapest or local, plan on
+the best model you will pay for, revise in the middle.** Annotation runs once
+and is cached, so a local GPU doing it costs nothing per album. Planning is a
+single call where quality decides the result, which makes it the one place
+frontier pricing is justified — and it is one call, so it costs cents.
+
+Put that in a `models.yaml`:
+
+```yaml
+# A `default` block, then only what each role overrides.
+default:
+  base_url: openrouter
+  model: anthropic/claude-sonnet-5.5
+
+annotate:
+  base_url: ollama            # local GPU, no key, free
+  model: qwen3-vl:32b
+
+plan:
+  model: anthropic/claude-opus-5.5    # the call that matters
+  json_mode: true
+
+# revise inherits the default
+```
+
+```bash
+python phase2/server.py --album ./albums/sardinien --photos ~/Pictures/x \
+       --models models.yaml
+```
+
+Both the CLI and the editor print the resolved routing at startup:
+
+```
+  annotate  qwen3-vl:32b via http://localhost:11434/v1
+  plan      anthropic/claude-opus-5.5 via https://openrouter.ai/api/v1
+  revise    anthropic/claude-sonnet-5.5 via https://openrouter.ai/api/v1
+```
+
+Everything is overridable without a file. Precedence, strongest first:
+
+1. a role flag — `--plan-model`, `--annotate-base-url`
+2. a role environment variable — `ALBUM_PLAN_MODEL`, `ALBUM_ANNOTATE_BASE_URL`
+3. the role's block in `models.yaml`
+4. the generic flag or `ALBUM_MODEL` / `ALBUM_BASE_URL`
+5. the built-in default
+
+```bash
+# try a cheaper planner for one run, leaving everything else alone
+python phase1/album.py plan --album ../albums/x --photos ./demo_photos \
+       --models models.yaml --plan-model deepseek/deepseek-v4.1-flash
+```
+
+`plan` and `revise` never send images, so vision is forced off for them
+whatever the config says — a text-only model is a perfectly good planner. Only
+`annotate` needs to see, and if its endpoint has no key or no vision the pass
+is skipped and the planner falls back to captions, timestamps, GPS and pixel
+dimensions.
+
 ### Running it on a 24 GB GPU
 
 A 24 GB card (RTX 3090, 4090, 5090) fits a capable vision model at 4-bit with

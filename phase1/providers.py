@@ -78,11 +78,11 @@ class Provider:
         """A local endpoint needs no key; a hosted one does."""
         return bool(self.api_key) or self.is_local
 
-    def describe(self) -> str:
+    def describe(self, mention_vision: bool = True) -> str:
         where = self.base_url or ("api.anthropic.com" if self.name == "anthropic"
                                   else ALIASES["openai"])
         bits = [f"{self.model} via {where}"]
-        if not self.vision:
+        if mention_vision and not self.vision:
             bits.append("no vision")
         if not self.usable:
             bits.append("NO API KEY")
@@ -251,6 +251,140 @@ def _openai(p: Provider):
     return complete
 
 
+# --- roles ---------------------------------------------------------------
+#
+# The three calls are not the same job, and paying frontier prices for all of
+# them is waste while running all of them locally costs you the book.
+#
+#   annotate  many short calls · vision REQUIRED · tiny JSON array out ·
+#             errors are cheap (one soft annotation barely moves the layout) ·
+#             cached, so it runs once per album
+#             -> cheapest thing that can see and emit a JSON array. Local wins.
+#
+#   plan      one long call · no vision · must obey a ~9,000-character brief ·
+#             1.4k-6k tokens of schema-valid JSON out · decides whether the
+#             book is any good
+#             -> the best instruction-follower you are willing to pay for.
+#
+#   revise    one call · no vision · has the whole layout in context · must
+#             change what was asked and leave the rest alone
+#             -> instruction-following again, but less invention than plan;
+#                a mid-tier model is usually enough.
+
+ROLES = ("annotate", "plan", "revise")
+
+ROLE_NEEDS = {
+    "annotate": "vision required, many cheap calls, cached after the first run",
+    "plan": "no vision, must follow a long brief, decides the album's quality",
+    "revise": "no vision, targeted edits to an existing layout",
+}
+
+
+def _role_env(role: str, field: str) -> str | None:
+    """ALBUM_PLAN_MODEL overrides ALBUM_MODEL, and so on."""
+    return os.environ.get(f"ALBUM_{role.upper()}_{field}") or os.environ.get(f"ALBUM_{field}")
+
+
+def load_model_config(path) -> dict:
+    """models.yaml — a `default` block plus optional per-role overrides.
+
+        default:
+          base_url: openrouter
+          model: anthropic/claude-sonnet-5.5
+        annotate:
+          base_url: ollama
+          model: qwen3-vl:32b
+        plan:
+          model: anthropic/claude-opus-5.5
+
+    Keys match the flag names with underscores: provider, model, base_url,
+    api_key, vision, json_mode. A role inherits anything it does not set.
+    """
+    import yaml
+
+    if path is None:
+        return {}
+    path = __import__("pathlib").Path(path)
+    if not path.exists():
+        return {}
+    raw = yaml.safe_load(path.read_text()) or {}
+    return {k: (v or {}) for k, v in raw.items() if isinstance(v, dict) or v is None}
+
+
+def resolve_role(role: str, args=None, config: dict | None = None) -> Provider:
+    """Which model answers for this role.
+
+    Precedence, strongest first: a role-specific flag (--plan-model), a
+    role-specific environment variable (ALBUM_PLAN_MODEL), the role's block in
+    models.yaml, then the generic flag/env/default chain already in resolve().
+    """
+    if role not in ROLES:
+        raise ValueError(f"unknown role {role!r}")
+    cfg = dict((config or {}).get("default", {}))
+    cfg.update((config or {}).get(role, {}))
+
+    def pick(field, flag_name=None):
+        if args is not None:
+            v = getattr(args, f"{role}_{field}", None)
+            if v not in (None, False):
+                return v
+        if (v := _role_env(role, field.upper())) is not None:
+            return v
+        if field in cfg:
+            return cfg[field]
+        return None
+
+    vision = pick("vision")
+    if isinstance(vision, str):
+        vision = vision not in ("0", "false", "no")
+    # Planning and revision never send images, so a text-only model is fine for
+    # them whatever the config says. Only annotate genuinely needs to see.
+    if role in ("plan", "revise"):
+        vision = False
+
+    jm = pick("json_mode")
+    if isinstance(jm, str):
+        jm = jm in ("1", "true", "yes")
+
+    p = resolve(
+        provider=pick("provider"),
+        model=pick("model"),
+        base_url=pick("base_url"),
+        api_key=pick("api_key"),
+        vision=vision,
+        json_mode=jm,
+    )
+    # A generic flag should still win over a models.yaml default, so fall back
+    # to the plain resolution for anything the role did not pin.
+    if args is not None:
+        generic = from_args(args)
+        if pick("model") is None and getattr(args, "model", None):
+            p.model = generic.model
+        if pick("base_url") is None and getattr(args, "base_url", None):
+            p.name, p.base_url = generic.name, generic.base_url
+    return p
+
+
+def resolve_all(args=None, config_path=None) -> dict[str, Provider]:
+    cfg = load_model_config(config_path)
+    return {r: resolve_role(r, args, cfg) for r in ROLES}
+
+
+def describe_roles(by_role: dict[str, Provider]) -> str:
+    rows = []
+    for r in ROLES:
+        p = by_role[r]
+        # Only annotate sends images, so a missing vision capability is only
+        # worth reporting there.
+        rows.append(f"  {r:9s} {p.describe(mention_vision=(r == 'annotate'))}")
+    # Collapse the common case: one model doing everything.
+    if len({(p.name, p.model, p.base_url) for p in by_role.values()}) == 1:
+        # Report the annotate provider: it is the only role that needs vision,
+        # so its description carries the warning that matters.
+        return "  model     " + by_role["annotate"].describe()
+    return "\n".join(rows)
+
+
 def add_arguments(ap) -> None:
     """Shared CLI flags, so every entry point offers the same choice."""
     g = ap.add_argument_group("model")
@@ -264,6 +398,15 @@ def add_arguments(ap) -> None:
                    help="the model cannot see images; skip the annotate pass")
     g.add_argument("--json-mode", action="store_true",
                    help="ask the endpoint to guarantee valid JSON (OpenAI-compatible only)")
+    g.add_argument("--models", default=None, metavar="FILE",
+                   help="models.yaml giving a different model per role "
+                        "(annotate / plan / revise); see RUNNING.md")
+    for role in ROLES:
+        r = ap.add_argument_group(f"model for '{role}' ({ROLE_NEEDS[role]})")
+        r.add_argument(f"--{role}-model", default=None,
+                       help=f"override the model for {role}")
+        r.add_argument(f"--{role}-base-url", default=None,
+                       help=f"override the endpoint for {role}")
 
 
 def from_args(args) -> Provider:

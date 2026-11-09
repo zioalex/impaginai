@@ -85,8 +85,9 @@ def make_thumbnails(ph, dst: Path, long_edge: int = 1200) -> Path:
 
 def do_annotate(args) -> int:
     lab, g, fmt, ph, groups, _, ov = setup(args)
-    prov = providers.from_args(args)
-    print(f"model: {prov.describe()}")
+    roles = providers.resolve_all(args, getattr(args, "models", None))
+    prov = roles["annotate"]
+    print(f"annotate: {prov.describe()}")
     if not prov.vision:
         print("this model cannot see images — nothing to annotate")
         return 0
@@ -103,9 +104,10 @@ def do_annotate(args) -> int:
 def do_plan(args) -> int:
     lab, g, fmt, ph, groups, anns, ov = setup(args)
     store = Store(args.album)
-    prov = providers.from_args(args)
+    roles = providers.resolve_all(args, getattr(args, "models", None))
+    prov = roles["plan"]
     print(f"{len(ph)} photos, {sum(1 for p in ph if p.caption)} captioned, format {fmt}")
-    print(f"model: {prov.describe()}")
+    print(providers.describe_roles(roles))
     print(f"{len(groups)} moment/place groups:")
     for grp in groups[:8]:
         print(f"  {grp.id}: {grp.label}")
@@ -161,7 +163,9 @@ def do_revise(args) -> int:
     store = Store(args.album)
     parent, current = store.get(args.from_version)
     print(f"revising v{parent.version_no:03d} (text only, no images)")
-    prov = providers.from_args(args)
+    roles = providers.resolve_all(args, getattr(args, "models", None))
+    prov = roles["revise"]
+    print(f"revise: {prov.describe(mention_vision=False)}")
     res = planner.revise(
         current=current, comment=args.comment, photos=ph, g=g, lab=lab,
         language=args.language, complete=providers.make_completer(prov),
