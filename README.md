@@ -178,6 +178,23 @@ exactly what to measure when the book arrives.
 
 ## Which model
 
+Three presets ship in `presets/` — pass one and you are done:
+
+```bash
+python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
+       --models presets/balanced.yaml
+```
+
+| Preset | annotate | plan / revise | 100-photo album |
+|---|---|---|---|
+| `best.yaml` | Sonnet 5.5 | Opus 5.5 / Sonnet 5.5 | ~$1.10 |
+| `balanced.yaml` **(start here)** | Qwen3-VL 32B, on your GPU | Sonnet 5.5 | ~$0.07 |
+| `local.yaml` | Qwen3-VL 32B | Qwen3-VL 32B | free, offline |
+
+
+
+### Why those, and how to check them
+
 A whole album costs roughly **$1 on the most expensive model available** and
 about **$0.02 on a cheap one** — against a print that costs CHF 40-100. Cost is
 not the reason to pick one; capability is, and the capability that matters is
