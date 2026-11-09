@@ -37,6 +37,7 @@ import geocode  # noqa: E402
 import overrides as OV  # noqa: E402
 import photos as PH  # noqa: E402
 import planner  # noqa: E402
+import providers  # noqa: E402
 import prompt as P  # noqa: E402
 from versions import Store  # noqa: E402
 
@@ -84,11 +85,16 @@ def make_thumbnails(ph, dst: Path, long_edge: int = 1200) -> Path:
 
 def do_annotate(args) -> int:
     lab, g, fmt, ph, groups, _, ov = setup(args)
+    prov = providers.from_args(args)
+    print(f"model: {prov.describe()}")
+    if not prov.vision:
+        print("this model cannot see images — nothing to annotate")
+        return 0
     thumbs = make_thumbnails(ph, args.album / "derivatives" / "proof")
     print(f"looking at {len(ph)} photographs in batches of {annotate.BATCH}...")
     anns, usage = annotate.run(ph, thumbs, args.album / "annotations.json",
-                               planner.anthropic_completer(args.model), force=args.force)
-    print(f"  {usage.line()}")
+                               providers.make_completer(prov), force=args.force)
+    print(f"  {usage.line(priced=prov.name == 'anthropic' and not prov.base_url)}")
     print(f"  {len(anns.by_id)} annotations cached — planning and every revision from "
           f"here on is text only")
     return 0
@@ -97,7 +103,9 @@ def do_annotate(args) -> int:
 def do_plan(args) -> int:
     lab, g, fmt, ph, groups, anns, ov = setup(args)
     store = Store(args.album)
+    prov = providers.from_args(args)
     print(f"{len(ph)} photos, {sum(1 for p in ph if p.caption)} captioned, format {fmt}")
+    print(f"model: {prov.describe()}")
     print(f"{len(groups)} moment/place groups:")
     for grp in groups[:8]:
         print(f"  {grp.id}: {grp.label}")
@@ -127,7 +135,9 @@ def do_plan(args) -> int:
         args.spreads = min_spreads
 
     thumb_dir = None
-    if args.with_thumbnails:
+    if args.with_thumbnails and not prov.vision:
+        print("--with-thumbnails ignored: this model cannot see images")
+    elif args.with_thumbnails:
         thumb_dir = make_thumbnails(ph, args.album / "derivatives" / "proof")
         print(f"attaching {len(list(thumb_dir.glob('*.jpg')))} thumbnails — this pays "
               f"again on every retry; `annotate` is usually the better spend")
@@ -136,12 +146,12 @@ def do_plan(args) -> int:
     res = planner.plan(
         title=args.title or args.album.name, subtitle=args.subtitle, fmt=fmt,
         language=args.language, photos=ph, g=g, lab=lab,
-        complete=planner.anthropic_completer(args.model),
+        complete=providers.make_completer(prov),
         target_spreads=args.spreads, thumb_dir=thumb_dir, groups=groups,
     )
     data = finish(res.layout.model_dump(mode="json", exclude_none=False), ov, groups, ph)
     v = store.add(data, parent=None, change_summary="initial plan")
-    print(f"  {res.usage.line()}")
+    print(f"  {res.usage.line(priced=prov.name == 'anthropic' and not prov.base_url)}")
     print(f"  wrote v{v.version_no:03d} — {len(res.layout.spreads)} spreads / {res.layout.page_count} pages")
     return report(res.layout, args, g, lab, groups)
 
@@ -151,15 +161,16 @@ def do_revise(args) -> int:
     store = Store(args.album)
     parent, current = store.get(args.from_version)
     print(f"revising v{parent.version_no:03d} (text only, no images)")
+    prov = providers.from_args(args)
     res = planner.revise(
         current=current, comment=args.comment, photos=ph, g=g, lab=lab,
-        language=args.language, complete=planner.anthropic_completer(args.model),
+        language=args.language, complete=providers.make_completer(prov),
         groups=groups,
     )
     data = finish(res.layout.model_dump(mode="json", exclude_none=False), ov, groups, ph)
     v = store.add(data, parent=parent.version_no, user_comment=args.comment,
                   change_summary=res.layout.change_summary)
-    print(f"  {res.usage.line()}")
+    print(f"  {res.usage.line(priced=prov.name == 'anthropic' and not prov.base_url)}")
     print(f"  wrote v{v.version_no:03d}: {res.layout.change_summary or '(no summary returned)'}")
     return report(res.layout, args, g, lab, groups)
 
@@ -241,7 +252,7 @@ def main() -> int:
                        help="skip place-name lookup entirely")
         p.add_argument("--format", default=None)
         p.add_argument("--language", default="de")
-        p.add_argument("--model", default=planner.MODEL)
+        providers.add_arguments(p)
 
     p = sub.add_parser("plan"); common(p)
     p.add_argument("--title"); p.add_argument("--subtitle")

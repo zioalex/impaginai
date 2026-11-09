@@ -33,8 +33,10 @@ MODEL = "claude-sonnet-5"
 MAX_TOKENS = 16000
 MAX_ATTEMPTS = 3
 
-# Rough figures for the cost line. Adjust when pricing changes; they are here to
-# make the vision-on-revision trap visible, not to be an invoice.
+# Rough figures for the cost line, in Anthropic's terms. They exist to make the
+# vision-on-revision trap visible, not to be an invoice, and they are nonsense
+# for any other provider — so the dollar figure is only shown when it means
+# something. Token counts are always real.
 USD_PER_MTOK_IN = 3.0
 USD_PER_MTOK_OUT = 15.0
 
@@ -59,12 +61,10 @@ class Usage:
             + self.output_tokens / 1e6 * USD_PER_MTOK_OUT
         )
 
-    def line(self) -> str:
-        return (
-            f"{self.attempts} call(s), {self.images} image(s), "
-            f"{self.input_tokens:,} in / {self.output_tokens:,} out tokens "
-            f"≈ ${self.usd:.2f}"
-        )
+    def line(self, priced: bool = True) -> str:
+        base = (f"{self.attempts} call(s), {self.images} image(s), "
+                f"{self.input_tokens:,} in / {self.output_tokens:,} out tokens")
+        return base + (f" ≈ ${self.usd:.2f}" if priced else "")
 
 
 @dataclass
@@ -79,25 +79,14 @@ Completer = Callable[[str, list[dict]], tuple[str, Usage]]
 
 
 def anthropic_completer(model: str = MODEL) -> Completer:
-    from anthropic import Anthropic
+    """Kept for callers that want the default provider and nothing else.
 
-    client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    New code should go through providers.make_completer, which supports any
+    OpenAI-compatible endpoint as well.
+    """
+    import providers
 
-    def complete(system: str, messages: list[dict]) -> tuple[str, Usage]:
-        resp = client.messages.create(
-            model=model, max_tokens=MAX_TOKENS, system=system, messages=messages
-        )
-        text = "".join(b.text for b in resp.content if b.type == "text")
-        n_images = sum(
-            1
-            for m in messages
-            if isinstance(m["content"], list)
-            for b in m["content"]
-            if isinstance(b, dict) and b.get("type") == "image"
-        )
-        return text, Usage(resp.usage.input_tokens, resp.usage.output_tokens, 1, n_images)
-
-    return complete
+    return providers.make_completer(providers.resolve(provider="anthropic", model=model))
 
 
 def image_blocks(photos: list[Photo], thumb_dir: Path) -> list[dict]:

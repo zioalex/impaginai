@@ -38,7 +38,9 @@ Not a drag-and-drop editor. The entire point is that the user never positions a 
 - Renderer: Playwright + Chromium, HTML/CSS → PDF
 - Queue: Redis + RQ
 - Storage: filesystem volume (NAS-backed)
-- LLM: Anthropic API, Claude Sonnet for planning and revision
+- LLM: any model, via `phase1/providers.py`. Anthropic Messages API by default;
+  the OpenAI `/chat/completions` contract covers OpenRouter, OpenAI, Together,
+  Groq, vLLM, Ollama, LM Studio and llama.cpp
 
 ## Architecture
 
@@ -304,6 +306,35 @@ GPS, vision-suggested captions the user edits.
 - Adding composition shortened the demo album from 36 pages to 26 for the same
   21 photographs, by ending the one-photo-per-page default and its blank facing
   pages.
+
+## The model is a dependency, not a vendor
+
+`planner.py` only ever required a `Completer`: a function from (system prompt,
+messages) to (text, usage). The seam was there from Phase 1; what was missing
+was a second implementation, which made a self-hosted project bound to one
+vendor's endpoint for no architectural reason.
+
+`phase1/providers.py` supplies it. Messages are held internally in the Anthropic
+block shape — which distinguishes text from images explicitly — and translated
+on the way out; images become data URIs, which every OpenAI-compatible vision
+endpoint accepts with no upload step. Localhost endpoints are treated as
+keyless, so a model running on the same machine needs no configuration beyond
+`--base-url ollama`.
+
+What a model must actually be able to do, in order of how often it is the
+thing that fails:
+
+1. **Follow a JSON schema.** Output is validated and rejected on failure with
+   the error fed back, three attempts. This is the hard requirement.
+2. **Hold the whole album at once** — 12k-25k input tokens for 30-100
+   photographs. Planning is one call by design, so a short-context model cannot
+   participate.
+3. **See images**, for the annotate pass only. Without vision the planner falls
+   back to captions, timestamps, GPS and pixel dimensions.
+
+The cost line shows real token counts for every provider and a dollar figure
+only for Anthropic's own endpoint, since that is the only one whose rates are
+known here.
 
 ## Capabilities added after the first demo
 

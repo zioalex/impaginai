@@ -23,6 +23,7 @@ header{display:flex;align-items:center;gap:16px;padding:12px 20px;
        background:var(--panel);border-bottom:1px solid var(--line);flex-shrink:0;flex-wrap:wrap}
 h1{font-size:17px;font-weight:600}
 .sub{color:var(--soft);font-size:13px}
+.sub.model{font-size:11px;opacity:.7;font-variant-numeric:tabular-nums}
 .grow{flex:1}
 button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);
        padding:8px 14px;border-radius:var(--radius);cursor:pointer}
@@ -89,6 +90,7 @@ textarea{width:100%;min-height:76px;font:inherit;padding:10px;border:1px solid v
   <div>
     <h1 id="title">Album</h1>
     <div class="sub" id="counts">loading…</div>
+    <div class="sub model" id="model"></div>
   </div>
   <div class="grow"></div>
   <span class="saved" id="saved">saved</span>
@@ -154,11 +156,18 @@ async function load(){
   album=await get("/api/album"); photos=await get("/api/photos");
   $("title").textContent=album.title;
   const used=photos.filter(p=>!p.exclude).length;
-  $("counts").textContent=`${used} of ${photos.length} photographs · ${album.groups.length} groups · ${album.format} cm`;
-  if(!album.has_key) note("No API key is set, so the album cannot be designed yet. Everything else here works offline.",true);
+  setCounts();
+  if(!album.has_key) note("No API key is set, so the album cannot be designed yet. Everything else here works without one.",true);
   renderGrid();
   try{const r=await get("/api/report"); if(r.ready){$("btnProof").disabled=false;
     $("btnPlan").textContent="Design again";}}catch(e){}
+}
+
+function setCounts(){
+  const used=photos.filter(p=>!p.exclude).length;
+  $("counts").textContent=
+    `${used} of ${photos.length} photographs · ${album.groups.length} groups · ${album.format} cm`;
+  $("model").textContent=album.model||"";
 }
 
 function renderGrid(){
@@ -244,8 +253,7 @@ async function patch(id,body){
     headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   if(!r.ok){note(await r.text(),true);return;}
   photos=await get("/api/photos"); album=await get("/api/album");
-  const used=photos.filter(p=>!p.exclude).length;
-  $("counts").textContent=`${used} of ${photos.length} photographs · ${album.groups.length} groups · ${album.format} cm`;
+  setCounts();
   const s=$("saved"); s.className="saved on"; setTimeout(()=>s.className="saved",1100);
   if(sel)select(sel); else renderGrid();
 }

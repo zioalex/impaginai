@@ -25,7 +25,7 @@ Run these **from inside `phase1/`**. `--photos` is your own folder;
 
 ```bash
 cd phase1
-export ANTHROPIC_API_KEY=...
+export ANTHROPIC_API_KEY=...        # or see "Choosing the model" in RUNNING.md
 
 python album.py annotate --album ../albums/sardinien --photos ./demo_photos
 

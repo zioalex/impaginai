@@ -7,6 +7,8 @@ From the repository root:
 
 ```bash
 export ANTHROPIC_API_KEY=...          # only needed to design the album
+#   ... or: --base-url openrouter --model anthropic/claude-sonnet-4.5
+#   ... or: --base-url ollama --model qwen2.5vl    (local, no key)
 python phase2/server.py --album ./albums/sardinien --photos ~/Pictures/sardinien \
        --title "Sardinien 2026" --language de
 # open http://127.0.0.1:8000

@@ -9,7 +9,11 @@ pypdf==6.17.0
 # --- schema, config, planning (Phase 1) ---
 pydantic==2.13.5
 PyYAML==6.0.3
-anthropic>=0.40,<1.0          # the ONLY component that needs the internet
+httpx==0.28.1                 # OpenAI-compatible endpoints (OpenRouter, Ollama, vLLM, ...)
+
+# Only needed for --provider anthropic, which is the default. Drop it if you
+# are pointing at an OpenAI-compatible endpoint instead.
+anthropic>=0.40,<1.0
 
 # --- web editor (Phase 2) ---
 fastapi==0.162.2
