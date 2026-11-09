@@ -123,7 +123,12 @@ def extract_json(text: str) -> str:
         t = t.rsplit("```", 1)[0]
     start, end = t.find("{"), t.rfind("}")
     if start == -1 or end == -1:
-        raise ValueError("no JSON object in the response")
+        # Say what came back instead: an empty reply (output spent on
+        # reasoning, or a refusal) needs a different fix than prose.
+        if not t:
+            raise ValueError("no JSON object in the response (it was empty)")
+        snippet = " ".join(t.split())[:100]
+        raise ValueError(f"no JSON object in the response, which began: {snippet!r}")
     return t[start : end + 1]
 
 
