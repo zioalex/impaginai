@@ -135,7 +135,9 @@ def api_album():
         "versions": versions,
         "has_annotations": bool(annotate.Annotations.load(STATE["album"] / "annotations.json").by_id),
         "has_key": STATE["has_key"],
-        "model": STATE["provider"].describe(),
+        "model": STATE["providers"]["plan"].describe(mention_vision=False),
+        "models": {r: p.describe(mention_vision=(r == "annotate"))
+                   for r, p in STATE["providers"].items()},
         "sizes": list(OV.SIZES),
         "treatments": list(OV.TREATMENTS),
     }
@@ -231,13 +233,13 @@ def _build(do_plan: bool, comment: str | None):
         set_job("Preparing photographs", 5)
         ensure_thumbs(usable)
 
-        prov = STATE["provider"]
-        complete = providers.make_completer(prov)
+        roles = STATE["providers"]
         anns = annotate.Annotations.load(a / "annotations.json")
         todo = anns.missing(usable)
-        if todo and prov.vision:
+        if todo and roles["annotate"].vision and roles["annotate"].usable:
             set_job(f"Looking at {len(todo)} photographs", 15)
-            anns, _ = annotate.run(usable, thumb_dir(), a / "annotations.json", complete)
+            anns, _ = annotate.run(usable, thumb_dir(), a / "annotations.json",
+                                   providers.make_completer(roles["annotate"]))
         annotate.apply(usable, anns)
 
         store = Store(a)
@@ -247,14 +249,16 @@ def _build(do_plan: bool, comment: str | None):
             res = planner.plan(title=STATE["title"], subtitle=STATE["subtitle"],
                                fmt=STATE["fmt"], language=STATE["language"],
                                photos=usable, g=STATE["g"], lab=STATE["lab"],
-                               complete=complete, groups=groups)
+                               complete=providers.make_completer(roles["plan"]),
+                               groups=groups)
             parent, comment_txt, summary = None, None, "initial plan"
         else:
             set_job("Revising the album", 45)
             pv, current = store.get()
             res = planner.revise(current=current, comment=comment or "", photos=usable,
                                  g=STATE["g"], lab=STATE["lab"], language=STATE["language"],
-                                 complete=complete, groups=groups)
+                                 complete=providers.make_completer(roles["revise"]),
+                                 groups=groups)
             parent, comment_txt, summary = pv.version_no, comment, res.layout.change_summary
 
         set_job("Applying your settings", 70)
@@ -290,7 +294,7 @@ def api_plan(body: BuildIn):
     if JOB["running"]:
         raise HTTPException(409, "already working")
     if not STATE["has_key"]:
-        p = STATE["provider"]
+        p = STATE["providers"]["plan"]
         raise HTTPException(400, f"No API key for {p.name}, so the album cannot be designed. "
                                  "Set ALBUM_API_KEY (or ANTHROPIC_API_KEY / OPENROUTER_API_KEY), "
                                  "or point --base-url at a local model. Everything else in this "
@@ -374,13 +378,15 @@ def main():
         gap_hours=args.gap_hours, radius_m=args.radius_m,
         geocode=not args.no_geocode,
     )
-    prov = providers.from_args(args)
-    STATE["provider"] = prov
-    STATE["has_key"] = prov.usable
+    roles = providers.resolve_all(args, args.models)
+    STATE["providers"] = roles
+    # Planning is the call that cannot be skipped, so its key decides whether
+    # the album can be designed at all; annotate degrades gracefully.
+    STATE["has_key"] = roles["plan"].usable
     ph = reload_photos()
     ensure_thumbs(ph)
     print(f"\n  {len(ph)} photographs · {len(STATE['groups'])} groups · {args.format}")
-    print(f"  model: {prov.describe()}")
+    print(providers.describe_roles(roles))
     if not STATE["has_key"]:
         print("  no API key — editing works, designing the album does not")
     print(f"\n  Open  http://{args.host}:{args.port}\n")

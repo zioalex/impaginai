@@ -1,0 +1,30 @@
+# Copy to models.yaml and pass with --models models.yaml
+#
+# Why split the roles at all: the three calls are different jobs.
+#
+#   annotate  one call per 8 photographs, needs VISION, cached after the first
+#             run, and a mediocre answer barely affects the layout
+#             -> cheapest or local. Free on your own GPU.
+#   plan      exactly one call, no vision, must obey a ~9,000-character brief,
+#             and its quality is the album's quality
+#             -> the best model you are willing to pay for. One call, so cents.
+#   revise    one call per comment, no vision, targeted edit to an existing
+#             layout
+#             -> mid-tier is fine.
+#
+# A role inherits anything it does not set from `default`.
+
+default:
+  base_url: openrouter
+  model: anthropic/claude-sonnet-5.5
+  # api_key: sk-or-...        # better: export OPENROUTER_API_KEY
+
+annotate:
+  base_url: ollama            # http://localhost:11434/v1 — no key needed
+  model: qwen3-vl:32b
+
+plan:
+  model: anthropic/claude-opus-5.5
+  json_mode: true             # OpenAI-compatible endpoints only
+
+# revise: inherits default

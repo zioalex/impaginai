@@ -353,6 +353,26 @@ def main() -> int:
     assert PR.resolve(base_url="ollama").usable, "a local endpoint should need no key"
     print(f"providers: openai translation ok, {len(PR.ALIASES)} endpoint shorthands")
 
+    # 12. role routing: each call type can land on a different endpoint
+    cfgf = ALBUM / "models.yaml"
+    cfgf.write_text(
+        "default:\n  base_url: http://remote.invalid/v1\n  model: planner\n"
+        "  api_key: k\nannotate:\n  base_url: ollama\n  model: visionmodel\n")
+    roles = PR.resolve_all(config_path=cfgf)
+    assert roles["annotate"].model == "visionmodel", "annotate did not take its override"
+    assert roles["plan"].model == "planner", "plan did not inherit the default"
+    assert roles["revise"].model == "planner", "revise did not inherit the default"
+    assert roles["annotate"].vision, "annotate must keep vision"
+    assert not roles["plan"].vision and not roles["revise"].vision, \
+        "plan/revise must never request vision — they send no images"
+    assert roles["annotate"].usable, "a local annotate endpoint needs no key"
+    assert "more" in PR.describe_roles(roles) or "\n" in PR.describe_roles(roles), \
+        "a split setup should not collapse to one line"
+    one = PR.resolve_all(config_path=None)
+    assert "\n" not in PR.describe_roles(one), "a single model should collapse to one line"
+    print(f"roles: annotate={roles['annotate'].model} plan={roles['plan'].model} "
+          f"revise={roles['revise'].model}")
+
     print("\nALL CHECKS PASSED")
     return 0
 

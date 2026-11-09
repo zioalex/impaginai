@@ -321,6 +321,13 @@ endpoint accepts with no upload step. Localhost endpoints are treated as
 keyless, so a model running on the same machine needs no configuration beyond
 `--base-url ollama`.
 
+The three calls are separately configurable (`models.yaml`, or `--plan-model`
+and friends) because they are different jobs: annotate is many cheap vision
+calls that are cached after the first run, plan is one long-instruction call
+that decides the album's quality, revise is a targeted edit. Vision is forced
+off for plan and revise, which never send images. The usual split is annotate
+on a local GPU and plan on the best available model.
+
 What a model must actually be able to do, in order of how often it is the
 thing that fails:
 

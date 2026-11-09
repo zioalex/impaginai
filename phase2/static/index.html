@@ -168,6 +168,11 @@ function setCounts(){
   $("counts").textContent=
     `${used} of ${photos.length} photographs · ${album.groups.length} groups · ${album.format} cm`;
   $("model").textContent=album.model||"";
+  if(album.models){
+    $("model").title=Object.entries(album.models).map(([k,v])=>`${k}: ${v}`).join("\n");
+    const split=new Set(Object.values(album.models)).size>1;
+    if(split)$("model").textContent=`${album.models.plan} (+${Object.keys(album.models).length-1} more — hover)`;
+  }
 }
 
 function renderGrid(){

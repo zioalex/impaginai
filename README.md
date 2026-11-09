@@ -107,6 +107,12 @@ most one photograph per page, and the book reads as a slideshow with blank
 facing pages. In a composed page the first slot is the feature: largest
 rectangle, only caption.
 
+**A different model per job.** Annotation needs vision and runs once per
+album; planning needs to follow a long brief and runs once; revision edits an
+existing layout. `models.yaml` routes each role to its own endpoint — the usual
+split is annotate on a local GPU for free, plan on the strongest model
+affordable, since it is a single call that decides whether the book is good.
+
 **The model is swappable.** The planner only ever needed a function from
 (system prompt, messages) to text; `phase1/providers.py` implements that over
 both the Anthropic Messages API and the OpenAI `/chat/completions` contract, so
