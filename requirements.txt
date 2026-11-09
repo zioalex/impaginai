@@ -1,29 +1,46 @@
-# Pinned so a rebuild produces the same book. Versions verified working
-# together; see OFFLINE.md for installing these without a network.
+# Floors, not exact pins.
+#
+# The first version of this file pinned whatever happened to be installed on the
+# machine it was written on, which was months behind, and produced 64 Dependabot
+# alerts across pillow and pypdf. Both libraries parse untrusted binary input —
+# photographs and PDFs — so they are exactly the two that must not lag.
+#
+# `>=` lets a fresh install pick up security releases without this file being
+# edited. If you need byte-identical rebuilds, generate a lock file from this:
+#
+#     pip install pip-tools
+#     pip-compile requirements.txt -o requirements.lock.txt
+#     pip install -r requirements.lock.txt
+#
+# Check for new advisories at any time with:
+#
+#     pip install pip-audit && pip-audit -r requirements.txt
+#
+# Versions in the comments are what this was last verified against.
 
 # --- rendering and print chain (Phase 0) ---
-playwright==1.63.0
-pillow==12.3.0
-pypdf==6.17.0
+playwright>=1.63.0            # verified 1.63.0
+pillow>=13.0.0                # verified 13.0.0 — below this, 39 known CVEs
+pypdf>=6.21.4                 # verified 7.0.0  — below this, 25 known CVEs
 
 # --- schema, config, planning (Phase 1) ---
-pydantic==2.13.5
-PyYAML==6.0.3
-httpx==0.28.1                 # OpenAI-compatible endpoints (OpenRouter, Ollama, vLLM, ...)
+pydantic>=2.13.5              # verified 2.13.5
+PyYAML>=6.0.3                 # verified 6.0.3
+httpx>=0.28.1                 # verified 0.28.1 — OpenAI-compatible endpoints
 
 # Only needed for --provider anthropic, which is the default. Drop it if you
-# are pointing at an OpenAI-compatible endpoint instead.
-anthropic>=0.40,<1.0
+# point --base-url at an OpenAI-compatible endpoint instead.
+anthropic>=0.69.0
 
 # --- web editor (Phase 2) ---
-fastapi==0.162.2
-uvicorn==0.54.0
+fastapi>=0.162.2              # verified 0.162.2
+uvicorn>=0.54.0               # verified 0.54.0
 
 # --- optional ---
 # Offline place names from GPS. ~8 MB of bundled settlement data, no network,
 # no API key. Without it the album simply has no place names; with it you can
 # still override any name in places.yaml. Pulls in numpy and scipy.
-reverse-geocoder==1.5.1
+reverse-geocoder>=1.5.1       # verified 1.5.1 (numpy 2.5.3, scipy 1.18.1)
 
 # Writing EXIF, needed only by the demo photo generator.
-piexif==1.1.3
+piexif>=1.1.3
