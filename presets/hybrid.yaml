@@ -1,4 +1,4 @@
-# RECOMMENDED — the default worth starting from on a 24 GB GPU.
+# HYBRID — RECOMMENDED for a 24 GB GPU. Local eyes, cloud judgement.
 #
 # Annotation runs on your own machine: it is the call that dominates token
 # cost (images are expensive, and there is one per 8 photographs), it is the
@@ -11,7 +11,7 @@
 #
 #   ollama pull qwen3-vl:32b
 #   python phase2/server.py --album ./albums/x --photos ~/Pictures/x \
-#          --models presets/balanced.yaml
+#          --models presets/hybrid.yaml
 #
 # Needs: OPENROUTER_API_KEY. Ollama needs no key.
 
