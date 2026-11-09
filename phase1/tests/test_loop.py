@@ -426,6 +426,32 @@ def main() -> int:
     else:
         print("heic: pillow-heif not installed, skipped")
 
+    # 15. the structured-output schema must survive provider simplification
+    import providers as PR2
+    sch = PR2._layout_schema()
+    import json as _json
+    txt = _json.dumps(sch)
+    assert "prefixItems" not in txt, "prefixItems survives; Vertex rejects it"
+    assert "$ref" not in txt and "$defs" not in txt, "refs not inlined"
+    # 'title' is both a JSON Schema annotation and a field of meta; stripping
+    # it as a keyword once deleted the album title from the schema entirely
+    assert "title" in sch["properties"]["meta"]["properties"], \
+        "meta.title was stripped as if it were a schema annotation"
+    focal = (sch["properties"]["spreads"]["items"]["properties"]["slots"]
+             ["items"]["properties"]["focal"])
+    assert focal.get("minItems") == 2 and focal.get("maxItems") == 2, \
+        "tuple bounds lost when prefixItems was rewritten"
+    try:
+        import jsonschema
+
+        for f in (ALBUM / "layout-v002.json",):
+            if f.exists():
+                jsonschema.validate(_json.loads(f.read_text()), sch)
+        jsonschema.validate(good_layout(), sch)
+        print("schema: simplified form accepts a real layout, no prefixItems or refs")
+    except ImportError:
+        print("schema: simplified, no prefixItems or refs (jsonschema not installed)")
+
     print("\nALL CHECKS PASSED")
     return 0
 

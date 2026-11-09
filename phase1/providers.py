@@ -220,6 +220,70 @@ def _anthropic(p: Provider):
 _SCHEMA_CACHE: dict = {}
 
 
+# Keywords that are schema annotations rather than constraints. Stripped only
+# where they are keywords — never inside a `properties` map, where the same
+# words are legitimate field names. ("title" is both a JSON Schema annotation
+# and a field of this project's `meta` object; an earlier version of this
+# function deleted the album title from the schema because of that.)
+_DROP_KEYWORDS = {"$defs", "default", "title", "discriminator", "examples"}
+
+# Keys whose values are maps of name -> schema, not schemas themselves.
+_SCHEMA_MAPS = {"properties", "patternProperties", "$defs", "definitions"}
+
+
+def simplify_schema(node, defs=None):
+    """Reduce a Pydantic JSON Schema to the subset providers actually accept.
+
+    Structured-output support is nothing like uniform. Pydantic emits valid
+    JSON Schema 2020-12 and providers implement varying fragments of it:
+
+      prefixItems   tuple[float, float] becomes prefixItems, which Anthropic
+                    served through Google Vertex rejects outright ("For
+                    'array' type, property 'prefixItems' is not supported").
+                    Rewritten as `items` plus minItems/maxItems, which means
+                    the same thing everywhere.
+      $ref / $defs  inlined, because several endpoints do not resolve them.
+      default       ignored by some, rejected by others; dropped.
+
+    The result constrains less than the original — a tuple becomes "an array
+    of two numbers" rather than "exactly these two" — but the Pydantic model
+    still validates the response afterwards, so nothing is really loosened.
+    This only steers decoding.
+    """
+    if defs is None:
+        defs = node.get("$defs", {}) if isinstance(node, dict) else {}
+
+    if isinstance(node, list):
+        return [simplify_schema(x, defs) for x in node]
+    if not isinstance(node, dict):
+        return node
+
+    if "$ref" in node:
+        name = node["$ref"].rsplit("/", 1)[-1]
+        target = defs.get(name)
+        if target is None:
+            return {"type": "object"}
+        return simplify_schema({k: v for k, v in target.items() if k != "$defs"}, defs)
+
+    out: dict = {}
+    for k, v in node.items():
+        if k in _DROP_KEYWORDS:
+            continue
+        if k in _SCHEMA_MAPS:
+            # Field names, not keywords: recurse into the values only.
+            out[k] = {name: simplify_schema(sub, defs) for name, sub in v.items()}
+            continue
+        if k == "prefixItems":
+            items = [simplify_schema(x, defs) for x in v]
+            types = {i.get("type") for i in items if isinstance(i, dict)}
+            out["items"] = items[0] if len(types) == 1 and items else {}
+            out.setdefault("minItems", len(items))
+            out.setdefault("maxItems", len(items))
+            continue
+        out[k] = simplify_schema(v, defs)
+    return out
+
+
 def _layout_schema():
     """The layout JSON schema, for endpoints that constrain decoding to it.
 
@@ -231,10 +295,19 @@ def _layout_schema():
     try:
         from schema import Layout
 
-        _SCHEMA_CACHE["v"] = Layout.model_json_schema()
+        _SCHEMA_CACHE["v"] = simplify_schema(Layout.model_json_schema())
     except Exception:
         _SCHEMA_CACHE["v"] = None
     return _SCHEMA_CACHE["v"]
+
+
+_WARNED: dict[str, bool] = {}
+
+# What structured-output mode each endpoint turned out to accept. Without this
+# the degradation is re-discovered on every call, which costs two wasted
+# requests each time — on a multi-batch annotate pass that is most of the
+# traffic.
+_MODE_CACHE: dict[tuple, str] = {}
 
 
 def _openai(p: Provider):
@@ -256,7 +329,9 @@ def _openai(p: Provider):
         # not describe; detect it and leave json_mode off for that call.
         if system.startswith("You are a picture editor"):
             body["_skip_schema"] = True
-        if body.pop("_skip_schema", False):
+        mode_key = (p.base_url, p.model)
+        known = _MODE_CACHE.get(mode_key)
+        if body.pop("_skip_schema", False) or known == "none":
             pass
         elif p.json_mode:
             # Prefer a real schema over bare JSON mode. OpenAI, vLLM, Ollama
@@ -265,7 +340,7 @@ def _openai(p: Provider):
             # certainty — and that is what makes small local models usable as
             # planners at all. Endpoints that only understand json_object are
             # handled by the retry below.
-            schema = _layout_schema()
+            schema = None if known == "json_object" else _layout_schema()
             if schema is not None:
                 body["response_format"] = {
                     "type": "json_schema",
@@ -277,15 +352,31 @@ def _openai(p: Provider):
         # Generous timeout: a local model on CPU is slow, and a planning call
         # is one request per album, not a hot path.
         r = httpx.post(url, headers=headers, json=body, timeout=600.0)
-        # Not every endpoint understands json_schema. Fall back rather than
-        # fail: a 400 mentioning response_format is a capability problem, not a
-        # prompt problem.
-        if r.status_code >= 400 and "response_format" in body and "response_format" in r.text:
-            body["response_format"] = {"type": "json_object"}
-            r = httpx.post(url, headers=headers, json=body, timeout=600.0)
-            if r.status_code >= 400:
-                body.pop("response_format")
+
+        # Structured output is the least portable part of the OpenAI contract.
+        # Providers reject it for reasons that name their own internals rather
+        # than the field we sent — OpenRouter relaying Vertex says
+        # "output_config.format.schema", not "response_format" — so matching on
+        # the error text fails exactly when it is needed. Any 4xx while a
+        # response_format is in play is treated as a capability problem and the
+        # request is retried with progressively weaker constraints.
+        if 400 <= r.status_code < 500 and body.get("response_format"):
+            first = r.text[:300]
+            if body["response_format"].get("type") == "json_schema":
+                body["response_format"] = {"type": "json_object"}
                 r = httpx.post(url, headers=headers, json=body, timeout=600.0)
+            if 400 <= r.status_code < 500:
+                body.pop("response_format", None)
+                r = httpx.post(url, headers=headers, json=body, timeout=600.0)
+            _MODE_CACHE[mode_key] = (
+                body.get("response_format", {}).get("type") or "none")
+            if r.status_code < 400 and not _WARNED.get(p.model):
+                _WARNED[p.model] = True
+                print(f"  note: {p.model} rejected structured output, continuing "
+                      f"without it. Schema failures are still caught and retried.\n"
+                      f"        ({first.strip()[:160]})")
+        elif r.status_code < 400 and body.get("response_format"):
+            _MODE_CACHE[mode_key] = body["response_format"]["type"]
         if r.status_code >= 400:
             raise RuntimeError(f"{r.status_code} from {url}: {r.text[:400]}")
         data = r.json()
