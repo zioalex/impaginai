@@ -647,8 +647,20 @@ at wherever you unpacked it.
 directly as `.venv/bin/python`.
 
 **`no photos found`** — `--photos` must point at a directory containing
-`.jpg`, `.jpeg`, `.png`, `.tif` or `.webp` files. HEIC from an iPhone needs
-`pip install pillow-heif`.
+`.jpg`, `.jpeg`, `.png`, `.tif`, `.webp`, `.heic`, `.heif` or `.avif` files.
+
+**`UnidentifiedImageError: cannot identify image file ... .HEIC`** —
+`pillow-heif` is missing. It is in `requirements.txt`, so either the install
+predates that or the virtual environment is not the one running:
+
+```bash
+pip install pillow-heif
+```
+
+HEIC is the default on every iPhone since 2017, so this is worth having even
+if only some photographs use it. Everything downstream works unchanged once
+it is installed: EXIF timestamps, GPS, orientation, the vision copies and the
+300 DPI print path all read HEIC directly, and nothing is converted on disk.
 
 **The editor starts but the grid is empty** — the photographs were found but
 thumbnails failed. Check the terminal for the error.

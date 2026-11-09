@@ -389,6 +389,43 @@ def main() -> int:
         print(f"vision copies: 1200px {tb:,} tok -> 512px {ts:,} tok "
               f"({tb / max(ts, 1):.1f}x cheaper)")
 
+    # 14. HEIC: the format most phones actually produce
+    import imaging
+    assert ".heic" in imaging.EXTENSIONS and ".heif" in imaging.EXTENSIONS
+    from validate import load_photos as _lp
+    import inspect
+    # the loader and the validator must agree on what counts as a photograph,
+    # or HEIC files load and then report as missing
+    assert "imaging.EXTENSIONS" in inspect.getsource(_lp), \
+        "validate.load_photos does not use the shared extension list"
+    assert "imaging.EXTENSIONS" in inspect.getsource(PH.read_dir), \
+        "photos.read_dir does not use the shared extension list"
+    if imaging.heif_available():
+        import piexif
+        from PIL import Image as _I
+        hd = ALBUM / "heic"
+        hd.mkdir(parents=True, exist_ok=True)
+        src = sorted(PHOTO_DIR.glob("*.jpg"))[:2]
+        for k, f in enumerate(src):
+            ex = {"0th": {}, "Exif": {piexif.ExifIFD.DateTimeOriginal:
+                                      b"2026:08:05 08:53:00"},
+                  "GPS": {piexif.GPSIFD.GPSLatitudeRef: b"N",
+                          piexif.GPSIFD.GPSLatitude: ((46, 1), (29, 1), (3000, 100)),
+                          piexif.GPSIFD.GPSLongitudeRef: b"E",
+                          piexif.GPSIFD.GPSLongitude: ((9, 1), (50, 1), (2000, 100))},
+                  "1st": {}, "thumbnail": None}
+            # uppercase extension, as a phone writes it
+            _I.open(f).convert("RGB").save(hd / f"IMG_{k}.HEIC", "HEIF",
+                                           quality=70, exif=piexif.dump(ex))
+        hph = PH.load(hd, None, g, 200, 150)
+        assert len(hph) == 2, f"HEIC files not read: {len(hph)}"
+        assert all(p.taken_at for p in hph), "HEIC EXIF timestamp not read"
+        assert all(p.gps for p in hph), "HEIC GPS not read"
+        assert len(_lp(hd)) == 2, "validator did not see the HEIC files"
+        print(f"heic: {len(hph)} read with EXIF and GPS, validator agrees")
+    else:
+        print("heic: pillow-heif not installed, skipped")
+
     print("\nALL CHECKS PASSED")
     return 0
 

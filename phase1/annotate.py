@@ -23,6 +23,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+import imaging  # noqa: F401  (registers HEIC/HEIF decoders on import)
 from planner import Completer, Usage, extract_json
 from photos import Photo
 

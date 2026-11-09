@@ -13,6 +13,7 @@ from pathlib import Path
 
 from PIL import Image
 
+import imaging  # registers HEIC/HEIF decoders on import
 import templates_lib
 from geometry import Geometry, Rect, effective_dpi
 from schema import Layout
@@ -54,7 +55,7 @@ class PhotoInfo:
 
 def load_photos(photo_dir: Path) -> dict[str, PhotoInfo]:
     """Index a directory of originals by filename stem."""
-    exts = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
+    exts = imaging.EXTENSIONS
     out: dict[str, PhotoInfo] = {}
     for p in sorted(photo_dir.iterdir()):
         if p.suffix.lower() not in exts:
