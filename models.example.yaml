@@ -28,3 +28,28 @@ plan:
   json_mode: true             # OpenAI-compatible endpoints only
 
 # revise: inherits default
+
+# ---------------------------------------------------------------------------
+# Cheaper variants. Measured cost for a 100-photograph album with three
+# revisions, so you can see what you are actually trading:
+#
+#   opus-5.5 everywhere ............ $1.12
+#   sonnet-5.5 everywhere .......... $0.56
+#   haiku-5.5 everywhere ........... $0.028
+#   glm-5.3-flash everywhere ....... $0.010
+#   local annotate + sonnet plan ... $0.07
+#   everything local ............... $0.00
+#
+# A print costs CHF 40-100, so cost is not the reason to choose. Benchmark
+# candidates first:  python phase1/tools/bench_model.py --compare A B C
+#
+# Cheap and hosted:
+#   default: {base_url: openrouter, model: anthropic/claude-haiku-5.5}
+#
+# Cheapest and most private — everything on your own GPU:
+#   default: {base_url: ollama, model: qwen3-vl:32b}
+#
+# The best value: annotate locally (it dominates the cost, because images are
+# expensive), spend only on the single planning call that decides the result.
+#   default: {base_url: ollama,     model: qwen3-vl:32b}
+#   plan:    {base_url: openrouter, model: anthropic/claude-sonnet-5.5, json_mode: true}

@@ -169,6 +169,27 @@ especially the cover constants, since the spine is computed from them. Download
 Saal's template for your format and confirm them first. `phase0/README.md` lists
 exactly what to measure when the book arrives.
 
+## Which model
+
+A whole album costs roughly **$1 on the most expensive model available** and
+about **$0.02 on a cheap one** — against a print that costs CHF 40-100. Cost is
+not the reason to pick one; capability is, and the capability that matters is
+following a 9,000-character layout brief, which no published benchmark
+measures.
+
+So measure it directly:
+
+```bash
+python phase1/tools/bench_model.py --photos phase1/demo_photos \
+       --base-url openrouter --compare model-a model-b model-c
+```
+
+It runs the real planning prompt and scores the output against the real
+validator — schema, fold rule, page-density budget, chronology, grouping,
+template variety, resolution, cover. The failure mode it exists to catch is a
+model that returns valid JSON and ignores every rule, which a price table
+cannot show you. `RUNNING.md` has the cost table and recommended stacks.
+
 ## Dependencies and security
 
 `requirements.txt` uses floors rather than exact pins, so a fresh install picks

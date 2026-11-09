@@ -404,32 +404,110 @@ and that is the capability this project needs. `--dry-run` shows the exact
 prompt; if a model produces valid JSON that ignores the pacing and fold rules,
 it has failed in the way that matters and no retry will fix it.
 
-### On OpenRouter
+### On OpenRouter, and what it actually costs
 
-Prices move constantly, so check the model's own page; these are November 2026
-figures per million tokens. An album is a handful of calls, so even the
-expensive options cost cents.
+Measure before optimising. Using the token counts this project really produces
+— annotate at roughly 8 images plus 400 tokens per batch, planning at 6k in and
+6k out — a whole album including three revisions costs:
 
-| Model | In / out | Why |
-|---|---|---|
-| `anthropic/claude-sonnet-5.5` | $2 / $10 | the default choice for planning: long-instruction adherence is what this job needs |
-| `anthropic/claude-opus-5.5` | $4 / $20 | for a book that matters; same shape, better judgement |
-| `anthropic/claude-haiku-5.5` | $0.10 / $0.50 | cheap, and strong enough for the annotate pass |
-| `google/gemini-4-argon` | $2 / $10 | strong multimodal alternative, long context |
-| `deepseek/deepseek-v4.1-flash` | $0.15 / $0.60 | cheapest credible planner; verify it respects the layout rules |
-| `openai/gpt-6-luna` | $0.10 / $0.50 | cheap structured output; good annotate candidate |
+| Model | in / out per 1M | 40 photographs | 100 photographs |
+|---|---|---|---|
+| `anthropic/claude-opus-5.5` | $4 / $20 | $0.79 | $1.12 |
+| `anthropic/claude-sonnet-5.5` | $2 / $10 | $0.39 | $0.56 |
+| `google/gemini-4-argon` | $2 / $10 | $0.39 | $0.56 |
+| `deepseek/deepseek-v4.1-flash` | $0.15 / $0.60 | $0.026 | $0.038 |
+| `anthropic/claude-haiku-5.5` | $0.10 / $0.50 | $0.020 | $0.028 |
+| `openai/gpt-6-luna` | $0.10 / $0.50 | $0.020 | $0.028 |
+| `z-ai/glm-5.3-flash` | $0.028 / $0.21 | $0.007 | $0.010 |
+| `qwen/qwen3.6-35b-a3b` | $0.01 / $0.09 | $0.003 | $0.004 |
+| `openai/gpt-oss-20b` | $0.008 / $0.03 | $0.001 | $0.002 |
 
-Set it once:
+**A whole album costs about a dollar on the most expensive model available.**
+So switching to a cheap model saves roughly one dollar per book — against a
+print that costs CHF 40-100. If money is the only reason to go cheaper, it is
+not a good reason here.
 
-```bash
-export OPENROUTER_API_KEY=sk-or-...
-export ALBUM_BASE_URL=openrouter
-export ALBUM_MODEL=anthropic/claude-sonnet-5.5
+The reasons that are good: keeping your photographs off third-party servers,
+working without a connection, or not wanting an account. Those all point at a
+local model, not a cheap hosted one.
+
+Note which call dominates: **annotate, not planning**, because images are
+expensive and planning is one text call. That is why the recommended split
+puts annotate on your own GPU — it removes most of the cost and all of the
+privacy question at once.
+
+A reasonable cheap stack, if you want one:
+
+```yaml
+default:
+  base_url: openrouter
+  model: anthropic/claude-haiku-5.5    # ~$0.02 per album, all three roles
+plan:
+  model: deepseek/deepseek-v4.1-flash  # or keep Haiku; benchmark both
+  json_mode: true
 ```
 
-Verify vision and structured-output support on the model's OpenRouter page
-before relying on it — the capability flags there are authoritative, and
-third-party summaries frequently are not.
+And the cheapest sensible arrangement, which is also the most private:
+
+```yaml
+default:
+  base_url: ollama
+  model: qwen3-vl:32b                  # everything local, $0.00
+plan:
+  base_url: openrouter
+  model: anthropic/claude-sonnet-5.5   # ~$0.07 per album for the one call
+  json_mode: true                      #   that decides the result
+```
+
+Verify vision and structured-output support on each model's own OpenRouter
+page — the capability flags there are authoritative and third-party summaries
+frequently are not. On OpenRouter you can also send
+`provider.require_parameters: true` so a provider that would silently ignore
+JSON mode is skipped.
+
+### Benchmark a model instead of trusting a table
+
+Published benchmarks measure OCR and exam questions. None of them measure
+"obeys a 9,000-character layout brief", which is the only capability that
+decides whether a cheap model can replace an expensive one here. So measure it:
+
+```bash
+python phase1/tools/bench_model.py --photos phase1/demo_photos \
+       --base-url openrouter \
+       --compare anthropic/claude-haiku-5.5 deepseek/deepseek-v4.1-flash \
+                 z-ai/glm-5.3-flash qwen/qwen3.6-35b-a3b
+```
+
+It runs the real planning prompt and scores the result against the real
+validator:
+
+```
+model                          score  try    sec     tok in/out  SCHE PRIN FOLD DENS CHRO GROU COHE VARI SOFT COVE
+anthropic/claude-haiku-5.5     10/10    1    8.4  3,012/1,388      ok   ok   ok   ok   ok   ok   ok   ok   ok   ok
+some-cheap-model                3/10    1    2.1  3,012/1,402      ok FAIL FAIL   ok FAIL FAIL   ok FAIL FAIL FAIL
+```
+
+| Check | Question |
+|---|---|
+| SCHEMA | did it return JSON this project can load at all |
+| PRINTABLE | does the validator pass it for print |
+| FOLD | did it keep every photograph out of the gutter |
+| DENSITY | did it stay inside the empty-page budget |
+| CHRONOLOGY | does the album run forwards in time |
+| GROUPING | is each moment kept in one run, not scattered |
+| COHESION | does each spread draw from one group |
+| VARIETY | did it use more than one or two templates |
+| SOFTNESS | is every photograph sharp enough for the lab |
+| COVER | did it design a cover |
+
+**The failure mode to watch for is a model that passes SCHEMA and little
+else** — valid JSON that ignores the brief. Retrying never fixes it, the
+validator will not block it, and the result is a book that looks arbitrary. The
+benchmark exists to catch exactly that, because it is invisible in a price
+table. `--save DIR` writes each model's layout so you can render and look.
+
+Run it on your own photographs rather than the demo set when deciding for real:
+the demo photographs are synthetic and easier to sequence than a holiday.
 
 ## What needs the internet
 
