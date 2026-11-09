@@ -41,8 +41,17 @@ python phase2/server.py --album ./albums/demo --photos phase1/demo_photos
 
 Open the address it prints. The repository ships 22 synthetic photographs with
 real EXIF, so this works before you supply any of your own. Designing an album
-needs `ANTHROPIC_API_KEY`; everything else — grouping, descriptions, sizes,
-preview rendering — runs locally without one.
+needs a model; everything else — grouping, descriptions, sizes, preview
+rendering — runs locally without one.
+
+Any model will do. Anthropic is the default, and `--base-url` points at
+anything speaking the OpenAI `/chat/completions` contract:
+
+```bash
+--base-url openrouter --model anthropic/claude-sonnet-4.5   # OPENROUTER_API_KEY
+--base-url ollama     --model qwen2.5vl                     # local, no key
+--base-url openai     --model gpt-4o                        # OPENAI_API_KEY
+```
 
 For your own pictures, point `--photos` at the folder and give it a title:
 
@@ -97,6 +106,12 @@ is a pair of those compositions. Without that layer every template places at
 most one photograph per page, and the book reads as a slideshow with blank
 facing pages. In a composed page the first slot is the feature: largest
 rectangle, only caption.
+
+**The model is swappable.** The planner only ever needed a function from
+(system prompt, messages) to text; `phase1/providers.py` implements that over
+both the Anthropic Messages API and the OpenAI `/chat/completions` contract, so
+OpenRouter, OpenAI, Together, Groq, vLLM, Ollama and llama.cpp all work.
+Localhost endpoints are treated as keyless.
 
 **Vision is paid for once.** An `annotate` pass looks at each photograph a single
 time and caches subject, people, scene, focal point and a strength rating to

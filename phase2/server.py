@@ -51,6 +51,7 @@ import geocode
 import overrides as OV
 import photos as PH
 import planner
+import providers
 import render as R
 from schema import Layout
 from validate import check, load_photos
@@ -134,6 +135,7 @@ def api_album():
         "versions": versions,
         "has_annotations": bool(annotate.Annotations.load(STATE["album"] / "annotations.json").by_id),
         "has_key": STATE["has_key"],
+        "model": STATE["provider"].describe(),
         "sizes": list(OV.SIZES),
         "treatments": list(OV.TREATMENTS),
     }
@@ -229,12 +231,13 @@ def _build(do_plan: bool, comment: str | None):
         set_job("Preparing photographs", 5)
         ensure_thumbs(usable)
 
+        prov = STATE["provider"]
+        complete = providers.make_completer(prov)
         anns = annotate.Annotations.load(a / "annotations.json")
         todo = anns.missing(usable)
-        if todo and STATE["has_key"]:
+        if todo and prov.vision:
             set_job(f"Looking at {len(todo)} photographs", 15)
-            anns, _ = annotate.run(usable, thumb_dir(), a / "annotations.json",
-                                   planner.anthropic_completer(STATE["model"]))
+            anns, _ = annotate.run(usable, thumb_dir(), a / "annotations.json", complete)
         annotate.apply(usable, anns)
 
         store = Store(a)
@@ -244,16 +247,14 @@ def _build(do_plan: bool, comment: str | None):
             res = planner.plan(title=STATE["title"], subtitle=STATE["subtitle"],
                                fmt=STATE["fmt"], language=STATE["language"],
                                photos=usable, g=STATE["g"], lab=STATE["lab"],
-                               complete=planner.anthropic_completer(STATE["model"]),
-                               groups=groups)
+                               complete=complete, groups=groups)
             parent, comment_txt, summary = None, None, "initial plan"
         else:
             set_job("Revising the album", 45)
             pv, current = store.get()
             res = planner.revise(current=current, comment=comment or "", photos=usable,
                                  g=STATE["g"], lab=STATE["lab"], language=STATE["language"],
-                                 complete=planner.anthropic_completer(STATE["model"]),
-                                 groups=groups)
+                                 complete=complete, groups=groups)
             parent, comment_txt, summary = pv.version_no, comment, res.layout.change_summary
 
         set_job("Applying your settings", 70)
@@ -289,8 +290,11 @@ def api_plan(body: BuildIn):
     if JOB["running"]:
         raise HTTPException(409, "already working")
     if not STATE["has_key"]:
-        raise HTTPException(400, "No ANTHROPIC_API_KEY is set, so the album cannot be designed. "
-                                 "Everything else in this editor works offline.")
+        p = STATE["provider"]
+        raise HTTPException(400, f"No API key for {p.name}, so the album cannot be designed. "
+                                 "Set ALBUM_API_KEY (or ANTHROPIC_API_KEY / OPENROUTER_API_KEY), "
+                                 "or point --base-url at a local model. Everything else in this "
+                                 "editor works without one.")
     set_job("Starting", 1)
     threading.Thread(target=_build, args=(body.comment is None, body.comment), daemon=True).start()
     return {"ok": True}
@@ -348,7 +352,7 @@ def main():
     ap.add_argument("--title", default=None)
     ap.add_argument("--subtitle", default=None)
     ap.add_argument("--language", default="de")
-    ap.add_argument("--model", default=planner.MODEL)
+    providers.add_arguments(ap)
     ap.add_argument("--gap-hours", type=float, default=4.0)
     ap.add_argument("--radius-m", type=float, default=400.0)
     ap.add_argument("--no-geocode", action="store_true")
@@ -366,16 +370,19 @@ def main():
         lab=lab, lab_path=args.lab, fmt=args.format,
         g=R.geometry_for(lab, args.format),
         title=args.title or args.album.name, subtitle=args.subtitle,
-        language=args.language, model=args.model,
+        language=args.language,
         gap_hours=args.gap_hours, radius_m=args.radius_m,
         geocode=not args.no_geocode,
-        has_key=bool(os.environ.get("ANTHROPIC_API_KEY")),
     )
+    prov = providers.from_args(args)
+    STATE["provider"] = prov
+    STATE["has_key"] = prov.usable
     ph = reload_photos()
     ensure_thumbs(ph)
     print(f"\n  {len(ph)} photographs · {len(STATE['groups'])} groups · {args.format}")
+    print(f"  model: {prov.describe()}")
     if not STATE["has_key"]:
-        print("  ANTHROPIC_API_KEY is not set — editing works, designing the album does not")
+        print("  no API key — editing works, designing the album does not")
     print(f"\n  Open  http://{args.host}:{args.port}\n")
 
     import uvicorn

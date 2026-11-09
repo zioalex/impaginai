@@ -216,17 +216,83 @@ print files in the same place every time, or vendor real WOFF2 files into
 `phase0/assets/fonts/` and reference them with `@font-face`. The Docker image
 above installs DejaVu so that something predictable is always present.
 
+## Choosing the model
+
+Nothing about sequencing a photo album is vendor-specific, so the project speaks
+two wire protocols and you pick the endpoint:
+
+| `--provider` | Talks to |
+|---|---|
+| `anthropic` (default) | the Anthropic Messages API |
+| `openai` | anything speaking `/chat/completions` — OpenRouter, OpenAI, Together, Groq, vLLM, Ollama, LM Studio, llama.cpp |
+
+Giving `--base-url` implies `--provider openai`, because that is almost always
+what is meant. These shorthands expand for you: `openrouter`, `openai`,
+`together`, `groq`, `ollama`, `lmstudio`, `vllm`, `llamacpp`.
+
+**OpenRouter**
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
+python phase2/server.py --album ./albums/sardinien --photos ~/Pictures/sardinien \
+       --base-url openrouter --model anthropic/claude-sonnet-4.5
+```
+
+**A model on your own machine** — no key needed, since localhost endpoints are
+treated as keyless:
+
+```bash
+ollama serve &
+ollama pull qwen2.5vl
+python phase2/server.py --album ./albums/sardinien --photos ~/Pictures/sardinien \
+       --base-url ollama --model qwen2.5vl
+```
+
+**OpenAI**
+
+```bash
+export OPENAI_API_KEY=sk-...
+python phase2/server.py --album ./albums/sardinien --photos ~/Pictures/sardinien \
+       --base-url openai --model gpt-4o
+```
+
+Every entry point takes the same flags, or set them once in the environment:
+
+```bash
+export ALBUM_PROVIDER=openai
+export ALBUM_BASE_URL=openrouter
+export ALBUM_MODEL=anthropic/claude-sonnet-4.5
+export ALBUM_API_KEY=sk-or-...
+export ALBUM_VISION=1          # 0 if the model cannot see images
+export ALBUM_JSON_MODE=0       # 1 to ask the endpoint to guarantee JSON
+```
+
+### What the model has to be able to do
+
+- **Follow a JSON schema.** The planner's output is validated and rejected on
+  failure, with the error fed back, up to three attempts. A weak model will
+  burn those attempts and give up; `--json-mode` helps on endpoints that
+  support it. This is the one hard requirement.
+- **See images, for the `annotate` pass only.** With `--no-vision` (or a model
+  that cannot), annotation is skipped and the planner works from captions,
+  timestamps, GPS and pixel dimensions alone. The album is still built; it just
+  does not know what is in the frames.
+- **Hold the whole album at once.** 30-100 photographs with captions and
+  annotations is roughly 12k-25k tokens of input. A 4k-context model cannot do
+  this, by design — the album is planned in one call, never page by page.
+
+The cost line printed after each call shows real token counts always, and a
+dollar estimate only for Anthropic's own endpoint, where the rates are known.
+
 ## What needs the internet
 
 Only the model calls — `annotate`, `plan` and `revise`, which is the
 *Design the album* button. Everything else runs locally: reading photographs
 and EXIF, place names, grouping, the editor, rendering, and every print check.
 
-So you can prepare an entire album, describe every photograph, decide what is
-big and what is left out, and render a PDF with the network unplugged. There is
-no local substitute for the design step, and pretending otherwise would be
-dishonest — but it is a handful of API calls per album, not a dependency on
-being online while you work.
+And even that is only true of a *hosted* model. Point `--base-url` at Ollama,
+LM Studio, vLLM or llama.cpp on your own machine and the whole pipeline runs
+with the network unplugged, start to finish.
 
 ### Installing on a machine that will never be online
 
@@ -270,9 +336,18 @@ was not run inside the activated virtual environment.
 `reverse_geocoder` is not installed. Neither is fatal; the album is built
 without them.
 
-**Designing fails with an authentication error** — `ANTHROPIC_API_KEY` is unset
-or wrong in the shell that started the server. It is read at startup, so export
-it first and restart.
+**Designing fails with an authentication error** — the key is unset or wrong in
+the shell that started the server. It is read at startup, so export it first and
+restart. The startup line prints which model and endpoint it resolved, which is
+the quickest way to see whether it picked up what you intended.
+
+**`no API key for provider ...`** — either set the key the message names, or
+point `--base-url` at a local endpoint, which needs none.
+
+**The model keeps failing validation** — it is not following the output schema.
+Try `--json-mode` if the endpoint supports it, or a stronger model. The planner
+retries three times with the validation error fed back and then stops rather
+than writing a broken album.
 
 **The preview looks shrunk, with white margins where a photograph should bleed**
 — something removed `contain: layout paint size` from `.sheet` in

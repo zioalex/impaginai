@@ -332,6 +332,27 @@ def main() -> int:
         f"cover is only {cover_pdf.stat().st_size} bytes — almost certainly blank")
     print(f"cover: {cover_pdf.stat().st_size / 1e6:.1f} MB")
 
+    # 11. the provider layer: OpenAI-protocol translation must not lose images
+    import providers as PR
+    pr = PR.resolve(base_url="http://127.0.0.1:1/v1", model="m", api_key="k")
+    assert pr.name == "openai", "a base-url did not imply the openai protocol"
+    msgs = [{"role": "user", "content": [
+        {"type": "text", "text": "id: p001"},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "AAAA"}},
+    ]}]
+    oai = PR._to_openai("SYS", msgs)
+    assert oai[0]["role"] == "system" and oai[0]["content"] == "SYS"
+    img = [b for b in oai[1]["content"] if b["type"] == "image_url"]
+    assert img and img[0]["image_url"]["url"].startswith("data:image/jpeg;base64,"), \
+        "image block was not translated to a data URI"
+    assert PR.count_images(msgs) == 1
+    stripped = PR._strip_images(msgs)
+    assert PR.count_images(stripped) == 0 and stripped[0]["content"][0]["text"] == "id: p001", \
+        "stripping images lost the text"
+    assert PR.resolve(base_url="ollama").is_local, "a localhost endpoint was not treated as local"
+    assert PR.resolve(base_url="ollama").usable, "a local endpoint should need no key"
+    print(f"providers: openai translation ok, {len(PR.ALIASES)} endpoint shorthands")
+
     print("\nALL CHECKS PASSED")
     return 0
 
