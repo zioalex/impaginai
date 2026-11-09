@@ -269,20 +269,98 @@ export ALBUM_JSON_MODE=0       # 1 to ask the endpoint to guarantee JSON
 
 ### What the model has to be able to do
 
-- **Follow a JSON schema.** The planner's output is validated and rejected on
-  failure, with the error fed back, up to three attempts. A weak model will
-  burn those attempts and give up; `--json-mode` helps on endpoints that
-  support it. This is the one hard requirement.
-- **See images, for the `annotate` pass only.** With `--no-vision` (or a model
-  that cannot), annotation is skipped and the planner works from captions,
-  timestamps, GPS and pixel dimensions alone. The album is still built; it just
-  does not know what is in the frames.
-- **Hold the whole album at once.** 30-100 photographs with captions and
-  annotations is roughly 12k-25k tokens of input. A 4k-context model cannot do
-  this, by design — the album is planned in one call, never page by page.
+Measured on this project, not estimated:
 
-The cost line printed after each call shows real token counts always, and a
-dollar estimate only for Anthropic's own endpoint, where the rates are known.
+| | 22 photographs | ~100 photographs |
+|---|---|---|
+| Planning call input | ~3,000 tokens | ~6,000 tokens |
+| Planning call output | ~1,100–1,400 tokens | ~6,000 tokens |
+| Annotate call | 8 images + ~400 tokens per batch | same, more batches |
+
+So **context is not the constraint** — 16K is comfortable, 32K is generous.
+What actually decides whether a model can do this job, in order of how often it
+is the thing that fails:
+
+1. **Emitting valid JSON against a schema, repeatedly.** Output is validated and
+   rejected on failure with the error fed back, three attempts, then it gives
+   up rather than write a broken album. This is the whole game. `--json-mode`
+   helps on endpoints that support it.
+2. **Holding a long instruction set.** The system prompt is ~9,000 characters
+   of layout rules — template catalogue, grouping, pacing, the fold rule, page
+   budgets. A model that follows only the last few paragraphs will produce
+   valid JSON that ignores your constraints, which is worse than failing.
+3. **Vision, for the annotate pass only.** Optional. Without it the planner
+   works from captions, timestamps, GPS and pixel dimensions.
+
+### Running it on a 24 GB GPU
+
+A 24 GB card (RTX 3090, 4090, 5090) fits a capable vision model at 4-bit with
+room for image spikes. Leave 1–2 GB free: high-resolution images briefly push
+VRAM above the model's resting size.
+
+| Model | Fits in 24 GB | Vision | Runner | Notes |
+|---|---|---|---|---|
+| Qwen3-VL 32B (Q4) | ~21 GB | yes | Ollama (`qwen3-vl:32b`) | the straightforward first try; one model for both passes |
+| Qwen 3.6-27B dense (Q4_K_M) | ~17 GB | yes | llama.cpp, LM Studio | strongest local vision at this tier; **not in Ollama**, which lacks mmproj support |
+| Qwen 3.6-35B-A3B MoE (Q4) | ~22 GB | yes | llama.cpp, LM Studio | faster than the 27B dense, 3B active |
+| Gemma 4 31B (Q4) | ~20 GB | yes | Ollama (`gemma4:31b`) | best vision benchmarks of this group |
+| Gemma 3 27B QAT (int4) | ~14 GB | yes | Ollama (`gemma3:27b`) | leaves the most headroom |
+
+```bash
+ollama serve &
+ollama pull qwen3-vl:32b
+python phase2/server.py --album ./albums/sardinien --photos ~/Pictures/sardinien \
+       --base-url ollama --model qwen3-vl:32b --json-mode
+```
+
+**A split setup is usually the better answer.** The two jobs have different
+shapes: annotate is 22+ short vision calls where a local model costs nothing
+and a mistake is cheap, while planning is one long-instruction reasoning call
+where quality decides whether the book is any good. So annotate locally, plan
+remotely:
+
+```bash
+# once, locally and free
+python phase1/album.py annotate --album ../albums/sardinien --photos ~/Pictures/x \
+       --base-url ollama --model qwen3-vl:32b
+
+# then plan with a stronger model — annotations are already cached
+python phase1/album.py plan --album ../albums/sardinien --photos ~/Pictures/x \
+       --base-url openrouter --model anthropic/claude-sonnet-5.5
+```
+
+Expect to test instruction-following yourself. Published benchmarks for these
+models cover OCR and chart reading, not "obeys a 9,000-character layout brief",
+and that is the capability this project needs. `--dry-run` shows the exact
+prompt; if a model produces valid JSON that ignores the pacing and fold rules,
+it has failed in the way that matters and no retry will fix it.
+
+### On OpenRouter
+
+Prices move constantly, so check the model's own page; these are November 2026
+figures per million tokens. An album is a handful of calls, so even the
+expensive options cost cents.
+
+| Model | In / out | Why |
+|---|---|---|
+| `anthropic/claude-sonnet-5.5` | $2 / $10 | the default choice for planning: long-instruction adherence is what this job needs |
+| `anthropic/claude-opus-5.5` | $4 / $20 | for a book that matters; same shape, better judgement |
+| `anthropic/claude-haiku-5.5` | $0.10 / $0.50 | cheap, and strong enough for the annotate pass |
+| `google/gemini-4-argon` | $2 / $10 | strong multimodal alternative, long context |
+| `deepseek/deepseek-v4.1-flash` | $0.15 / $0.60 | cheapest credible planner; verify it respects the layout rules |
+| `openai/gpt-6-luna` | $0.10 / $0.50 | cheap structured output; good annotate candidate |
+
+Set it once:
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
+export ALBUM_BASE_URL=openrouter
+export ALBUM_MODEL=anthropic/claude-sonnet-5.5
+```
+
+Verify vision and structured-output support on the model's OpenRouter page
+before relying on it — the capability flags there are authoritative, and
+third-party summaries frequently are not.
 
 ## What needs the internet
 

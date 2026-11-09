@@ -1,0 +1,47 @@
+# Two things, on every push: do the dependencies have known holes, and does the
+# print chain still work. The second matters because the Chromium scaling bug
+# documented in phase0/README.md was invisible except in the rendered output.
+name: CI
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"      # Monday: catch advisories published since the last push
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit
+      - run: pip-audit -r requirements.txt --strict
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: playwright install --with-deps chromium
+      - name: Warm the offline geocoder
+        run: python -c "import reverse_geocoder as rg; rg.search([(47.4, 8.6)])"
+      - name: Loop, validator, renderer and provider tests
+        run: python phase1/tests/test_loop.py
+      - name: Calibration book renders to spec
+        run: |
+          cd phase0
+          python tools/make_placeholder_photos.py
+          python render.py proof --layout examples/layout_test24.json \
+                 --photos ./photos --allow-fold --out /tmp/out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: proof-pdf
+          path: /tmp/out/inner-proof.pdf
+          if-no-files-found: ignore

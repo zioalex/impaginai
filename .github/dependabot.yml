@@ -1,0 +1,20 @@
+# Dependabot keeps requirements.txt current on its own, so a security release
+# does not wait for someone to notice. Grouped into one PR a week: pillow and
+# pypdf both parse untrusted binary input and are the two that matter most.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      security-critical:
+        patterns: ["pillow", "pypdf"]
+      everything-else:
+        patterns: ["*"]
+        exclude-patterns: ["pillow", "pypdf"]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly

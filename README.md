@@ -163,6 +163,21 @@ especially the cover constants, since the spine is computed from them. Download
 Saal's template for your format and confirm them first. `phase0/README.md` lists
 exactly what to measure when the book arrives.
 
+## Dependencies and security
+
+`requirements.txt` uses floors rather than exact pins, so a fresh install picks
+up security releases without the file being edited. `pillow` and `pypdf` both
+parse untrusted binary input — photographs and PDFs — and are the two that must
+not lag; the first version of this file pinned them months behind and collected
+64 advisories.
+
+```bash
+pip install pip-audit && pip-audit -r requirements.txt
+```
+
+CI runs that on every push and weekly, and Dependabot opens grouped update PRs.
+For byte-identical rebuilds, generate a lock file with `pip-compile`.
+
 ## Licence
 
 Apache 2.0 — see `LICENSE`.
