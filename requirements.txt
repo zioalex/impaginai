@@ -19,20 +19,20 @@
 # Versions in the comments are what this was last verified against.
 
 # --- rendering and print chain (Phase 0) ---
-playwright>=1.63.0            # verified 1.63.0
+playwright>=1.64.1            # verified 1.63.0
 pillow>=13.0.0                # verified 13.0.0 — below this, 39 known CVEs
-pillow-heif>=1.1.0            # HEIC/HEIF: the default format on every iPhone
+pillow-heif>=1.8.1            # HEIC/HEIF: the default format on every iPhone
                               # since 2017. Pillow cannot read it alone.
 pypdf>=6.21.4                 # verified 7.0.0  — below this, 25 known CVEs
 
 # --- schema, config, planning (Phase 1) ---
-pydantic>=2.13.5              # verified 2.13.5
+pydantic>=2.14.3              # verified 2.13.5
 PyYAML>=6.0.3                 # verified 6.0.3
 httpx>=0.28.1                 # verified 0.28.1 — OpenAI-compatible endpoints
 
 # Only needed for --provider anthropic, which is the default. Drop it if you
 # point --base-url at an OpenAI-compatible endpoint instead.
-anthropic>=0.69.0
+anthropic>=2.6.0
 
 # --- web editor (Phase 2) ---
 fastapi>=0.162.2              # verified 0.162.2
