@@ -85,7 +85,10 @@ so images may cross the fold without loss.
 the minimum cannot be printed at all, so pad with `single-centered`, `text-page` or a \
 section divider rather than coming in short.
 - Photographs printed below {res['warn_below_dpi']} DPI look soft. Where a photo line says \
-"too small for", do not use that photo in those templates; where it says "TOO SMALL TO PRINT", \
+"too small for", do not use that photo in those templates — and where an entry names a slot \
+("column-and-solo slot 1"), do not put it in that position; slot N is the Nth photograph you \
+list for the spread, so it may still go in another slot of the same template. Where it says \
+"TOO SMALL TO PRINT", \
 leave that photograph out of the book entirely.
 - You need not place every photograph. Leaving out a weak or redundant frame makes the \
 book better, and repeating one photograph is almost never right.
