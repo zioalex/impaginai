@@ -373,6 +373,22 @@ def main() -> int:
     print(f"roles: annotate={roles['annotate'].model} plan={roles['plan'].model} "
           f"revise={roles['revise'].model}")
 
+    # 13. vision copies must actually be smaller, and cost must scale with area
+    demo = ROOT / "demo_photos"
+    if demo.exists():
+        dph = PH.load(demo, None, g, 200, 150)[:4]
+        big = annotate.build_vision_copies(dph, ALBUM / "v1200", 1200)
+        small = annotate.build_vision_copies(dph, ALBUM / "v512", 512)
+        tb = annotate.estimate_tokens(dph, big)
+        ts = annotate.estimate_tokens(dph, small)
+        assert ts * 3 < tb, f"512px should cost far less than 1200px, got {ts} vs {tb}"
+        from PIL import Image
+        with Image.open(small / f"{dph[0].id}.jpg") as im:
+            assert max(im.size) <= 512, "vision copy was not resized"
+            assert "icc_profile" not in im.info, "ICC profile not stripped from vision copy"
+        print(f"vision copies: 1200px {tb:,} tok -> 512px {ts:,} tok "
+              f"({tb / max(ts, 1):.1f}x cheaper)")
+
     print("\nALL CHECKS PASSED")
     return 0
 

@@ -343,6 +343,21 @@ The cost line shows real token counts for every provider and a dollar figure
 only for Anthropic's own endpoint, since that is the only one whose rates are
 known here.
 
+## Image cost
+
+Vision billing follows image dimensions, not bytes: roughly (w x h) / 750
+tokens on Anthropic, 512px tiles on OpenAI-compatible endpoints. Compressing
+harder saves bandwidth and nothing else.
+
+The annotate pass therefore builds its own small copies in
+`derivatives/vision<px>/` rather than reusing the 1200px proof derivatives,
+which must stay large enough to render a readable proof PDF. 512px is the
+default: the pass is asked for a subject, a face count, a scene type, a focal
+point and a rating, which is contact-sheet work, and it costs a fifth of the
+tokens of 1200px. `phase1/tools/bench_vision.py` measures agreement across
+sizes on real photographs, because where the floor sits depends on the pictures
+— landscapes downscale further than group shots.
+
 ## Capabilities added after the first demo
 
 **Place names, offline.** `phase1/geocode.py` resolves GPS without a network or
