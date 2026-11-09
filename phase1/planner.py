@@ -25,6 +25,8 @@ from pydantic import ValidationError
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "phase0"))
 
 from schema import Layout  # noqa: E402
+import templates_lib  # noqa: E402
+from geometry import effective_dpi  # noqa: E402
 
 import prompt as P  # noqa: E402
 from photos import Photo  # noqa: E402
@@ -125,8 +127,46 @@ def extract_json(text: str) -> str:
     return t[start : end + 1]
 
 
-def _run(system: str, first_user: list[dict] | str, complete: Completer) -> Result:
-    """One logical call, with retries that feed the validation error back."""
+def resolution_errors(layout: Layout, photos: list[Photo], g, lab: dict) -> list[str]:
+    """Placements the validator would block for resolution, as feedback lines.
+
+    The planner is told which slots each photograph is too small for, but
+    that is a hint; this is the same measurement validate.check makes, run
+    before the layout leaves the retry loop so the model gets to fix it
+    instead of the render being refused afterwards.
+    """
+    block = float(lab["resolution"]["block_below_dpi"])
+    warn = float(lab["resolution"]["warn_below_dpi"])
+    by_id = {p.id: p for p in photos}
+    out = []
+    for sp in layout.spreads:
+        if sp.template not in templates_lib.REGISTRY:
+            continue
+        rendered = templates_lib.build(sp.template, g, sp.options)
+        for i, (slot, box) in enumerate(zip(sp.slots, rendered.slots), 1):
+            ph = by_id.get(slot.photo_id)
+            if ph is None:
+                continue
+            dpi = effective_dpi(ph.width, ph.height, box.rect)
+            if dpi < block:
+                out.append(
+                    f"spread {sp.index} ({sp.template}) slot {i}: {ph.id} would print at "
+                    f"{dpi:.0f} DPI in a {box.rect.w:.0f}x{box.rect.h:.0f}mm slot, below the "
+                    f"{block:.0f} DPI the lab accepts. Move it to a smaller slot or a "
+                    f"template it is not listed as too small for (it needs {warn:.0f} DPI to "
+                    f"look sharp), or leave it out.")
+    return out
+
+
+def _run(system: str, first_user: list[dict] | str, complete: Completer,
+         check: Callable[[Layout], list[str]] | None = None) -> Result:
+    """One logical call, with retries that feed the validation error back.
+
+    `check` returns blocking problems the schema cannot express. They are fed
+    back like schema errors, but a layout that still has them on the last
+    attempt is returned rather than discarded: it is valid, and the validator
+    downstream reports exactly what is wrong with it.
+    """
     messages: list[dict] = [{"role": "user", "content": first_user}]
     total = Usage()
     last_error = ""
@@ -136,10 +176,17 @@ def _run(system: str, first_user: list[dict] | str, complete: Completer) -> Resu
         total.add(usage)
         try:
             data = json.loads(extract_json(text))
-            return Result(Layout.model_validate(data), total, text)
+            layout = Layout.model_validate(data)
+            problems = check(layout) if check else []
+            if not problems or attempt == MAX_ATTEMPTS:
+                return Result(layout, total, text)
+            raise ValueError("the layout cannot be printed as it stands:\n"
+                             + "\n".join(problems))
         except (ValidationError, ValueError, json.JSONDecodeError) as exc:
             last_error = str(exc)
-            print(f"  attempt {attempt} rejected: {last_error.splitlines()[0][:120]}")
+            lines = last_error.splitlines()
+            shown = lines[1] if len(lines) > 1 and lines[0].endswith("as it stands:") else lines[0]
+            print(f"  attempt {attempt} rejected: {shown[:120]}")
             if attempt == MAX_ATTEMPTS:
                 break
             messages += [
@@ -171,7 +218,8 @@ def plan(
         content: list[dict] | str = [{"type": "text", "text": text}] + image_blocks(photos, thumb_dir)
     else:
         content = text
-    return _run(system, content, complete)
+    return _run(system, content, complete,
+                lambda lay: resolution_errors(lay, photos, g, lab))
 
 
 def revise(
@@ -179,4 +227,5 @@ def revise(
     language: str, complete: Completer, groups=None,
 ) -> Result:
     system = P.system_prompt(g, lab, language)
-    return _run(system, P.revise_user_content(current, photos, comment, groups), complete)
+    return _run(system, P.revise_user_content(current, photos, comment, groups), complete,
+                lambda lay: resolution_errors(lay, photos, g, lab))
