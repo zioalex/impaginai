@@ -28,7 +28,7 @@ from PIL import Image, ImageCms, ImageOps
 import charts
 import imaging  # registers HEIC/HEIF decoders on import
 import templates_lib
-from geometry import Geometry, Rect, spine_width_mm, MM_PER_INCH
+from geometry import Geometry, Rect, spine_width_mm, MM_PER_INCH, fit_rect
 from schema import Layout
 from validate import PhotoInfo, check, load_photos
 
@@ -177,12 +177,56 @@ def overlay_rect(g: Geometry, box, position: str) -> Rect:
     return Rect(s.x, y, s.w, h)
 
 
+def _side_of(g: Geometry, window: Rect) -> str:
+    """Which page a page window shows. The window includes bleed, so its left
+    edge alone is not enough: the right page's window starts past the fold."""
+    return "left" if (window.x + window.x2) / 2 < g.fold_x else "right"
+
+
+_ASPECTS: dict[str, float] = {}
+
+
+def _aspect(path: Path) -> float:
+    """Width / height of a derivative, read from its header and cached."""
+    key = str(path)
+    if key not in _ASPECTS:
+        try:
+            with Image.open(path) as im:
+                _ASPECTS[key] = im.width / im.height
+        except Exception:
+            _ASPECTS[key] = 0.0
+    return _ASPECTS[key]
+
+
+def stamp_html(g: Geometry, window: Rect, photo: Rect | None, text: str) -> str:
+    """Place and date for the first page of a location, set on the photograph's
+    own page rather than on a divider page of its own.
+
+    Above the photograph, in the top margin, when there is paper there; laid
+    over the top of the photograph in white when it runs to the top edge.
+    """
+    side = _side_of(g, window)
+    safe = g.safe(side)
+    col = g.text_column(side)
+    h = 5.0
+    if photo is not None and photo.y <= safe.y:
+        r = Rect(safe.x + 2, safe.y + 3, safe.w - 4, h)
+        cls = "stamp overlay"
+    else:
+        top = photo.y if photo is not None else col.y
+        x = max(photo.x, safe.x) if photo is not None else col.x
+        r = Rect(x, round(max(safe.y, top - h - 2.5), 2), safe.x2 - x, h)
+        cls = "stamp"
+    return f'<div class="{cls} abs" style="{rect_style(r)}">{esc(text)}</div>'
+
+
 def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window: Rect) -> str:
     parts: list[str] = []
 
     if rendered.chart:
         parts.append(charts.RENDERERS[rendered.chart](g))
 
+    first_on_page: Rect | None = None
     for slot, box in zip(sp.slots, rendered.slots):
         if not box.rect.intersects(window):
             continue
@@ -192,12 +236,27 @@ def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window:
         fx, fy = slot.focal
         treat = getattr(slot, "treatment", "none")
         cls = "slot abs" + (f" t-{treat}" if treat and treat != "none" else "")
+        # Never cut away more of a photograph than geometry.MIN_CROP_KEEP
+        # allows: past that the slot shrinks to the photograph's own shape.
+        rect = fit_rect(box.rect, _aspect(src))
+        fitted = rect is not box.rect
+        if first_on_page is None:
+            first_on_page = rect
         parts.append(
             f'<img class="{cls}" src="{src.as_posix()}" '
-            f'style="{rect_style(box.rect)}object-position:{fx * 100:.1f}% {fy * 100:.1f}%;">'
+            f'style="{rect_style(rect)}object-position:{fx * 100:.1f}% {fy * 100:.1f}%;">'
         )
         if slot.caption and box.caption_style != "none" and slot.caption_position != "none":
-            if box.caption_style == "overlay":
+            own = _side_of(g, rect)
+            page = g.trim(own)
+            if box.caption_style == "overlay" and fitted and rect.y2 + 12 <= page.y2:
+                # The photograph no longer reaches the page edge, so a white
+                # overlay caption would land on white paper. Set it beneath.
+                safe = g.safe(own)
+                x = max(rect.x, safe.x)
+                cr = Rect(x, rect.y2 + 2.5, min(rect.x2, safe.x2) - x, 9)
+                cls = "caption"
+            elif box.caption_style == "overlay":
                 cr = overlay_rect(g, box, slot.caption_position)
                 cls = "caption overlay"
             else:
@@ -208,6 +267,11 @@ def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window:
                 cls += f" {align}"
             if cr.intersects(window):
                 parts.append(f'<div class="{cls} abs" style="{rect_style(cr)}">{esc(slot.caption)}</div>')
+
+    stamp = (sp.options or {}).get("stamps", {}).get(
+        _side_of(g, window))
+    if stamp:
+        parts.append(stamp_html(g, window, first_on_page, stamp))
 
     text = sp.text
     for tb in rendered.texts:

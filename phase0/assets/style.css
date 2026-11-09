@@ -139,3 +139,16 @@ img.slot.t-soft-edge {
   transform-origin: 0 0;
   transform: rotate(90deg);
 }
+
+/* Location stamp — place and date on the first page of each location.
+   Set on the photograph's page, never on a page of its own. */
+.stamp {
+  font-family: var(--font-caption);
+  font-size: 3.2mm;
+  line-height: 1;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.stamp.overlay { color: var(--invert); text-shadow: 0 0 1.4mm rgba(0, 0, 0, 0.55); }
