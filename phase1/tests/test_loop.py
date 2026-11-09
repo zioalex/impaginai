@@ -462,6 +462,23 @@ def main() -> int:
         assert not (k == "minItems" and v > 1), "minItems above 1 survives"
         assert not (k == "additionalProperties" and v is not False), \
             "open additionalProperties survives; Anthropic only accepts false"
+    # Anthropic's grammar compiler also caps optional properties at 24.
+    def _count(n):
+        n = 0
+        if isinstance(n, dict):
+            if isinstance(n.get("properties"), dict):
+                n += len(set(n["properties"]) - set(n.get("required", [])))
+                for sub in n["properties"].values():
+                    n += _count(sub)
+            for k, v in n.items():
+                if k != "properties":
+                    n += _count(v)
+        elif isinstance(n, list):
+            for x in n:
+                n += _count(x)
+        return n
+    optional = _count(sch)
+    assert optional <= 24, f"{optional} optional properties; Anthropic allows 24"
     opts = sch["properties"]["spreads"]["items"]["properties"]["options"]
     assert "side" in opts["properties"], "options closed without declaring side"
     try:

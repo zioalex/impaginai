@@ -304,6 +304,32 @@ def simplify_schema(node, defs=None):
     return out
 
 
+def _require_all(node, keep_optional: set[str]) -> None:
+    """Mark every property required except those named in `keep_optional`.
+
+    Already-required properties stay required whatever their name (meta.title
+    is required even though "title" is in the optional set elsewhere).
+    Nullable fields stay nullable, so "required" only means the model writes
+    `null` instead of leaving the key out — which the prompt's JSON sketch
+    already shows it doing.
+    """
+    if isinstance(node, list):
+        for x in node:
+            _require_all(x, keep_optional)
+        return
+    if not isinstance(node, dict):
+        return
+    props = node.get("properties")
+    if isinstance(props, dict):
+        already = set(node.get("required", []))
+        node["required"] = [k for k in props if k in already or k not in keep_optional]
+        for sub in props.values():
+            _require_all(sub, keep_optional)
+    for k, v in node.items():
+        if k != "properties":
+            _require_all(v, keep_optional)
+
+
 def _layout_schema():
     """The layout JSON schema, for endpoints that constrain decoding to it.
 
@@ -324,6 +350,14 @@ def _layout_schema():
             "properties": {"side": {"type": "string", "enum": ["left", "right"]}},
             "additionalProperties": False,
         }
+        # Anthropic refuses more than 24 optional properties; the model has
+        # 27. Require the ones real layouts always carry, and leave optional
+        # what is genuinely absent much of the time: text on photo spreads,
+        # slots on text spreads, captions, options, and `treatment`, which
+        # only the user sets.
+        _require_all(schema, keep_optional={
+            "change_summary", "slots", "text", "options", "side", "caption",
+            "caption_position", "treatment", "eyebrow", "title", "subtitle", "body"})
         _SCHEMA_CACHE["v"] = schema
     except Exception:
         _SCHEMA_CACHE["v"] = None
