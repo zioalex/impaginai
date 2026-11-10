@@ -30,6 +30,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -89,12 +90,17 @@ def common(album: Path, models: Path) -> list[str]:
 class Editor:
     """The phase-2 server as a subprocess, driven over its HTTP API."""
 
-    def __init__(self, album: Path, models: Path | None, log: Path, env_extra: dict | None = None):
+    def __init__(self, album: Path | None, models: Path | None, log: Path,
+                 env_extra: dict | None = None, photos: Path | None | str = "default"):
+        if photos == "default":
+            photos = PHOTOS      # read at call time: a caller may point PHOTOS elsewhere
         self.port = free_port()
         self.log = log
         self.proc = subprocess.Popen(
-            [sys.executable, str(REPO / "phase2" / "server.py"), "--album", str(album),
-             "--photos", str(PHOTOS), "--captions", str(CAPTIONS), "--format", "21x21",
+            [sys.executable, str(REPO / "phase2" / "server.py"),
+             *(["--album", str(album)] if album else []),
+             *(["--photos", str(photos), "--captions", str(CAPTIONS)] if album and photos else []),
+             "--format", "21x21",
              "--no-geocode", *(["--models", str(models)] if models else []),
              "--port", str(self.port)],
             stdout=log.open("w"), stderr=subprocess.STDOUT, env={**env(), **(env_extra or {})})
@@ -113,7 +119,16 @@ class Editor:
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}",
                                      data=json.dumps(body).encode(), method="POST",
                                      headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read())
+
+    def get_raw(self, path: str):
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}", timeout=10) as r:
+            return json.loads(r.read())
+
+    def put_raw(self, path: str, data: bytes):
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=data, method="PUT")
+        with urllib.request.urlopen(req, timeout=30) as r:
             return json.loads(r.read())
 
     def wait(self, cond, seconds: float, what: str):
@@ -388,6 +403,63 @@ def main() -> int:
         finally:
             ed2.stop()
         print("models chosen in the editor: preset, model, High for the planner only: ok")
+
+        # 4c. albums in the editor: started with no album, a folder browser that
+        #     stays inside its root, a new album from a folder, uploads, a new
+        #     album to drop photos into, recent albums, reopening by --album alone
+        import shutil
+        home = tmp / "home"
+        trip = home / "Pictures" / "trip"
+        trip.mkdir(parents=True)
+        for f in sorted(PHOTOS.glob("*.jpg"))[:4]:
+            shutil.copy(f, trip)
+        lib_env = {"ALBUM_BROWSE_ROOT": str(home), "ALBUM_LIBRARY": str(home / "Albums")}
+        ed3 = Editor(None, None, tmp / "editor3.log", env_extra=lib_env)
+        try:
+            assert ed3.get("/api/album")["open"] is False
+            try:
+                ed3.send("PATCH", "/api/photos/p001", {"exclude": True})
+                raise AssertionError("an album endpoint answered with no album open")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 409
+            fs = ed3.get("/api/fs?path=Pictures")
+            assert [(d["name"], d["photos"]) for d in fs["dirs"]] == [("trip", 4)], fs
+            for bad in ("/etc", "../..", str(tmp)):
+                try:
+                    ed3.get_raw(f"/api/fs?path={urllib.parse.quote(bad)}")
+                    raise AssertionError(f"the folder browser left its root: {bad}")
+                except urllib.error.HTTPError as exc:
+                    assert exc.code == 403, (bad, exc.code)
+            r = ed3.post("/api/albums", {"name": "Engadin 2026", "photos": str(trip)})
+            assert r["photo_count"] == 4 and r["album"].endswith("Engadin-2026"), r
+            jpg = sorted(PHOTOS.glob("*.jpg"))[5].read_bytes()
+            up = ed3.put_raw("/api/upload?name=" + urllib.parse.quote("my photo (1).JPG"), jpg)
+            assert up["name"] == "my_photo_1.jpg", up
+            for name, body in (("notes.txt", b"hello"), ("fake.jpg", b"not an image")):
+                try:
+                    ed3.put_raw("/api/upload?name=" + name, body)
+                    raise AssertionError(f"{name} was accepted")
+                except urllib.error.HTTPError as exc:
+                    assert exc.code == 400
+            assert ed3.post("/api/photos/reload", {})["photo_count"] == 5
+            assert (trip / "my_photo_1.jpg").exists() and not list(trip.glob(".*part"))
+            r = ed3.post("/api/albums", {"name": "Dropped"})
+            assert r["photo_count"] == 0 and r["photos"].endswith("Dropped/photos"), r
+            rec = ed3.get("/api/albums")["recent"]
+            assert [x["title"] for x in rec][:2] == ["Dropped", "Engadin 2026"], rec
+            first = next(x for x in rec if x["title"] == "Engadin 2026")
+            assert ed3.post("/api/albums", {"album": first["album"]})["photo_count"] == 5
+            saved = json.loads((Path(first["album"]) / "settings.json").read_text())
+            assert saved["photos_dir"] == str(trip.resolve()), saved
+        finally:
+            ed3.stop()
+        ed4 = Editor(Path(first["album"]), None, tmp / "editor4.log", env_extra=lib_env, photos=None)
+        try:
+            a = ed4.get("/api/album")
+            assert a["open"] and a["title"] == "Engadin 2026" and len(ed4.get("/api/photos")) == 5, a
+        finally:
+            ed4.stop()
+        print("albums: welcome, folder browser in its root, new/open/recent, uploads, reopen: ok")
 
         # the keys never reach a file the editor writes, nor its output
         leaks = []

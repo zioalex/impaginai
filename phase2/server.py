@@ -47,7 +47,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT / "phase0"))
 sys.path.insert(0, str(ROOT / "phase1"))
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
@@ -71,6 +71,19 @@ from validate import check, load_photos
 from versions import Store
 
 app = FastAPI(title="Album editor")
+
+# Endpoints that work before any album is open: the welcome screen uses them.
+NO_ALBUM_OK = {"/api/album", "/api/albums", "/api/fs", "/api/job"}
+
+
+@app.middleware("http")
+async def need_album(request, call_next):
+    path = request.url.path
+    if (STATE.get("album") is None and path.startswith("/api/")
+            and path not in NO_ALBUM_OK):
+        return JSONResponse({"detail": "no album is open — choose or create one first"},
+                            status_code=409)
+    return await call_next(request)
 STATE: dict = {}
 PREFLIGHT_LOCK = threading.Lock()
 JOB = {"running": False, "step": "", "progress": 0, "error": None, "done": False,
@@ -264,6 +277,10 @@ def settings_path() -> Path:
 
 def save_settings() -> None:
     data = {k: STATE.get(k) for k in ("fmt", "title", "subtitle", "language", "front_photo")}
+    # Where the photographs are, so the album can be opened again by itself.
+    data["photos_dir"] = str(STATE["photos"])
+    if STATE.get("captions") and Path(STATE["captions"]) != Path(STATE["photos"]) / "captions.yaml":
+        data["captions"] = str(STATE["captions"])
     # Options pinned by a command-line flag are not saved: the flag holds only
     # for that run, and the album keeps what was chosen in the editor.
     saved = dict(STATE.get("saved_options") or {})
@@ -413,6 +430,13 @@ def run_render(command: str, layout_path: Path, out: Path, *extra: str) -> int:
 
 @app.get("/api/album")
 def api_album():
+    if STATE.get("album") is None:
+        return {"open": False, **api_albums()}
+    return {"open": True, "album_dir": str(STATE["album"]), "photos_dir": str(STATE["photos"]),
+            **_album_info()}
+
+
+def _album_info():
     store = Store(STATE["album"])
     versions = [asdict(v) for v in store.versions()]
     groups = [
@@ -576,6 +600,289 @@ def api_relook():
     anns.save(path)
     n = len([p for p in STATE["all"] if not STATE["ov"].get(p.id).exclude])
     return {"ok": True, "photos": n}
+
+
+# --- albums: open, create, switch -----------------------------------------
+
+
+def load_album_settings(album: Path) -> dict:
+    sp = album / "settings.json"
+    if sp.exists():
+        try:
+            return json.loads(sp.read_text())
+        except ValueError:
+            return {}
+    return {}
+
+
+def library_dir() -> Path:
+    """Where new albums are made: $ALBUM_LIBRARY, else the user's choice,
+    else ~/PhotoAlbums."""
+    d = os.environ.get("ALBUM_LIBRARY") or user_config().get("library")
+    return Path(d).expanduser() if d else Path.home() / "PhotoAlbums"
+
+
+def remember_recent() -> None:
+    uc = user_config()
+    rec = [r for r in uc.get("recent", []) if r.get("album") != str(STATE["album"])]
+    rec.insert(0, {"album": str(STATE["album"]), "photos": str(STATE["photos"]),
+                   "title": STATE["title"], "photo_count": len(STATE.get("all") or []),
+                   "at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+    uc["recent"] = rec[:12]
+    save_user_config(uc)
+
+
+def open_album(album: Path, photos: Path | None = None, captions: Path | None = None,
+               *, first: bool = False, title: str | None = None) -> None:
+    """Make `album` the one the editor works on: its settings, options and
+    models, its photographs, groups and thumbnails. Raises ValueError with a
+    sentence for the user when it cannot.
+
+    `first` is the album named on the command line: only it takes --title,
+    --format, --language and --captions; albums opened later use what was
+    chosen in the editor."""
+    args = STATE["args"]
+    album = Path(album).expanduser().resolve()
+    saved = load_album_settings(album)
+    if photos is None and saved.get("photos_dir"):
+        photos = Path(saved["photos_dir"])
+    if photos is None:
+        raise ValueError(f"{album.name} has no photo folder yet — choose one.")
+    photos = Path(photos).expanduser().resolve()
+    if not photos.is_dir():
+        raise ValueError(f"The photo folder {photos} does not exist (any more).")
+    heic = sorted(p for p in photos.iterdir() if p.suffix.lower() in imaging.HEIF_EXTENSIONS)
+    if (problem := imaging.check(heic)):
+        raise ValueError(problem)
+    album.mkdir(parents=True, exist_ok=True)
+
+    pinned = STATE["pinned"]
+    opts = CFG.resolve(saved.get("options") or {}, pinned)
+    if opts["lab"] not in STATE["lab_paths"]:
+        opts["lab"] = "saal"
+    lab_path = STATE["lab_paths"][opts["lab"]]
+    lab = R.load_lab(lab_path)
+    fmt = (args.format if first else None) or saved.get("fmt") or "21x21"
+    if fmt not in lab["formats"]:
+        fmt = next(iter(lab["formats"]))
+    cap = (captions or (args.captions if first else None)
+           or (Path(saved["captions"]) if saved.get("captions") else None)
+           or photos / "captions.yaml")
+    STATE.update(
+        album=album, photos=photos, captions=cap,
+        opts=opts, saved_options=dict(saved.get("options") or {}),
+        lab=lab, lab_path=lab_path, fmt=fmt, g=R.geometry_for(lab, fmt),
+        title=((args.title if first else None) or title or saved.get("title") or album.name),
+        subtitle=(args.subtitle if first and args.subtitle is not None else saved.get("subtitle")),
+        language=((args.language if first else None) or saved.get("language") or "de"),
+        front_photo=saved.get("front_photo"),
+    )
+    apply_options()
+    # The models: what this album chose in the editor, else what was chosen
+    # last for another album, else the environment's defaults. Flags win.
+    if saved.get("models") is not None:
+        STATE["model_cfg"], STATE["model_preset"] = saved["models"], saved.get("preset")
+    else:
+        uc = user_config()
+        STATE["model_cfg"], STATE["model_preset"] = uc.get("models"), uc.get("preset")
+    STATE.pop("saved_models", None)
+    if STATE["models_locked_by"]:
+        STATE["saved_models"] = (saved.get("models"), saved.get("preset"))
+    apply_models(check=STATE.get("preflight_enabled", True))
+    ph = reload_photos()
+    ensure_thumbs(ph)
+    threading.Thread(target=prefetch_places, daemon=True).start()
+    save_settings()
+    remember_recent()
+
+
+def _browse_ok(path: Path) -> Path:
+    """A folder inside the browse root, resolved (symlinks cannot lead out)."""
+    if not STATE.get("files_editable", True):
+        raise HTTPException(403, "Folders cannot be chosen over the network: the editor was "
+                                 "started on a non-local address without --allow-remote-settings.")
+    root = STATE["browse_root"]
+    p = Path(path).expanduser()
+    if not p.is_absolute():
+        p = root / p
+    p = p.resolve()
+    if p != root and root not in p.parents:
+        raise HTTPException(403, f"Only folders inside {root} can be chosen.")
+    return p
+
+
+def _count_photos(d: Path, cap: int = 5000) -> int:
+    n = 0
+    try:
+        for f in d.iterdir():
+            if f.suffix.lower() in imaging.EXTENSIONS and f.is_file():
+                n += 1
+                if n >= cap:
+                    break
+    except OSError:
+        return 0
+    return n
+
+
+@app.get("/api/fs")
+def api_fs(path: str = ""):
+    """Folders for the folder browser, with how many photographs each holds.
+    Directories only, never file contents, never outside the browse root."""
+    p = _browse_ok(Path(path) if path else STATE["browse_root"])
+    if not p.is_dir():
+        raise HTTPException(404, "no such folder")
+    dirs = []
+    try:
+        entries = sorted(p.iterdir(), key=lambda x: x.name.lower())
+    except OSError as exc:
+        raise HTTPException(403, f"cannot read this folder: {exc.strerror}")
+    for d in entries:
+        if d.name.startswith(".") or not d.is_dir():
+            continue
+        try:
+            d.resolve().relative_to(STATE["browse_root"])
+        except ValueError:
+            continue                      # a link that leads out of the root
+        dirs.append({"name": d.name, "path": str(d), "photos": _count_photos(d)})
+    root = STATE["browse_root"]
+    return {"path": str(p), "root": str(root),
+            "parent": str(p.parent) if p != root else None,
+            "photos": _count_photos(p), "dirs": dirs[:500]}
+
+
+@app.get("/api/albums")
+def api_albums():
+    rec = []
+    for r in user_config().get("recent", []):
+        a = Path(r.get("album", ""))
+        rec.append({**r, "exists": a.is_dir() and Path(r.get("photos", "")).is_dir(),
+                    "current": STATE.get("album") is not None and a == STATE["album"]})
+    return {"recent": rec, "library": str(library_dir()),
+            "current": str(STATE["album"]) if STATE.get("album") else None,
+            "files_editable": STATE.get("files_editable", True),
+            "browse_root": str(STATE["browse_root"])}
+
+
+class AlbumIn(BaseModel):
+    album: str | None = None          # open this album folder
+    name: str | None = None           # or make a new one with this name
+    photos: str | None = None         # its photographs; None = upload into the album
+
+
+def _slug(name: str) -> str:
+    import re as _re
+    s_ = _re.sub(r"[^\w\- ]+", "", name, flags=_re.UNICODE).strip().replace(" ", "-")
+    return s_[:60] or "album"
+
+
+@app.post("/api/albums")
+def api_albums_open(body: AlbumIn):
+    """Open an album, or make a new one. A new album's photographs are an
+    existing folder, or a `photos` folder inside the album to drop them into."""
+    if JOB["running"]:
+        raise HTTPException(409, "busy — try again when the current job finishes")
+    if not STATE.get("files_editable", True):
+        raise HTTPException(403, "Albums cannot be opened over the network: the editor was "
+                                 "started on a non-local address without --allow-remote-settings.")
+    photos = _browse_ok(Path(body.photos)) if body.photos else None
+    title = None
+    if body.album:
+        album = Path(body.album).expanduser()
+        if not (album / "settings.json").exists() and photos is None:
+            raise HTTPException(404, "That folder is not an album made here.")
+    elif body.name and body.name.strip():
+        title = body.name.strip()
+        lib = library_dir()
+        album = lib / _slug(title)
+        n = 2
+        while album.exists() and any(album.iterdir()):
+            album = lib / f"{_slug(title)}-{n}"
+            n += 1
+        if photos is None:
+            photos = album / "photos"
+            photos.mkdir(parents=True, exist_ok=True)
+    else:
+        raise HTTPException(400, "give an album to open, or a name for a new one")
+    try:
+        open_album(album, photos, title=title)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True, "album": str(STATE["album"]), "photos": str(STATE["photos"]),
+            "photo_count": len(STATE["all"])}
+
+
+class PhotosDirIn(BaseModel):
+    photos: str
+
+
+@app.put("/api/albums/photos")
+def api_album_photos(body: PhotosDirIn):
+    """Point the current album at another photo folder."""
+    if STATE.get("album") is None:
+        raise HTTPException(409, "no album is open — choose or create one first")
+    if JOB["running"]:
+        raise HTTPException(409, "busy — try again when the current job finishes")
+    photos = _browse_ok(Path(body.photos))
+    try:
+        open_album(STATE["album"], photos)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True, "photos": str(STATE["photos"]), "photo_count": len(STATE["all"])}
+
+
+MAX_UPLOAD = 250 * 1024 * 1024
+
+
+@app.put("/api/upload")
+async def api_upload(request: Request, name: str):
+    """One photograph dropped onto the editor, as the raw request body. It is
+    copied into the album's photo folder; an existing file is never replaced."""
+    if not STATE.get("files_editable", True):
+        raise HTTPException(403, "Photos cannot be uploaded over the network without "
+                                 "--allow-remote-settings.")
+    import re as _re
+
+    # The file name becomes the photo's id: keep it to letters, digits, "-",
+    # "_" and the extension, so it is safe in a URL and in what the model sees.
+    base = Path(name).name
+    stem_, suf_ = Path(base).stem, Path(base).suffix
+    base = (_re.sub(r"[^\w\-]+", "_", stem_, flags=_re.UNICODE).strip("_") or "photo") + suf_.lower()
+    if not stem_ or stem_.startswith(".") or Path(base).suffix.lower() not in imaging.EXTENSIONS:
+        raise HTTPException(400, f"{name}: not a photograph this editor can use "
+                                 f"({', '.join(sorted(imaging.EXTENSIONS))})")
+    data = await request.body()
+    if not data:
+        raise HTTPException(400, f"{base} is empty")
+    if len(data) > MAX_UPLOAD:
+        raise HTTPException(413, f"{base} is larger than {MAX_UPLOAD // 2**20} MB")
+    dest = STATE["photos"] / base
+    stem, suf, n = dest.stem, dest.suffix, 2
+    while dest.exists():
+        dest = dest.with_name(f"{stem}-{n}{suf}")
+        n += 1
+    tmp = dest.with_name(f".{dest.name}.part")
+    tmp.write_bytes(data)
+    try:
+        from PIL import Image
+
+        with Image.open(tmp) as im:
+            im.verify()
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise HTTPException(400, f"{base} could not be read as an image")
+    tmp.replace(dest)
+    return {"ok": True, "name": dest.name, "id": dest.stem}
+
+
+@app.post("/api/photos/reload")
+def api_photos_reload():
+    """After uploads: read the photo folder again and make thumbnails."""
+    if JOB["running"]:
+        raise HTTPException(409, "busy — try again when the current job finishes")
+    ph = reload_photos()
+    ensure_thumbs(ph)
+    remember_recent()
+    return {"ok": True, "photo_count": len(ph)}
 
 
 # --- AI models and keys --------------------------------------------------
@@ -1363,8 +1670,10 @@ def index():
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--album", type=Path, required=True)
-    ap.add_argument("--photos", type=Path, required=True)
+    ap.add_argument("--album", type=Path, default=None,
+                    help="the album folder to open (default: choose or create one in the editor)")
+    ap.add_argument("--photos", type=Path, default=None,
+                    help="its photographs (default: the folder the album was made with)")
     ap.add_argument("--captions", type=Path)
     ap.add_argument("--lab", type=Path, default=None,
                     help="lab file (default: chosen in the editor, else saal)")
@@ -1387,28 +1696,21 @@ def main():
                     help="skip the one-request model check at startup")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--allow-remote-settings", action="store_true",
-                    help="allow API keys to be set from the editor even when it listens "
-                         "on a non-local address")
+                    help="allow API keys, folders and uploads from the editor even when it "
+                         "listens on a non-local address")
+    ap.add_argument("--browse-root", type=Path, default=None,
+                    help="the folder browser starts here and cannot leave it "
+                         "(default: your home folder)")
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
     # Nothing printed — a log line, a traceback — may carry an API key.
     sys.stdout = keystore.RedactingStream(sys.stdout)
     sys.stderr = keystore.RedactingStream(sys.stderr)
 
-    args.album.mkdir(parents=True, exist_ok=True)
-    # What was chosen in the editor last time, unless a flag says otherwise.
-    saved = {}
-    sp = args.album / "settings.json"
-    if sp.exists():
-        try:
-            saved = json.loads(sp.read_text())
-        except ValueError:
-            saved = {}
     # Options: a flag pins one for this run (shown locked in the editor).
     lab_paths = CFG.labs(ROOT / "phase0" / "labs")
     pinned = {}
     if args.lab is not None:
-        lab_paths.setdefault(args.lab.stem, args.lab)
         lab_paths[args.lab.stem] = args.lab
         pinned["lab"] = args.lab.stem
     if args.gap_hours is not None:
@@ -1422,61 +1724,26 @@ def main():
         pinned["online_places"] = False
     elif args.offline_places:
         pinned["online_places"] = False
-    opts = CFG.resolve(saved.get("options") or {}, pinned)
-    if opts["lab"] not in lab_paths:
-        opts["lab"] = "saal"
-    lab_path = lab_paths[opts["lab"]]
-    lab = R.load_lab(lab_path)
-    fmt = args.format or saved.get("fmt") or "21x21"
-    if fmt not in lab["formats"]:
-        fmt = next(iter(lab["formats"]))
-    STATE.update(opts=opts, pinned=pinned, lab_paths=lab_paths,
-                 saved_options=dict(saved.get("options") or {}))
-    STATE.update(
-        album=args.album, photos=args.photos,
-        captions=args.captions or (args.photos / "captions.yaml"),
-        lab=lab, lab_path=lab_path, fmt=fmt,
-        g=R.geometry_for(lab, fmt),
-        title=args.title or saved.get("title") or args.album.name,
-        subtitle=args.subtitle if args.subtitle is not None else saved.get("subtitle"),
-        language=args.language or saved.get("language") or "de",
-        front_photo=saved.get("front_photo"),
-    )
-    apply_options()
-    STATE["args"] = args
-    STATE["models_locked_by"] = models_locked_by(args)
-    STATE["keys_editable"] = (args.host in ("127.0.0.1", "localhost", "::1")
-                              or args.allow_remote_settings)
-    # The models: what this album chose in the editor, else what was chosen
-    # last for another album, else the environment's defaults. Flags win.
-    if saved.get("models") is not None:
-        STATE["model_cfg"], STATE["model_preset"] = saved["models"], saved.get("preset")
+    local = args.host in ("127.0.0.1", "localhost", "::1")
+    STATE.update(args=args, pinned=pinned, lab_paths=lab_paths, album=None,
+                 models_locked_by=models_locked_by(args),
+                 keys_editable=local or args.allow_remote_settings,
+                 files_editable=local or args.allow_remote_settings,
+                 browse_root=(args.browse_root or Path(os.environ.get("ALBUM_BROWSE_ROOT")
+                                                       or Path.home())).expanduser().resolve(),
+                 preflight_enabled=not args.no_preflight, preflight={})
+
+    if args.album is not None:
+        try:
+            open_album(args.album, args.photos, args.captions, first=True)
+        except ValueError as exc:
+            raise SystemExit(str(exc))
+        print(f"\n  {len(STATE['all'])} photographs · {len(STATE['groups'])} groups · {STATE['fmt']}")
+        print(providers.describe_roles(STATE["providers"]))
+        if not STATE["has_key"]:
+            print("  no API key — editing works, designing the album does not")
     else:
-        uc = user_config()
-        STATE["model_cfg"], STATE["model_preset"] = uc.get("models"), uc.get("preset")
-    if STATE["models_locked_by"]:
-        STATE["saved_models"] = (saved.get("models"), saved.get("preset"))
-    apply_models(check=False)
-    roles = STATE["providers"]
-    # Planning is the call that cannot be skipped, so its key decides whether
-    # the album can be designed at all; annotate degrades gracefully.
-    heic = sorted(p for p in args.photos.iterdir()
-                  if p.suffix.lower() in imaging.HEIF_EXTENSIONS) if args.photos.is_dir() else []
-    if (problem := imaging.check(heic)):
-        raise SystemExit(problem)
-    ph = reload_photos()
-    ensure_thumbs(ph)
-    threading.Thread(target=prefetch_places, daemon=True).start()
-    print(f"\n  {len(ph)} photographs · {len(STATE['groups'])} groups · {fmt}")
-    print(providers.describe_roles(roles))
-    if not STATE["has_key"]:
-        print("  no API key — editing works, designing the album does not")
-    STATE["preflight_enabled"] = not args.no_preflight
-    STATE["preflight"] = {}
-    if STATE["preflight_enabled"]:
-        STATE["preflight"] = {n: {"ok": None, "status": "checking", "message": "", "seconds": 0.0}
-                              for n in _preflight_roles()}
-        start_preflight()
+        print("\n  no album given — choose or create one in the editor")
     print(f"\n  Open  http://{args.host}:{args.port}\n")
 
     import uvicorn

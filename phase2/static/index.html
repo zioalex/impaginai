@@ -84,6 +84,33 @@ main:not(.settings) #settings{display:none}
 .slider .val{font-variant-numeric:tabular-nums;min-width:110px;font-size:13px}
 .slider .prev{font-size:12px;color:var(--soft)}
 .numrow{display:flex;gap:8px;align-items:center}
+#welcome{position:fixed;inset:0;z-index:50;background:var(--bg);overflow-y:auto;display:none}
+#welcome.on{display:block}
+#welcome .wrap{max-width:860px;margin:0 auto;padding:48px 20px}
+#welcome h1{font-size:28px;font-weight:600;margin-bottom:6px;cursor:default}
+#welcome .lead{color:var(--soft);margin-bottom:26px;font-size:15px}
+.wcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.wcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+.wcard h2{font-size:16px;margin-bottom:6px}
+.wcard p{font-size:13px;color:var(--soft);margin-bottom:12px;line-height:1.5}
+.wcard input[type=text]{margin-bottom:10px}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:22px;text-align:center;color:var(--soft);font-size:13px;cursor:pointer}
+.drop.over{border-color:var(--accent);background:var(--accent-soft);color:var(--ink)}
+.recent{margin-top:26px}
+.recent .r{display:flex;gap:10px;align-items:center;padding:9px 0;border-top:1px solid var(--line);font-size:14px}
+.recent .r .p{color:var(--soft);font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#dropAll{position:fixed;inset:0;z-index:55;background:rgba(31,95,74,.18);border:4px dashed var(--accent);display:none;
+  align-items:center;justify-content:center;font-size:22px;font-weight:600;color:var(--ink);pointer-events:none}
+#dropAll.on{display:flex}
+#dlgFolder{width:min(640px,94vw)}
+#dlgFolder .crumbs{font-size:12px;color:var(--soft);word-break:break-all;margin:4px 0 10px}
+#dlgFolder .list{max-height:52vh;overflow-y:auto;border:1px solid var(--line);border-radius:10px}
+#dlgFolder .d{display:flex;gap:10px;padding:9px 12px;border-top:1px solid var(--line);cursor:pointer;font-size:14px}
+#dlgFolder .d:first-child{border-top:0}
+#dlgFolder .d:hover{background:var(--accent-soft)}
+#dlgFolder .d .n{margin-left:auto;color:var(--soft);font-size:12px}
+.albumrow{font-size:13px;line-height:1.7}
+.albumrow code{font-size:12px;background:var(--bg);padding:1px 5px;border-radius:4px;word-break:break-all}
 .presets{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin:6px 0 4px}
 .preset{border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer;background:var(--bg);font-size:13px;line-height:1.4}
 .preset b{display:block;font-size:13px;margin-bottom:4px}
@@ -253,6 +280,8 @@ kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:
   <button role="tab" aria-selected="false" id="tabSettings">Settings</button>
   <div class="grow"></div>
   <span id="status"></span>
+  <button class="small ghost" id="btnAddPhotos" title="Add photographs to this album (or drop them anywhere on the window)">＋ Add photos</button>
+  <input type="file" id="fileAdd" multiple accept="image/*,.heic,.heif" style="display:none">
 </nav>
 
 <div id="bar"><span id="step">Working…</span><div class="track"><div class="fill" id="fill"></div></div><span class="cost" id="barCost"></span></div>
@@ -340,6 +369,37 @@ kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:
     <span id="lbMeta"></span><button class="small" id="pvClose">Close (Esc)</button></div>
 </div>
 
+<div id="welcome"><div class="wrap">
+  <h1>Make a photo album</h1>
+  <div class="lead">Start from your photographs. Everything else can be chosen afterwards.</div>
+  <div class="wcards">
+    <div class="wcard"><h2>Use a folder of photos</h2>
+      <p>Your photographs stay where they are; the album keeps its own work separately.</p>
+      <input type="text" id="wName" placeholder="Album name, e.g. Engadin 2026">
+      <button id="wChoose">Choose folder…</button> <span class="sub" id="wFolder"></span>
+      <div style="margin-top:12px"><button class="primary" id="wCreate" disabled>Create album</button></div>
+    </div>
+    <div class="wcard"><h2>Drop photos</h2>
+      <p>Copied into a new album's own photo folder.</p>
+      <input type="text" id="wName2" placeholder="Album name">
+      <div class="drop" id="wDrop">Drop photographs here, or click to choose them</div>
+      <input type="file" id="wFiles" multiple accept="image/*,.heic,.heif" style="display:none">
+    </div>
+  </div>
+  <div class="recent" id="wRecent"></div>
+  <div class="hint" id="wHint"></div>
+  <div style="margin-top:18px" id="wCloseRow"><button class="small ghost" id="wClose">Back to the current album</button></div>
+</div></div>
+<div id="dropAll">Drop to add these photographs to the album</div>
+
+<dialog id="dlgFolder"><div class="pad">
+  <h3>Choose the photo folder</h3>
+  <div class="crumbs" id="fPath"></div>
+  <div class="list" id="fList"></div>
+  <div class="row"><button class="small" id="fUp">↑ Up</button><div class="grow"></div>
+    <button id="fCancel">Cancel</button><button class="primary" id="fUse">Use this folder</button></div>
+</div></dialog>
+
 <dialog id="dlgRevise"><div class="pad">
   <h3>What should change?</h3>
   <div class="sub">Say it the way you would to a friend designing it for you. Leave it empty to design from scratch.</div>
@@ -407,7 +467,10 @@ $("msgClose").onclick=()=>$("msg").className="";
 function status(t){$("status").textContent=t||"";}
 
 async function load(){
-  album=await get("/api/album"); photos=await get("/api/photos");
+  album=await get("/api/album");
+  if(!album.open){showWelcome(false);return;}
+  $("welcome").classList.remove("on");
+  photos=await get("/api/photos");
   designed=album.versions.length>0;
   $("title").textContent=album.title;
   const fs=$("fmtSel"); fs.innerHTML="";
@@ -813,12 +876,105 @@ const EFFECT={instant:["Applies now · free","Re-applied to the current design a
   redesign:["Next design","Takes effect when you press “Design again…” (one model call)."],
   relook:["Vision looks again","Takes effect the next time the vision model looks at photographs, which costs a little."]};
 let cfg=null;
+// --- albums: welcome, folder browser, uploads -----------------------------
+let wPhotos=null;
+async function showWelcome(closable){
+  const a=await get("/api/albums").catch(()=>({recent:[]}));
+  $("welcome").classList.add("on"); $("wCloseRow").style.display=closable?"":"none";
+  const rec=a.recent.filter(r=>r.exists&&!r.current);
+  $("wRecent").innerHTML=rec.length?`<h2 class="sub" style="font-size:13px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Recent albums</h2>`+
+    rec.map(r=>`<div class="r"><b>${esc(r.title||"")}</b><span class="p">${r.photo_count??""} photos · ${esc(r.album)}</span><button class="small" data-open="${esc(r.album)}">Open</button></div>`).join(""):"";
+  $("wRecent").querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>openAlbum({album:b.dataset.open}));
+  $("wHint").textContent=`New albums are kept in ${a.library}.`+(a.files_editable===false?" Folders and uploads are off: the editor is reachable over the network.":"");
+}
+$("wClose").onclick=()=>$("welcome").classList.remove("on");
+$("wChoose").onclick=()=>chooseFolder(p=>{wPhotos=p.path;$("wFolder").textContent=`${p.path} · ${p.photos} photos`;
+  if(!$("wName").value)$("wName").value=p.path.split("/").filter(Boolean).pop()||"";$("wCreate").disabled=false;});
+$("wCreate").onclick=()=>openAlbum({name:$("wName").value||"Album",photos:wPhotos});
+$("wDrop").onclick=()=>$("wFiles").click();
+$("wFiles").onchange=e=>newAlbumFromFiles([...e.target.files]);
+["dragover","dragenter"].forEach(ev=>$("wDrop").addEventListener(ev,e=>{e.preventDefault();$("wDrop").classList.add("over");}));
+$("wDrop").addEventListener("dragleave",()=>$("wDrop").classList.remove("over"));
+$("wDrop").addEventListener("drop",e=>{e.preventDefault();e.stopPropagation();$("wDrop").classList.remove("over");newAlbumFromFiles([...e.dataTransfer.files]);});
+async function newAlbumFromFiles(files){
+  if(!files.length)return;
+  const name=$("wName2").value.trim()||"Album";
+  try{await send("POST","/api/albums",{name});}catch(e){note(e.message,"err");return;}
+  await uploadFiles(files); afterOpen();
+}
+async function openAlbum(body){
+  status("Opening the album…");
+  try{await send("POST","/api/albums",body);}catch(e){note(e.message,"err");status("");return;}
+  afterOpen();
+}
+async function afterOpen(){
+  sel=null; picked.clear(); designed=false;
+  await load(); showView("photos"); status("");
+  if(album.open&&!album.has_key){showView("settings");
+    note("Pick a preset under AI models and add a key (or choose Fully local), then press “Design the album”.");}
+}
+let folderCb=null, folderCur=null;
+async function chooseFolder(cb){folderCb=cb; await browse(""); if(!$("dlgFolder").open)$("dlgFolder").showModal();}
+async function browse(path){
+  let r; try{r=await get("/api/fs?path="+encodeURIComponent(path));}catch(e){note(e.message,"err");return;}
+  folderCur=r; $("fPath").textContent=r.path; $("fUp").disabled=!r.parent;
+  $("fUse").textContent=`Use this folder (${r.photos} photo${r.photos===1?"":"s"})`; $("fUse").disabled=!r.photos;
+  $("fList").innerHTML=r.dirs.length?r.dirs.map(d=>`<div class="d" data-p="${esc(d.path)}">📁 ${esc(d.name)}<span class="n">${d.photos?d.photos+" photos":""}</span></div>`).join("")
+    :`<div class="d" style="cursor:default;color:var(--soft)">No folders inside.</div>`;
+  $("fList").querySelectorAll("[data-p]").forEach(el=>el.onclick=()=>browse(el.dataset.p));
+}
+$("fUp").onclick=()=>folderCur&&folderCur.parent&&browse(folderCur.parent);
+$("fCancel").onclick=()=>$("dlgFolder").close();
+$("fUse").onclick=()=>{$("dlgFolder").close(); if(folderCb)folderCb(folderCur);};
+async function uploadFiles(files){
+  const ok=[],bad=[];
+  for(let i=0;i<files.length;i++){
+    const f=files[i]; status(`Adding photos ${i+1} of ${files.length}…`);
+    try{const r=await fetch("/api/upload?name="+encodeURIComponent(f.name),{method:"PUT",body:f});
+      if(!r.ok){let m;try{m=(await r.json()).detail;}catch(e){m=r.statusText;} bad.push(m);} else ok.push(f.name);}
+    catch(e){bad.push(`${f.name}: ${e.message}`);}
+  }
+  status("Making thumbnails…");
+  try{await send("POST","/api/photos/reload");}catch(e){}
+  status(`${ok.length} photo${ok.length===1?"":"s"} added`);
+  if(bad.length)note(`Not added:\n${bad.slice(0,8).join("\n")}${bad.length>8?`\n… and ${bad.length-8} more`:""}`,"err");
+}
+$("btnAddPhotos").onclick=()=>$("fileAdd").click();
+$("fileAdd").onchange=async e=>{const f=[...e.target.files]; e.target.value=""; if(!f.length)return;
+  await uploadFiles(f); await load(); scheduleRerender();};
+let dragDepth=0;
+const isFiles=e=>e.dataTransfer&&[...e.dataTransfer.types].includes("Files");
+window.addEventListener("dragenter",e=>{if(!isFiles(e)||!album||!album.open||$("welcome").classList.contains("on"))return;
+  dragDepth++;$("dropAll").classList.add("on");});
+window.addEventListener("dragleave",()=>{dragDepth=Math.max(0,dragDepth-1);if(!dragDepth)$("dropAll").classList.remove("on");});
+window.addEventListener("dragover",e=>{if(isFiles(e))e.preventDefault();});
+window.addEventListener("drop",async e=>{if(!isFiles(e))return; e.preventDefault(); dragDepth=0; $("dropAll").classList.remove("on");
+  if(!album||!album.open||$("welcome").classList.contains("on"))return;
+  await uploadFiles([...e.dataTransfer.files]); await load(); scheduleRerender();});
+function albumSection(){
+  const a=album;
+  return `<div class="setsec"><h2>Album</h2>
+    <div class="setrow"><div class="albumrow">Photographs: <code>${esc(a.photos_dir)}</code> · ${photos.length} photos<br>
+      Album work (versions, previews, settings): <code>${esc(a.album_dir)}</code></div>
+      <div class="navrow"><button class="small" id="chPhotos">Change photo folder…</button>
+      <button class="small" id="addPh2">＋ Add photos</button>
+      <div class="grow"></div><button class="small" id="otherAlbum">Open or make another album…</button></div>
+      <div class="hint">Photos you add are copied into the photo folder. Changing the folder keeps the album's design and settings; photographs that are no longer there drop out of the book.</div></div></div>`;
+}
+function wireAlbum(host){
+  const c=$("chPhotos"); if(c)c.onclick=()=>chooseFolder(async p=>{
+    try{await send("PUT","/api/albums/photos",{photos:p.path});}catch(e){note(e.message,"err");return;}
+    await load(); scheduleRerender(); renderSettings();});
+  const a2=$("addPh2"); if(a2)a2.onclick=()=>$("fileAdd").click();
+  const o=$("otherAlbum"); if(o)o.onclick=()=>showWelcome(true);
+}
+
 let mdl=null;
 async function renderSettings(){
   const host=$("settings");
   try{[cfg,mdl]=await Promise.all([get("/api/config"),get("/api/models")]);}catch(e){host.innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
   const lab=cfg.lab;
-  let h=`<div class="setwrap">`+modelsSection();
+  let h=`<div class="setwrap">`+albumSection()+modelsSection();
   for(const [gid,gname] of Object.entries(cfg.groups)){
     h+=`<div class="setsec"><h2>${esc(gname)}</h2>`;
     if(gid==="book")h+=`<div class="labinfo">This lab: ${lab.pages.min}–${lab.pages.max} pages in steps of ${lab.pages.increment}, ${esc(lab.binding||"")}${lab.paper?" · "+esc(lab.paper):""}. Photographs need ${lab.resolution.warn_below_dpi} DPI to look sharp; below ${lab.resolution.block_below_dpi} they cannot be printed.</div>`;
@@ -842,7 +998,7 @@ async function renderSettings(){
     inp.onchange=()=>setOption(k,Number(inp.value));
   });
   const auto=$("lenAuto"); if(auto)auto.onclick=()=>setOption("length",0);
-  wireModels(host);
+  wireModels(host); wireAlbum(host);
   const rl=$("relookBtn"); if(rl)rl.onclick=async()=>{
     if(!confirm("On the next design, the vision model looks at every photograph again. That costs about as much as the first time. Go ahead?"))return;
     try{const r=await send("POST","/api/relook");note(`The next design looks at ${r.photos} photographs again.`);}catch(e){note(e.message,"err");}
