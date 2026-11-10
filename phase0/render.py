@@ -68,7 +68,10 @@ SRGB_BYTES = ImageCms.ImageCmsProfile(SRGB).tobytes()
 
 def to_srgb(im: Image.Image) -> Image.Image:
     """Normalise to sRGB and keep it there. Never CMYK — the labs want RGB."""
+    src = getattr(im, "filename", None)
     im = ImageOps.exif_transpose(im)
+    # The user's own turn, for photographs whose EXIF orientation is wrong.
+    im = imaging.turn(im, imaging.rotation_of(src))
     icc = im.info.get("icc_profile")
     if icc:
         try:
@@ -330,6 +333,9 @@ def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window:
             continue
         if not _owns(g, window, tb.rect):
             continue
+        if getattr(tb, "scrim", None) is not None and _owns(g, window, tb.scrim):
+            r = tb.scrim
+            parts.append(f'<div class="scrim abs" style="{rect_style(r)}"></div>')
         cls = f"tb {tb.role}"
         if tb.invert or rendered.background == "ink" or rendered.background == f"ink-{side}":
             cls += " invert"

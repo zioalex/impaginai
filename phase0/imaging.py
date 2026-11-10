@@ -75,3 +75,90 @@ def check(paths) -> str | None:
 # Registering on import is what makes `import imaging` enough at every call
 # site. The cost is a few milliseconds and one optional import.
 register()
+
+
+# --- the user's own rotation ----------------------------------------------
+#
+# The EXIF orientation tag is honoured everywhere (ImageOps.exif_transpose).
+# Some photographs carry a wrong one or none at all — a phone held sideways,
+# a scan, a picture passed through a messenger that dropped the tag. For
+# those the user turns the photograph by hand, and that turn is kept in
+# `rotations.yaml` beside the photographs (like captions.yaml), as degrees
+# clockwise, applied after the EXIF orientation:
+#
+#     p007: 90
+#     p012: 270
+#
+# It is a property of the photograph, so every reader of the file sees it:
+# the proof, the print, the thumbnails and what the vision model is shown.
+
+ROTATIONS_FILE = "rotations.yaml"
+_ROT_CACHE: dict[str, tuple[float, dict[str, int]]] = {}
+
+
+def rotations(photo_dir) -> dict[str, int]:
+    """Photo id -> degrees clockwise, for one directory of photographs."""
+    from pathlib import Path
+
+    f = Path(photo_dir) / ROTATIONS_FILE
+    key = str(f.resolve())
+    try:
+        mtime = f.stat().st_mtime
+    except OSError:
+        _ROT_CACHE.pop(key, None)
+        return {}
+    hit = _ROT_CACHE.get(key)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    import yaml
+
+    raw = yaml.safe_load(f.read_text()) or {}
+    out = {}
+    for pid, deg in raw.items():
+        try:
+            d = int(deg) % 360
+        except (TypeError, ValueError):
+            continue
+        if d in (90, 180, 270):
+            out[str(pid)] = d
+    _ROT_CACHE[key] = (mtime, out)
+    return out
+
+
+def set_rotation(photo_dir, pid: str, degrees: int) -> int:
+    """Store the turn for one photograph; returns the normalised degrees."""
+    from pathlib import Path
+
+    import yaml
+
+    d = int(degrees) % 360
+    if d not in (0, 90, 180, 270):
+        raise ValueError("rotation must be a multiple of 90 degrees")
+    cur = dict(rotations(photo_dir))
+    if d:
+        cur[pid] = d
+    else:
+        cur.pop(pid, None)
+    f = Path(photo_dir) / ROTATIONS_FILE
+    f.write_text(yaml.safe_dump(dict(sorted(cur.items())), sort_keys=True))
+    _ROT_CACHE.pop(str(f.resolve()), None)
+    return d
+
+
+def rotation_of(path) -> int:
+    """The user's turn for the photograph at `path` (0 when none)."""
+    if not path:
+        return 0
+    from pathlib import Path
+
+    p = Path(path)
+    return rotations(p.parent).get(p.stem, 0)
+
+
+def turn(im, degrees: int):
+    """Rotate an upright (EXIF-applied) image clockwise by the given degrees."""
+    from PIL import Image
+
+    return {90: lambda: im.transpose(Image.Transpose.ROTATE_270),
+            180: lambda: im.transpose(Image.Transpose.ROTATE_180),
+            270: lambda: im.transpose(Image.Transpose.ROTATE_90)}.get(degrees, lambda: im)()

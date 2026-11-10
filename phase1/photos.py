@@ -84,6 +84,9 @@ class Photo:
             bits.append("nearby: " + "; ".join(self.features[:3]))
         if self.suggested_focal:
             bits.append(f"focal {self.suggested_focal[0]:.2f},{self.suggested_focal[1]:.2f}")
+        ov = getattr(self, "override", None)
+        if ov is not None and getattr(ov, "compose", False):
+            bits.append("USER WANTS THIS IN A COMPOSITION — on a page with other photographs, never alone")
         if self.unusable:
             bits.append("TOO SMALL TO PRINT — leave it out")
         elif self.avoid:
@@ -136,6 +139,8 @@ def read_dir(photo_dir: Path) -> list[Photo]:
             except Exception:
                 pass
             if exif.get(274, 1) in (5, 6, 7, 8):
+                w, h = h, w
+            if imaging.rotation_of(p) in (90, 270):
                 w, h = h, w
         taken = None
         raw = exif.get(_TAG_DATETIME) or exif.get(_TAG_DATETIME_DIGITIZED)
