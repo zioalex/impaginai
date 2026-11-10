@@ -30,6 +30,24 @@ plan:
   # it need not spend parameters on vision, and plan/revise never see images:
   #   model: qwen3.6:27b
   #   model: gemma4:31b
+  # Thinking plus forced JSON returns empty content on Ollama, so thinking is
+  # off for the roles that must emit a layout. The budget leaves room for a
+  # full layout.
+  reasoning: off
+  max_tokens: 32000
+  # No fallback: nothing else is assumed to be reachable. To switch to a cloud
+  # model if the local one fails, add (and export OPENROUTER_API_KEY):
+  #   fallback_model: anthropic/claude-sonnet-5.5
+  #   fallback_base_url: openrouter
 
 revise:
   model: qwen3-vl:32b
+  # Thinking plus forced JSON returns empty content on Ollama, so thinking is
+  # off for the roles that must emit a layout. The budget leaves room for a
+  # full layout.
+  reasoning: off
+  max_tokens: 32000
+  # No fallback: nothing else is assumed to be reachable. To switch to a cloud
+  # model if the local one fails, add (and export OPENROUTER_API_KEY):
+  #   fallback_model: anthropic/claude-sonnet-5.5
+  #   fallback_base_url: openrouter

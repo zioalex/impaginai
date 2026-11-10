@@ -237,7 +237,9 @@ def _write_log(log_dir: Path | None, kind: str, n: int, diagnosis: str,
 
 def _run(system: str, first_user: list[dict] | str, complete: Completer,
          check: Callable[[Layout], list[str]] | None = None,
-         log_dir: Path | None = None, kind: str = "plan") -> Result:
+         log_dir: Path | None = None, kind: str = "plan",
+         fallback: Completer | None = None,
+         on_event: Callable[[str], None] | None = None) -> Result:
     """One logical call, with three separate retry budgets.
 
     * repair (MAX_ATTEMPTS): the model answered but the answer was wrong; the
@@ -251,6 +253,13 @@ def _run(system: str, first_user: list[dict] | str, complete: Completer,
       "you sent nothing" is pointless — it is the request that has to change
       (less reasoning, more room, weaker structured-output mode).
 
+    When a budget runs out (or the endpoint rejects the request outright, as with
+    an unknown model) and a `fallback` completer was given, the call switches to it
+    once: transient/recovery counters and sticky knobs start afresh, the repair
+    count and the messages carry over. Refusals never switch.
+
+    `on_event` hears a short sentence for each retry, recovery and switch.
+
     Only the repair path ever touches `messages`.
     """
     messages: list[dict] = [{"role": "user", "content": first_user}]
@@ -261,10 +270,36 @@ def _run(system: str, first_user: list[dict] | str, complete: Completer,
     one_shot: dict = {}      # json_fallback applies to the next call only
     repair = transient = recovery = calls = 0
     length_hit = False
+    switched = False
+
+    def event(msg: str):
+        if on_event is None:
+            return
+        try:
+            on_event(msg)
+        except Exception:
+            pass
 
     def fail(msg: str):
-        where = ("\nlogs: " + ", ".join(logs)) if logs else ""
-        raise PlanningError(msg + where)
+        tried = "\n(the fallback model was tried too)" if switched else ""
+        # One folder, not every file: the UI shows this, and four long paths
+        # bury the sentence that matters.
+        where = (f"\nthe raw replies are in {Path(logs[-1]).parent}") if logs else ""
+        raise PlanningError(msg + tried + where)
+
+    def try_fallback() -> bool:
+        """Switch to the fallback model, once. True if the caller should resend."""
+        nonlocal complete, switched, transient, recovery, length_hit, opts, one_shot
+        if fallback is None or switched:
+            return False
+        switched = True
+        complete = fallback
+        transient = recovery = 0
+        length_hit = False
+        opts, one_shot = {}, {}
+        print("  switching to the fallback model")
+        event("Switching to the fallback model")
+        return True
 
     def note(diagnosis: str, reply: Reply | None, text: str, error: str | None = None):
         print(f"  attempt {calls} rejected: {diagnosis}")
@@ -287,9 +322,12 @@ def _run(system: str, first_user: list[dict] | str, complete: Completer,
         transient += 1
         if transient > MAX_TRANSIENT:
             note(f"endpoint error: {msg[:200]}", reply, "", msg)
+            if try_fallback():
+                return
             fail(f"the endpoint kept failing: {msg}")
         delay = _backoff(transient, retry_after)
         note(f"endpoint error: {msg[:200]} — resending in {delay:g}s", reply, "", msg)
+        event(f"The model endpoint is busy — retrying in {delay:g}s")
         _sleep(delay)
 
     while True:
@@ -300,6 +338,17 @@ def _run(system: str, first_user: list[dict] | str, complete: Completer,
             one_shot = {}
             transient_failure(str(exc), exc.retry_after, None)
             continue
+        except PlanningError:
+            raise
+        except Exception as exc:
+            # Not worth resending (unknown model, bad request, no key...). Any
+            # exception, not just RuntimeError: SDK errors such as
+            # anthropic.NotFoundError do not derive from it.
+            one_shot = {}
+            note(f"endpoint error: {str(exc)[:200]}", None, "", str(exc))
+            if try_fallback():
+                continue
+            fail(str(exc))
         one_shot = {}
         reply = got if isinstance(got, Reply) else Reply(got[0], got[1])
         total.add(reply.usage)
@@ -322,6 +371,8 @@ def _run(system: str, first_user: list[dict] | str, complete: Completer,
                 budget = f"{cur:,} tokens" if cur else "its output budget"
                 note(f"{'empty reply' if not text.strip() else 'reply cut off'} ({facts(reply)})",
                      reply, text)
+                if try_fallback():
+                    continue
                 if not text.strip() and reasoned:
                     fail(f"the planner spent its whole output budget ({budget}) on reasoning "
                          f"and wrote nothing — set a lower reasoning level or a larger "
@@ -332,6 +383,8 @@ def _run(system: str, first_user: list[dict] | str, complete: Completer,
             recovery += 1
             new = 32000 if not cur else min(64000, max(cur * 2, 32000))
             opts = {**opts, "reasoning": "low", "max_tokens": new}
+            event("The reply was cut off — retrying with less reasoning and more room"
+                  if text.strip() else "The reply was empty — retrying with less reasoning")
             note(f"{'empty reply' if not text.strip() else 'reply cut off'} ({facts(reply)}) "
                  f"— retrying with reasoning=low, max_tokens={new}", reply, text)
             continue
@@ -339,9 +392,12 @@ def _run(system: str, first_user: list[dict] | str, complete: Completer,
         if not text.strip():
             if recovery >= MAX_RECOVERY:
                 note(f"empty reply ({facts(reply)})", reply, text)
+                if try_fallback():
+                    continue
                 fail(f"the planner returned nothing, repeatedly ({facts(reply)}) — "
                      f"try another model or turn json_mode off for the {kind} role")
             recovery += 1
+            event("The reply was empty — retrying")
             if reply.response_format:
                 one_shot = {"json_fallback": True}
                 note(f"empty reply ({facts(reply)}) — retrying without strict "
@@ -369,6 +425,8 @@ def _run(system: str, first_user: list[dict] | str, complete: Completer,
             print(f"  attempt {repair} rejected: {shown[:120]}")
             if repair == MAX_ATTEMPTS:
                 break
+            event(f"The layout needed corrections — asking the model to fix it "
+                  f"(attempt {repair + 1} of {MAX_ATTEMPTS})")
             messages += [
                 {"role": "assistant", "content": text},
                 {"role": "user", "content": P.retry_user_content(last_error)},
@@ -383,6 +441,8 @@ def plan(
     photos: list[Photo], g, lab: dict, complete: Completer,
     target_spreads: int | None = None, thumb_dir: Path | None = None,
     groups=None, log_dir: Path | None = None,
+    fallback: Completer | None = None,
+    on_event: Callable[[str], None] | None = None,
 ) -> Result:
     """Plan the whole album in one call.
 
@@ -398,15 +458,17 @@ def plan(
         content = text
     return _run(system, content, complete,
                 lambda lay: resolution_errors(lay, photos, g, lab),
-                log_dir=log_dir, kind="plan")
+                log_dir=log_dir, kind="plan", fallback=fallback, on_event=on_event)
 
 
 def revise(
     *, current: dict, comment: str, photos: list[Photo], g, lab: dict,
     language: str, complete: Completer, groups=None,
     log_dir: Path | None = None,
+    fallback: Completer | None = None,
+    on_event: Callable[[str], None] | None = None,
 ) -> Result:
     system = P.system_prompt(g, lab, language)
     return _run(system, P.revise_user_content(current, photos, comment, groups), complete,
                 lambda lay: resolution_errors(lay, photos, g, lab),
-                log_dir=log_dir, kind="revise")
+                log_dir=log_dir, kind="revise", fallback=fallback, on_event=on_event)

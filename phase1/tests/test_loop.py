@@ -244,13 +244,71 @@ def test_run_classification() -> None:
         try:
             run(c, log_dir=Path(d) / "logs", kind="plan"); raise AssertionError("expected failure")
         except PlanningError as exc:
-            assert "logs:" in str(exc), exc
+            assert "the raw replies are in" in str(exc), exc
         files = sorted((Path(d) / "logs").glob("plan-*-attempt*.json"))
         assert len(files) == 3, files
         rec = json.loads(files[0].read_text())
         assert rec["text"] == "nope" and rec["raw"] == {"id": "x"} and rec["kind"] == "plan"
     c, _ = script(Reply(good, u))
     run(c, log_dir=Path("/proc/nope/logs"))
+
+    # --- fallback model ---------------------------------------------------
+    # transient budget exhausted -> switch once, succeed on the fallback
+    sleeps.clear()
+    events: list[str] = []
+    c, calls = script(*[TransientError("down")] * 4)
+    f, fcalls = script(Reply(good, u, finish="stop"))
+    res = run(c, fallback=f, on_event=events.append)
+    assert res.layout.page_count and len(calls) == 4 and len(fcalls) == 1
+    assert any("fallback" in e.lower() for e in events), events
+    assert any("busy" in e for e in events), events
+
+    # fallback that fails too -> PlanningError that says it was tried
+    c, _ = script(*[TransientError("down")] * 4)
+    f, fcalls = script(*[TransientError("also down")] * 4)
+    try:
+        run(c, fallback=f); raise AssertionError("expected PlanningError")
+    except PlanningError as exc:
+        assert "fallback" in str(exc) and "also down" in str(exc), exc
+    assert len(fcalls) == 4, "the fallback gets a fresh transient budget, and no second switch"
+
+    # non-transient RuntimeError (unknown model) -> fallback; opts start clean
+    events.clear()
+    c, calls = script(RuntimeError("404 model not found"))
+    f, fcalls = script(Reply(good, u, finish="stop"))
+    res = run(c, fallback=f, on_event=events.append)
+    assert res.layout.page_count and fcalls[0]["opts"] == {}
+    assert any("fallback" in e.lower() for e in events), events
+
+    # empty/length recovery exhausted -> fallback, with the primary's knobs reset
+    c, calls = script(Reply("", u, finish="length", reasoning_tokens=5),
+                      Reply("", u, finish="length", reasoning_tokens=5))
+    f, fcalls = script(Reply(good, u, finish="stop"))
+    run(c, fallback=f)
+    assert len(calls) == 2 and fcalls[0]["opts"] == {}
+
+    # refusal does NOT use the fallback
+    c, _ = script(Reply("", u, finish="refusal", refusal="cannot help"))
+    f, fcalls = script(Reply(good, u))
+    try:
+        run(c, fallback=f); raise AssertionError("expected PlanningError")
+    except PlanningError as exc:
+        assert "cannot help" in str(exc)
+    assert not fcalls
+
+    # without a fallback a non-transient RuntimeError becomes a PlanningError
+    c, calls = script(RuntimeError("404 model not found"))
+    try:
+        run(c); raise AssertionError("expected PlanningError")
+    except PlanningError as exc:
+        assert "404 model not found" in str(exc), exc
+    assert len(calls) == 1
+
+    # a raising on_event never breaks planning
+    def boom(msg):
+        raise ValueError("ui is gone")
+    c, _ = script(TransientError("503"), Reply(good, u))
+    assert run(c, on_event=boom).layout.page_count
     print("planner retry classification: ok")
 
 
@@ -410,6 +468,33 @@ def main() -> int:
     reloaded = annotate.Annotations.load(ALBUM / "annotations.json")
     assert len(reloaded.missing(ph[:8])) == 0, "cache not reused"
     print(f"annotate ok: {len(anns.by_id)} cached, {ausage.line()}")
+
+    # 7b. a flaky or dead vision endpoint must not fail the build
+    from planner import TransientError
+    slept: list = []
+    saved_sleep, annotate._sleep = annotate._sleep, slept.append
+    try:
+        calls = {"n": 0}
+
+        def flaky(system, messages, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise TransientError("503 busy")
+            return fake, Usage(1, 1, 1, 0)
+        anns2, _ = annotate.run(ph[:8], thumbs, ALBUM / "annotations-flaky.json", flaky, force=True)
+        assert len(anns2.by_id) == 8 and slept == [2.0], (len(anns2.by_id), slept)
+
+        dead_calls = {"n": 0}
+
+        def dead(system, messages, **kw):
+            dead_calls["n"] += 1
+            raise TransientError("connection refused")
+        anns3, _ = annotate.run(ph[:8], thumbs, ALBUM / "annotations-dead.json", dead, force=True)
+        assert len(anns3.by_id) == 0
+        assert dead_calls["n"] == annotate.ANNOTATE_TRANSIENT, dead_calls
+    finally:
+        annotate._sleep = saved_sleep
+    print("annotate survives a flaky and a dead endpoint: ok")
 
     # 8. the model's layout must survive the real validator and renderer
     from validate import check, load_photos

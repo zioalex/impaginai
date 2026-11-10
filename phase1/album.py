@@ -8,6 +8,7 @@
     python album.py proof   --album ./albums/sardinien --photos ./photos
     python album.py revise  --album ./albums/sardinien --photos ./photos \
                             --comment "Seite 4 ist überladen, und die Kirchenbilder früher"
+    python album.py check   [model flags]    # one tiny request per model
     python album.py history --album ./albums/sardinien
     python album.py rollback --album ./albums/sardinien --to 2
 
@@ -154,6 +155,7 @@ def do_plan(args) -> int:
         title=args.title or args.album.name, subtitle=args.subtitle, fmt=fmt,
         language=args.language, photos=ph, g=g, lab=lab,
         complete=providers.make_completer(prov),
+        fallback=providers.make_fallback_completer(prov),
         target_spreads=args.spreads, thumb_dir=thumb_dir, groups=groups,
         log_dir=args.album / "logs",
     )
@@ -175,7 +177,7 @@ def do_revise(args) -> int:
     res = planner.revise(
         current=current, comment=args.comment, photos=ph, g=g, lab=lab,
         language=args.language, complete=providers.make_completer(prov),
-        groups=groups, log_dir=args.album / "logs",
+        fallback=providers.make_fallback_completer(prov), groups=groups, log_dir=args.album / "logs",
     )
     data = finish(res.layout.model_dump(mode="json", exclude_none=False), ov, groups, ph, lab)
     v = store.add(data, parent=parent.version_no, user_comment=args.comment,
@@ -183,6 +185,31 @@ def do_revise(args) -> int:
     print(f"  {res.usage.line(priced=prov.name == 'anthropic' and not prov.base_url)}")
     print(f"  wrote v{v.version_no:03d}: {res.layout.change_summary or '(no summary returned)'}")
     return report(res.layout, args, g, lab, groups)
+
+
+def do_check(args) -> int:
+    """Send one tiny request to each distinct role model; exit 1 if plan fails."""
+    roles = providers.resolve_all(args, getattr(args, "models", None))
+    print(providers.describe_roles(roles))
+    seen: dict[tuple, str] = {}
+    code = 0
+    for name in ("plan", "revise", "annotate"):
+        prov = roles[name]
+        key = (prov.model, prov.base_url)
+        if key in seen:
+            print(f"{name}: same model as {seen[key]}")
+            continue
+        seen[key] = name
+        if not prov.usable:
+            print(f"{name}: skipped — no API key")
+            if name == "plan":
+                code = 1
+            continue
+        r = providers.preflight(prov)
+        print(f"{name}: {'ok' if r.ok else 'FAILED'} ({r.seconds:.1f}s) — {r.message}")
+        if name == "plan" and not r.ok:
+            code = 1
+    return code
 
 
 def finish(data: dict, ov, groups, photos, lab=None) -> dict:
@@ -291,6 +318,11 @@ def main() -> int:
     p.add_argument("--version", type=int, default=None)
     p.set_defaults(fn=do_proof)
 
+    p = sub.add_parser("check")
+    p.add_argument("--album", type=Path, default=None)  # accepted, not needed
+    providers.add_arguments(p)
+    p.set_defaults(fn=do_check)
+
     p = sub.add_parser("history"); common(p, photos=False)
     p.set_defaults(fn=do_history)
 
@@ -299,7 +331,8 @@ def main() -> int:
     p.set_defaults(fn=do_rollback)
 
     args = ap.parse_args()
-    args.album.mkdir(parents=True, exist_ok=True)
+    if args.album is not None:
+        args.album.mkdir(parents=True, exist_ok=True)
     return args.fn(args)
 
 
