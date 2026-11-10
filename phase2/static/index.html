@@ -117,6 +117,23 @@ textarea{min-height:76px;resize:vertical;font-family:Georgia,"Iowan Old Style",s
 .empty b{color:var(--ink)}
 .navrow{display:flex;gap:6px;margin-top:18px}
 
+#preview{cursor:zoom-in}
+#photoView{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.93);display:none;
+  align-items:center;justify-content:center;cursor:zoom-out}
+#photoView.on{display:flex}
+#photoView img{max-width:calc(100vw - 32px);max-height:calc(100vh - 72px);object-fit:contain;display:block;
+  box-shadow:0 10px 40px rgba(0,0,0,.5)}
+#photoView .lbbar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:10px;align-items:center;
+  padding:10px 16px;color:#ddd;font-size:13px;cursor:default}
+#photoView .lbbar .grow{flex:1}
+#photoView button{background:rgba(255,255,255,.12);color:#fff;border:0}
+#photoView .lbnav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:64px;font-size:22px;
+  border-radius:10px}
+#photoView .pvprev{left:12px} #photoView .pvnext{right:12px}
+.badge.comp{background:#2f6f8f}
+.badge.low{background:#b26a00}
+.lowres{font-size:12px;color:#b26a00;margin-top:3px;text-align:center}
+.spread.low{outline:2px solid #b26a00;outline-offset:2px}
 #bulk{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:none;gap:8px;align-items:center;
   background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);border-radius:14px;padding:8px 10px;z-index:30}
 #bulk.on{display:flex}
@@ -224,6 +241,19 @@ kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:
         </div>
         <div class="hint" id="frontHint">Opens the book and goes on the cover, with the album title. <a href="#" id="frontTitle">Change the title</a></div>
 
+        <label class="fld">Orientation</label>
+        <div class="opts">
+          <div class="opt" id="rotL" role="button" tabindex="0" title="Turn left ([)">⟲ Turn left</div>
+          <div class="opt" id="rotR" role="button" tabindex="0" title="Turn right (])">⟳ Turn right</div>
+        </div>
+        <div class="hint" id="rotHint">For a photograph that shows up sideways or upside down. Applies everywhere: the preview, the print and the cover.</div>
+
+        <label class="fld">Composition</label>
+        <div class="opts">
+          <div class="opt" id="optComp" role="button" tabindex="0" aria-pressed="false">▦ Always with other photos</div>
+        </div>
+        <div class="hint" id="compHint">The album decides which photographs share a page. Turn this on to make sure this one is never alone on its page — other photographs can still be composed too.</div>
+
         <label class="fld">How big</label>
         <div class="opts" id="sizes"></div>
         <div class="hint" id="sizeHint"></div>
@@ -247,8 +277,18 @@ kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:
 <div id="bulk"><span id="bulkN"></span>
   <button class="small" data-bulk="out">Leave out</button>
   <button class="small" data-bulk="in">Include</button>
+  <button class="small" data-bulkcomp="1" title="Always on a page with other photographs">▦ Compose</button>
+  <button class="small ghost" data-bulkcomp="0" title="Let the album decide">Uncompose</button>
   <select id="bulkSize" class="small"><option value="">Size…</option></select>
   <button class="small ghost" data-bulk="clear">Clear</button>
+</div>
+
+<div id="photoView" role="dialog" aria-label="Photograph">
+  <button class="lbnav pvprev" title="Previous (←)">‹</button>
+  <img id="lbImg" alt="">
+  <button class="lbnav pvnext" title="Next (→)">›</button>
+  <div class="lbbar"><span id="lbCap"></span><span class="grow"></span>
+    <span id="lbMeta"></span><button class="small" id="pvClose">Close (Esc)</button></div>
 </div>
 
 <dialog id="dlgRevise"><div class="pad">
@@ -392,13 +432,16 @@ function tile(p){
   const d=document.createElement("div");
   d.className="tile"+(p.exclude?" off":"")+(sel===p.id?" sel":"")+(picked.has(p.id)?" multi":"");
   d.tabIndex=0; d.dataset.id=p.id;
-  d.innerHTML=`<div class="ph"><img loading="lazy" src="/thumb/${p.id}.jpg" alt="${p.id}"><div class="badges"></div>
+  d.innerHTML=`<div class="ph"><img loading="lazy" src="/thumb/${p.id}.jpg?r=${p.rotate||0}" alt="${p.id}"><div class="badges"></div>
     <div class="qa"><button class="eye ${p.exclude?"":"on"}" title="${p.exclude?"Bring back into the album (X)":"Leave out of the album (X)"}">${p.exclude?"🚫":"👁"}</button>
-    <button class="pen" title="Write the caption (Enter)">✎</button></div></div><div class="cap"></div>`;
+    <button class="pen" title="Write the caption (Enter)">✎</button>
+    <button class="zoom" title="See it bigger (Space)">⤢</button></div></div><div class="cap"></div>`;
   const b=d.querySelector(".badges");
   if(album.front_photo===p.id) b.innerHTML+=`<span class="badge front">★ front page</span>`;
   if(p.too_small) b.innerHTML+=`<span class="badge bad">too small</span>`;
+  else if(p.low_res) b.innerHTML+=`<span class="badge low" title="Low resolution: sharp up to ${p.sharp_cm[0]} × ${p.sharp_cm[1]} cm, so it cannot fill a page">⚠ low res</span>`;
   if(p.exclude) b.innerHTML+=`<span class="badge">left out</span>`;
+  if(p.compose) b.innerHTML+=`<span class="badge comp">▦ composed</span>`;
   if(p.size!=="auto") b.innerHTML+=`<span class="badge">${SIZE_LABEL[p.size]}</span>`;
   if(p.treatment!=="none") b.innerHTML+=`<span class="badge">${TREAT_LABEL[p.treatment]}</span>`;
   const cap=d.querySelector(".cap");
@@ -406,6 +449,7 @@ function tile(p){
   else if(p.caption){cap.textContent=p.caption;cap.classList.add("mine");}
   else{cap.textContent=p.landmark||p.place||"no caption yet";cap.classList.add("empty");}
   d.querySelector(".eye").onclick=e=>{e.stopPropagation();patch([p.id],{exclude:!p.exclude});};
+  d.querySelector(".zoom").onclick=e=>{e.stopPropagation();select(p.id,false);openLightbox(p.id);};
   d.querySelector(".pen").onclick=e=>{e.stopPropagation();select(p.id);setTimeout(()=>$("desc").focus(),30);};
   d.onclick=e=>{
     if(e.shiftKey&&lastClicked){const o=orderedPhotos().map(x=>x.id);const a=o.indexOf(lastClicked),z=o.indexOf(p.id);
@@ -425,13 +469,14 @@ document.querySelectorAll("[data-bulk]").forEach(b=>b.onclick=()=>{
   if(b.dataset.bulk==="clear"){picked.clear();renderGrid();return;}
   bulk(ids,{exclude:b.dataset.bulk==="out"});
 });
+document.querySelectorAll("[data-bulkcomp]").forEach(b=>b.onclick=()=>bulk([...picked],{compose:b.dataset.bulkcomp==="1"}));
 $("bulkSize").onchange=e=>{if(!e.target.value)return;bulk([...picked],{size:e.target.value});e.target.value="";};
 
 function select(id,scroll=true){
   sel=id; document.body.classList.add("picked");
   const p=photos.find(x=>x.id===id); if(!p)return;
   $("noSel").style.display="none"; $("editor").style.display="block";
-  $("preview").src=`/thumb/${id}.jpg`;
+  $("preview").src=`/thumb/${id}.jpg?r=${p.rotate||0}`;
   const bits=[];
   if(p.place)bits.push(`<b>${esc(p.place)}</b>`);
   if(p.taken_at)bits.push(esc(p.taken_at));
@@ -444,10 +489,17 @@ function select(id,scroll=true){
   if(p.features&&p.features.length)ai.push("Nearby: "+esc(p.features.slice(0,3).join(", ")));
   if(ai.length)m+=`<div class="ai">${ai.join("<br>")}</div>`;
   if(p.too_small)m+=`<br><strong>Too small to print at any useful size.</strong>`;
+  else if(p.low_res)m+=`<br><strong style="color:#b26a00">⚠ Low resolution</strong> — sharp only up to ${p.sharp_cm[0]} × ${p.sharp_cm[1]} cm, so it is printed smaller than a full page. “Always with other photos” puts it beside others instead of alone in white space.`;
   $("meta").innerHTML=m;
   if(document.activeElement!==$("desc")) $("desc").value=p.description||"";
   $("desc").placeholder=p.caption&&!p.description?p.caption:"Your words — e.g. “Our first steps on the Morteratsch glacier”";
-  opts("sizes",album.sizes,SIZE_LABEL,p.size,v=>patch([id],{size:v}),p.can);
+  // "Full page" and "always with other photos" contradict each other: while
+  // the photograph is composed, full page is not offered.
+  const can=Object.assign({},p.can||{});
+  if(p.compose){can["full-page"]="off";}
+  opts("sizes",album.sizes,SIZE_LABEL,p.size,v=>patch([id],{size:v}),can);
+  $("optComp").setAttribute("aria-pressed",String(!!p.compose));
+  $("optComp").textContent=p.compose?"▦ Always with other photos — on":"▦ Always with other photos";
   opts("treats",album.treatments,TREAT_LABEL,p.treatment,v=>patch([id],{treatment:v}));
   $("sizeHint").textContent=SIZE_HINT[p.size]+(p.can&&p.can["full-page"]==="no"?"  Crossed-out sizes need more pixels than this photograph has.":"");
   $("treatHint").textContent=TREAT_HINT[p.treatment];
@@ -459,6 +511,10 @@ function select(id,scroll=true){
   $("frontHint").firstChild.textContent=isFront
     ?`This photograph opens the book and is on the cover, titled “${album.title}”. `
     :(album.front_photo?"Another photograph is the front page now. ":"No front page chosen: the album picks its strongest photograph. ");
+  if(isFront&&p.can&&p.can["full-page"]&&p.can["full-page"]!=="ok")
+    $("frontHint").firstChild.textContent+=p.can["full-page"]==="no"
+      ?"⚠ Too few pixels to fill the page: it is set inside the margins with the title beneath, and the cover will print soft. "
+      :"⚠ A little soft at full-page size, on the cover too. ";
   document.querySelectorAll(".tile.sel").forEach(t=>t.classList.remove("sel"));
   const t=document.querySelector(`.tile[data-id="${id}"]`);
   if(t){t.classList.add("sel"); if(scroll)t.scrollIntoView({block:"nearest"});}
@@ -474,7 +530,11 @@ function opts(hostId,values,labels,current,onPick,can){
     el.setAttribute("role","button"); el.tabIndex=0;
     el.setAttribute("aria-pressed",String(v===current));
     el.textContent=labels[v]||v;
-    if(state==="no"){
+    if(state==="off"){
+      el.className="opt dead";
+      el.title="Not with “Always with other photos” — turn that off first";
+      el.onclick=()=>note("This photograph is set to always share its page with others, so it cannot have a page to itself. Turn off “Always with other photos” first.","err");
+    }else if(state==="no"){
       el.title=`Not enough detail — ${can[v+"_dpi"]} DPI at that size`;
       el.onclick=()=>note(`This photograph is too small to print that big (${can[v+"_dpi"]} DPI). Choose a smaller size.`,"err");
     }else{
@@ -503,6 +563,9 @@ let typing=null;
 $("desc").addEventListener("input",()=>{clearTimeout(typing);status("Typing…");
   typing=setTimeout(()=>sel&&patch([sel],{description:$("desc").value}),700);});
 $("optIn").onclick=()=>sel&&patch([sel],{exclude:false});
+function rotateSel(d){if(!sel)return;const p=photos.find(x=>x.id===sel);patch([sel],{rotate:((p.rotate||0)+d+360)%360});}
+$("rotL").onclick=()=>rotateSel(-90); $("rotR").onclick=()=>rotateSel(90);
+$("optComp").onclick=()=>{if(!sel)return;const p=photos.find(x=>x.id===sel);patch([sel],{compose:!p.compose});};
 $("optOut").onclick=()=>sel&&patch([sel],{exclude:true});
 $("optFront").onclick=async()=>{
   if(!sel)return;
@@ -512,12 +575,38 @@ $("optFront").onclick=async()=>{
   setHeader(); renderGrid(); select(sel,false);
   status(front?"Front page set":"Front page cleared"); scheduleRerender();
 };
+let lbId=null;
+function openLightbox(id){
+  const p=photos.find(x=>x.id===id); if(!p)return;
+  lbId=id;
+  const img=$("lbImg");
+  const r=p.rotate||0;
+  img.src=`/thumb/${id}.jpg?r=${r}`;           // at once, then the large copy
+  const big=new Image(); big.onload=()=>{if(lbId===id)img.src=big.src;}; big.src=`/photo/${id}.jpg?r=${r}`;
+  $("lbCap").textContent=p.description||p.caption||p.landmark||p.place||"";
+  $("lbMeta").textContent=[p.taken_at,`${p.width}×${p.height}`].filter(Boolean).join(" · ");
+  $("photoView").classList.add("on");
+}
+function closeLightbox(){lbId=null;$("photoView").classList.remove("on");}
+function lbStep(d){const o=orderedPhotos();const i=o.findIndex(p=>p.id===lbId);const n=o[Math.max(0,Math.min(o.length-1,i+d))];
+  if(n){select(n.id,false);openLightbox(n.id);}}
+$("preview").onclick=()=>sel&&openLightbox(sel);
+$("photoView").onclick=e=>{if(e.target.id==="photoView"||e.target.id==="lbImg")closeLightbox();};
+$("pvClose").onclick=closeLightbox;
+document.querySelector(".pvprev").onclick=e=>{e.stopPropagation();lbStep(-1);};
+document.querySelector(".pvnext").onclick=e=>{e.stopPropagation();lbStep(1);};
 $("frontTitle").onclick=e=>{e.preventDefault();$("title").onclick();};
 $("closeBtn").onclick=()=>{sel=null;document.body.classList.remove("picked");$("editor").style.display="none";$("noSel").style.display="block";renderGrid();};
 function step(d){const o=orderedPhotos();const i=o.findIndex(p=>p.id===sel);const n=o[Math.max(0,Math.min(o.length-1,i+d))];if(n)select(n.id);}
 $("prevBtn").onclick=()=>step(-1); $("nextBtn").onclick=()=>step(1);
 
 document.addEventListener("keydown",e=>{
+  if(lbId){
+    if(e.key==="Escape"||e.key===" "){closeLightbox();e.preventDefault();}
+    else if(e.key==="ArrowRight"||e.key==="ArrowDown"){lbStep(1);e.preventDefault();}
+    else if(e.key==="ArrowLeft"||e.key==="ArrowUp"){lbStep(-1);e.preventDefault();}
+    return;
+  }
   if(view!=="photos"||document.querySelector("dialog[open]"))return;
   const typingIn=["TEXTAREA","INPUT","SELECT"].includes(document.activeElement.tagName);
   if(typingIn){if(e.key==="Escape")document.activeElement.blur();return;}
@@ -526,6 +615,9 @@ document.addEventListener("keydown",e=>{
   else if(e.key==="ArrowLeft"||e.key==="ArrowUp"){step(-1);e.preventDefault();}
   else if(e.key==="x"||e.key==="X"){const p=photos.find(x=>x.id===sel);patch([sel],{exclude:!p.exclude});}
   else if(e.key==="Enter"){$("desc").focus();e.preventDefault();}
+  else if(e.key===" "){openLightbox(sel);e.preventDefault();}
+  else if(e.key==="["){rotateSel(-90);}
+  else if(e.key==="]"){rotateSel(90);}
   else if(e.key==="Escape"){$("closeBtn").onclick();}
 });
 
@@ -673,11 +765,13 @@ function renderBook(){
   const b=$("book"); const bust=`?v=${pages.version}`;
   if(!pages.count){b.innerHTML=`<div class="empty"><b>Nothing to show yet.</b><br>Choose your photographs, then press “Design the album”. The pages appear here.</div>`;return;}
   const ar=album.formats[album.format]?(()=>{const m=album.formats[album.format].match(/([\d.]+) × ([\d.]+)/);return m?m[1]/m[2]:1;})():1;
+  const low=pages.low_res||{}; const nLow=Object.keys(low).length;
   let h=`<div class="bookhead"><b>Version ${pages.version}</b><span class="sub">${pages.count} pages · ${album.formats[album.format]}. Click a spread to see it large.</span>
+    ${nLow?`<span class="lowres" title="Photographs without enough pixels for the space they were given">⚠ ${nLow} page${nLow>1?"s":""} with low-resolution photos</span>`:""}
     <div class="grow" style="flex:1"></div><button class="small" onclick="window.open('/proof.pdf','_blank')">Open preview PDF</button></div><div class="spreads">`;
   for(let i=1;i<=pages.count;i+=2){
     h+=`<div><div class="spread" data-i="${i}" style="--ar:${ar}"><img loading="lazy" src="/pages/${i}.jpg${bust}">${i+1<=pages.count?`<img loading="lazy" src="/pages/${i+1}.jpg${bust}">`:""}</div>
-      <div class="slabel">pages ${i}–${i+1}</div></div>`;
+      <div class="slabel">pages ${i}–${i+1}</div>${lowNote(low,i)}</div>`;
   }
   h+=`</div><div class="versions"><h3>Versions</h3>`+album.versions.slice().reverse().map(v=>`<div class="vrow">
       <span><b>v${v.version_no}</b></span><span class="what">${esc(v.user_comment||v.change_summary||"")}
@@ -685,9 +779,16 @@ function renderBook(){
       <span class="when">${new Date(v.created_at).toLocaleString()}</span>
       ${v.version_no===album.versions[album.versions.length-1].version_no?`<span class="sub">current</span>`:`<button class="small" data-rb="${v.version_no}">Go back to this</button>`}</div>`).join("")+`</div>`;
   b.innerHTML=h;
+  for(let i=1;i<=pages.count;i+=2) if(low[i]||low[i+1]) b.querySelector(`.spread[data-i="${i}"]`).classList.add("low");
   b.querySelectorAll(".spread").forEach(s=>s.onclick=()=>openSpread(Number(s.dataset.i)));
   b.querySelectorAll("[data-rb]").forEach(x=>x.onclick=async()=>{
     try{await send("POST","/api/rollback",{to:Number(x.dataset.rb)});}catch(e){note(e.message,"err");return;} poll(true);});
+}
+function lowNote(low,i){
+  const items=[...(low[i]||[]),...(low[i+1]||[])]; if(!items.length)return "";
+  return `<div class="lowres">`+items.map(x=>x.kind==="soft"
+    ?`⚠ ${x.id} prints soft (${x.dpi} DPI)`
+    :`⚠ ${x.id} shown smaller — sharp only up to ${x.sharp_cm[0]} × ${x.sharp_cm[1]} cm`).join("<br>")+`</div>`;
 }
 let lbAt=1;
 function openSpread(i){lbAt=i;const bust=`?v=${pages.version}`;

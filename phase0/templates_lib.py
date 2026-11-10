@@ -38,6 +38,7 @@ class TextBox:
     align: Literal["left", "right", "center"] = "left"
     key: str = "body"          # which field of spread.text to render
     invert: bool = False       # white type on dark ground
+    scrim: Rect | None = None  # darken this area under the type (type on a photograph)
 
 
 @dataclass
@@ -261,6 +262,56 @@ _LISTED = [
         TemplateSpec("gutter-target", 0, (), "PHASE 0 fold alignment target", t_gutter_target, planner_visible=False, spans_fold=True),
 ]
 
+def front_name(right: str) -> str:
+    return f"front:{right}"
+
+
+def front_framed_name(right: str) -> str:
+    return f"front-framed:{right}"
+
+
+def _front(right: str, framed: bool = False):
+    """The opening spread: the front photograph to the edges of page 1 with
+    the book's title set on it in white, facing an ordinary page of the book.
+
+    Replaces a title on black facing the photograph, which spent the first
+    page of the book on three words in a field of ink.
+
+    `framed` is for a front photograph without the pixels to fill the page:
+    it is set in the upper part of page 1, inside the margins and no larger
+    than it prints sharp, with the title in ink on the paper beneath it."""
+    inner = _pair("solo-air" if framed else "bleed", right)
+
+    def build(g: Geometry, o: dict) -> Rendered:
+        r = inner(g, {**o, "side": "left"})
+        if framed:
+            c = g.text_column("left")
+            r.texts = [
+                TextBox(Rect(c.x, round(c.y + c.h * 0.72, 2), c.w, 8), "eyebrow", key="eyebrow"),
+                TextBox(Rect(c.x, round(c.y + c.h * 0.77, 2), c.w, 18), "title", key="title"),
+                TextBox(Rect(c.x, round(c.y + c.h * 0.90, 2), round(c.w * 0.8, 2), 10), "body",
+                        key="body"),
+            ]
+            # The photograph's own caption would sit where the title is.
+            for b in r.slots[:1]:
+                b.caption_style = "none"
+            return r
+        c = g.text_column("left")
+        trim = g.trim("left")
+        shade = Rect(trim.x - g.bleed, round(trim.y + trim.h * 0.52, 2),
+                     trim.w + g.bleed, round(trim.h * 0.48 + g.bleed, 2))
+        r.texts = [
+            TextBox(Rect(c.x, round(c.y + c.h * 0.66, 2), c.w, 8), "eyebrow", key="eyebrow",
+                    invert=True, scrim=shade),
+            TextBox(Rect(c.x, round(c.y + c.h * 0.72, 2), c.w, 30), "title", key="title", invert=True),
+            TextBox(Rect(c.x, round(c.y + c.h * 0.88, 2), round(c.w * 0.8, 2), 14), "body",
+                    key="body", invert=True),
+        ]
+        return r
+    build.pages = ("solo-air" if framed else "bleed", right)
+    return build
+
+
 # Every pairing of two photo-carrying page compositions, as hidden templates.
 # The planner never sees these; the page repacker (phase1/pages.py) uses them
 # when it closes up the empty pages the planner left, so two half-empty spreads
@@ -282,7 +333,21 @@ _GENERATED = [
     + [(a, "blank") for a in PAGE_COMPOSITIONS]
 ]
 
-REGISTRY: dict[str, TemplateSpec] = {t.name: t for t in _LISTED + _GENERATED}
+_FRONT = [
+    TemplateSpec(front_name(b), 1 + compose.COMPOSITIONS[b].slots,
+                 ("any",) * (1 + compose.COMPOSITIONS[b].slots),
+                 f"front page with the title on its photograph, facing {b}",
+                 _front(b), planner_visible=False)
+    for b in PAGE_COMPOSITIONS + ("blank",)
+] + [
+    TemplateSpec(front_framed_name(b), 1 + compose.COMPOSITIONS[b].slots,
+                 ("any",) * (1 + compose.COMPOSITIONS[b].slots),
+                 f"front page, photograph inside the margins with the title beneath, facing {b}",
+                 _front(b, framed=True), planner_visible=False)
+    for b in PAGE_COMPOSITIONS + ("blank",)
+]
+
+REGISTRY: dict[str, TemplateSpec] = {t.name: t for t in _LISTED + _GENERATED + _FRONT}
 for _t in REGISTRY.values():
     _t.pages = getattr(_t.build, "pages", None)
 

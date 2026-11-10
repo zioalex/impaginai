@@ -12,6 +12,8 @@ direct channel that does not go through the model at all.
       treatment: frame         # none | frame | rounded | vignette | soft-edge
     p016:
       exclude: true
+    p021:
+      compose: true            # always on a page with other photographs
 
 Why these are applied AFTER planning rather than only asked for in the prompt:
 a request in a prompt is a wish. The user clicking "make this full page" in the
@@ -64,6 +66,10 @@ class Override:
     size: str = "auto"
     treatment: str = "none"
     exclude: bool = False
+    # The user wants this photograph on a page WITH other photographs. Wins
+    # over the planner and over the page-count arithmetic of the repacker; it
+    # does not stop other photographs being composed too.
+    compose: bool = False
 
     def is_empty(self) -> bool:
         return (
@@ -71,6 +77,7 @@ class Override:
             and self.size == "auto"
             and self.treatment == "none"
             and not self.exclude
+            and not self.compose
         )
 
     def summary(self) -> str:
@@ -79,6 +86,8 @@ class Override:
             bits.append(self.size)
         if self.treatment != "none":
             bits.append(self.treatment)
+        if self.compose:
+            bits.append("in a composition")
         if self.exclude:
             bits.append("excluded")
         return ", ".join(bits)
@@ -106,6 +115,7 @@ class Overrides:
                 size=size if size in SIZES else "auto",
                 treatment=treat if treat in TREATMENTS else "none",
                 exclude=bool(item.get("exclude", False)),
+                compose=bool(item.get("compose", False)),
             )
         return cls(out, p)
 
@@ -117,6 +127,7 @@ class Overrides:
                   if not (k == "size" and v == "auto")
                   and not (k == "treatment" and v == "none")
                   and not (k == "exclude" and v is False)
+                  and not (k == "compose" and v is False)
                   and not (k == "description" and v is None)}
             for pid, o in sorted(self.by_id.items())
             if not o.is_empty()
@@ -131,10 +142,21 @@ class Overrides:
         o = self.by_id.setdefault(pid, Override())
         for k, v in kw.items():
             setattr(o, k, v)
+        # "In a composition" and "full page" contradict each other: the one
+        # just set wins.
+        if kw.get("compose"):
+            if o.size == "full-page":
+                o.size = "auto"
+        elif kw.get("size") == "full-page":
+            o.compose = False
         return o
 
     def excluded(self) -> set[str]:
         return {pid for pid, o in self.by_id.items() if o.exclude}
+
+    def composed(self) -> set[str]:
+        """Photographs the user wants on a page with others."""
+        return {pid for pid, o in self.by_id.items() if o.compose and not o.exclude}
 
 
 # --- applying ----------------------------------------------------------
@@ -235,7 +257,8 @@ def apply_to_layout(layout: dict, ov: Overrides) -> list[str]:
                 break
 
     # 6. size: full-page — structural. Pull it out and give it its own spread.
-    wants_full = [pid for pid, o in ov.by_id.items() if o.size == "full-page" and not o.exclude]
+    wants_full = [pid for pid, o in ov.by_id.items()
+                  if o.size == "full-page" and not o.exclude and not o.compose]
     for pid in wants_full:
         host = next((sp for sp in spreads if any(s["photo_id"] == pid for s in sp.get("slots", []))), None)
         if host is None:

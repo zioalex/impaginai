@@ -303,7 +303,10 @@ def finish_layout(raw: dict, usable) -> dict:
         front = None
     PG.repack(data, STATE["groups"], STATE["lab"], spare=spare,
               taken={p.id: p.taken_at.isoformat() for p in usable if p.taken_at},
-              front=front, strength={p.id: p.strength for p in usable})
+              front=front, strength={p.id: p.strength for p in usable},
+              together=STATE["ov"].composed(),
+              alone={pid for pid, o in STATE["ov"].by_id.items() if o.size == "full-page"},
+              no_bleed={p.id for p in usable if (p.can or {}).get("full-page") == "no"})
     PG.apply_focal(data, by_id)
     # The cover shows the front page's photograph and the album's own title.
     opening = (data.get("spreads") or [{}])[0]
@@ -462,12 +465,19 @@ def api_photos():
             "size": o.size,
             "treatment": o.treatment,
             "exclude": o.exclude,
+            "compose": o.compose,
+            "rotate": imaging.rotation_of(p.path),
             "strength": p.strength or None,
             "annotation": p.annotation or None,
             "landmark": p.landmark or None,
             "detail": p.detail or None,
             "features": p.features or [],
             "too_small": p.unusable,
+            # Not enough pixels to fill a page sharply: printed smaller than
+            # the layout wanted, or soft. `sharp_cm` is the largest it prints
+            # at the lab's warning DPI.
+            "low_res": (not p.unusable) and (p.can or {}).get("large", "ok") != "ok",
+            "sharp_cm": _sharp_cm(p),
             "avoid": p.avoid,
             "can": p.can,
         })
@@ -479,6 +489,8 @@ class OverrideIn(BaseModel):
     size: str | None = None
     treatment: str | None = None
     exclude: bool | None = None
+    compose: bool | None = None      # always on a page with other photographs
+    rotate: int | None = None        # degrees clockwise, for a wrong EXIF orientation
 
 
 @app.patch("/api/photos/{photo_id}")
@@ -524,6 +536,10 @@ def _patch_one(photo_id: str, body: OverrideIn) -> None:
             dpi = photo.can.get(body.size + "_dpi")
             raise HTTPException(400, f"{photo_id} is {photo.width}x{photo.height} pixels — printed that "
                                      f"big it would be {dpi} DPI, too coarse to print. Choose a smaller size.")
+        if (body.size == "full-page" and STATE["ov"].get(photo_id).compose
+                and body.compose is not False):
+            raise HTTPException(400, f"{photo_id} is set to always share its page with other "
+                                     f"photographs — turn that off before making it full page.")
         kw["size"] = body.size
     if body.treatment is not None:
         if body.treatment not in OV.TREATMENTS:
@@ -531,7 +547,43 @@ def _patch_one(photo_id: str, body: OverrideIn) -> None:
         kw["treatment"] = body.treatment
     if body.exclude is not None:
         kw["exclude"] = body.exclude
+    if body.compose is not None:
+        kw["compose"] = body.compose
+    if body.rotate is not None:
+        _rotate(photo_id, body.rotate)
     STATE["ov"].set(photo_id, **kw)
+
+
+def _turn_point(f, deg: int):
+    """A normalised point on the photograph, after turning it `deg` clockwise."""
+    x, y = float(f[0]), float(f[1])
+    return {90: (1 - y, x), 180: (1 - x, 1 - y), 270: (y, 1 - x)}.get(deg % 360, (x, y))
+
+
+def _rotate(photo_id: str, degrees: int) -> None:
+    """Turn one photograph by hand (its EXIF orientation is wrong or missing).
+
+    Every cached copy of it was made the wrong way round, so they go; the
+    focal point the vision pass measured is turned with it rather than
+    measured again."""
+    if degrees % 90:
+        raise HTTPException(400, "rotation must be 0, 90, 180 or 270 degrees")
+    old = imaging.rotation_of(next(p.path for p in STATE["all"] if p.id == photo_id))
+    new = imaging.set_rotation(STATE["photos"], photo_id, degrees)
+    delta = (new - old) % 360
+    if not delta:
+        return
+    for f in (STATE["album"] / "derivatives").rglob(f"{photo_id}.jpg"):
+        f.unlink(missing_ok=True)
+    for f in (STATE["album"] / "renders" / "derivatives").rglob(f"{photo_id}.jpg"):
+        f.unlink(missing_ok=True)
+    apath = STATE["album"] / "annotations.json"
+    anns = annotate.Annotations.load(apath)
+    a = anns.by_id.get(photo_id)
+    if a is not None and a.focal:
+        a.focal = _turn_point(a.focal, delta)
+        anns.save(apath)
+    ensure_thumbs([p for p in STATE["all"] if p.id == photo_id])
 
 
 @app.get("/thumb/{photo_id}.jpg")
@@ -540,6 +592,28 @@ def api_thumb(photo_id: str):
     if not f.exists():
         raise HTTPException(404)
     return FileResponse(f, media_type="image/jpeg")
+
+
+@app.get("/photo/{photo_id}.jpg")
+def api_photo_large(photo_id: str):
+    """A large copy for looking at one photograph closely (2400 px), made on
+    first request and kept. The original may be HEIC or 50 MB; this never is."""
+    from PIL import Image
+
+    p = next((x for x in STATE["all"] if x.id == photo_id), None)
+    if p is None:
+        raise HTTPException(404)
+    d = STATE["album"] / "derivatives" / "view2400"
+    out = d / f"{photo_id}.jpg"
+    if not out.exists():
+        d.mkdir(parents=True, exist_ok=True)
+        with Image.open(p.path) as im:
+            im = R.to_srgb(im)
+            im.thumbnail((2400, 2400), Image.LANCZOS)
+            tmp = out.with_suffix(".tmp")
+            im.save(tmp, "JPEG", quality=86, icc_profile=R.SRGB_BYTES, optimize=True)
+            tmp.replace(out)
+    return FileResponse(out, media_type="image/jpeg")
 
 
 @app.get("/api/job")
@@ -764,12 +838,61 @@ def api_download(kind: str):
     return FileResponse(f, media_type=mime, filename=f"{stem}-{STATE['fmt']}-{name}")
 
 
+def _sharp_cm(p) -> list[float]:
+    dpi = float(STATE["lab"]["resolution"]["warn_below_dpi"])
+    return [round(p.width / dpi * 2.54, 1), round(p.height / dpi * 2.54, 1)]
+
+
+def low_res_pages(data: dict) -> dict[int, list[dict]]:
+    """Page number -> photographs on it that resolution held back: printed
+    below the lab's warning DPI ("soft"), or set smaller than the layout
+    meant so that they stay sharp ("shrunk")."""
+    from geometry import effective_dpi
+
+    g = STATE["g"]
+    warn = float(STATE["lab"]["resolution"]["warn_below_dpi"])
+    by_id = {p.id: p for p in STATE["all"]}
+    out: dict[int, list[dict]] = {}
+    for n, sp in enumerate(data.get("spreads") or []):
+        slots = sp.get("slots") or []
+        if not slots:
+            continue
+        opts = dict(sp.get("options") or {})
+        try:
+            real = templates_lib.build(sp["template"], g, opts).slots
+            ideal = templates_lib.build(sp["template"], g,
+                                        {k: v for k, v in opts.items() if k != "pixels"}).slots
+        except Exception:
+            continue
+        for slot, box, want in zip(slots, real, ideal):
+            ph = by_id.get(slot["photo_id"])
+            if ph is None:
+                continue
+            dpi = effective_dpi(ph.width, ph.height, box.rect)
+            shrunk = box.rect.w * box.rect.h < 0.9 * want.rect.w * want.rect.h
+            soft = dpi < warn - 1.0      # the compositor stops at the limit itself
+            if not soft and not shrunk:
+                continue
+            page = 2 * n + (1 if box.rect.x + box.rect.w / 2 < g.fold_x else 2)
+            out.setdefault(page, []).append({
+                "id": ph.id, "dpi": round(dpi), "kind": "soft" if soft else "shrunk",
+                "sharp_cm": _sharp_cm(ph)})
+    return out
+
+
 @app.get("/api/pages")
 def api_pages():
     d = STATE["album"] / "renders" / "pages-thumb"
     files = sorted(d.glob("page-*.jpg")) if d.exists() else []
     ver = (d / "version.txt").read_text() if (d / "version.txt").exists() else None
-    return {"version": ver, "count": len(files)}
+    low = {}
+    if ver and files:
+        try:
+            _, data = Store(STATE["album"]).get(int(ver))
+            low = low_res_pages(data)
+        except Exception:
+            traceback.print_exc()
+    return {"version": ver, "count": len(files), "low_res": low}
 
 
 @app.get("/pages/{n}.jpg")
