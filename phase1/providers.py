@@ -85,6 +85,10 @@ class Provider:
     # answer. Another vendor is the point: an outage rarely hits two at once.
     fallback_model: str | None = None
     fallback_base_url: str | None = None   # default: the primary's endpoint
+    # USD per million tokens, when the list price table below does not know
+    # the model (models.yaml: price_in / price_out, or ALBUM_PRICE_IN/OUT).
+    price_in: float | None = None
+    price_out: float | None = None
 
     @property
     def is_local(self) -> bool:
@@ -264,6 +268,55 @@ def count_images(messages: list[dict]) -> int:
     )
 
 
+# --- what a call costs ---------------------------------------------------
+#
+# List prices in USD per million tokens (input, output), matched by substring
+# of the model id, most specific first. They are what the GUI's cost line is
+# made of, so keep them current; an endpoint that reports the cost itself
+# (OpenRouter's `usage.cost`) always wins over this table, and a local model
+# costs nothing.
+PRICES: list[tuple[str, float, float]] = [
+    ("haiku-3", 0.25, 1.25),
+    ("haiku", 1.0, 5.0),
+    ("opus-4-1", 15.0, 75.0),
+    ("opus-4-0", 15.0, 75.0),
+    ("opus-4-2025", 15.0, 75.0),
+    ("opus", 5.0, 25.0),
+    ("sonnet", 3.0, 15.0),
+    ("fable", 3.0, 15.0),
+    ("gpt-4o-mini", 0.15, 0.6),
+    ("gpt-4o", 2.5, 10.0),
+    ("gpt-4.1-mini", 0.4, 1.6),
+    ("gpt-4.1", 2.0, 8.0),
+    ("gemini-2.5-flash", 0.3, 2.5),
+    ("gemini-2.5-pro", 1.25, 10.0),
+]
+
+
+def price(p: Provider, usage) -> None:
+    """Fill usage.cost_usd for one call made through provider `p`, unless the
+    endpoint already reported it."""
+    if usage.cost_usd is not None:
+        return
+    if p.is_local:
+        usage.cost_usd = 0.0
+        return
+    rate = None
+    if p.price_in is not None and p.price_out is not None:
+        rate = (float(p.price_in), float(p.price_out))
+    else:
+        m = (p.model or "").lower()
+        for key, i, o in PRICES:
+            if key in m:
+                rate = (i, o)
+                break
+    if rate is None:
+        # Unknown model: an honest guess at a mid-range rate, marked as such.
+        rate = (3.0, 15.0)
+        usage.estimated = True
+    usage.cost_usd = usage.input_tokens / 1e6 * rate[0] + usage.output_tokens / 1e6 * rate[1]
+
+
 # --- completers ----------------------------------------------------------
 
 
@@ -287,7 +340,13 @@ def make_completer(p: Provider):
             opts["reasoning"] = None
         if not opts.get("max_tokens"):
             opts["max_tokens"] = p.max_tokens
-        return inner(system, messages, **opts)
+        reply = inner(system, messages, **opts)
+        try:
+            usage = reply.usage if hasattr(reply, "usage") else reply[1]
+            price(p, usage)
+        except Exception:
+            pass
+        return reply
 
     return complete
 
@@ -660,6 +719,8 @@ def _openai(p: Provider):
             "messages": _to_openai(system, msgs),
             "max_tokens": opts.get("max_tokens") or p.max_tokens,
         }
+        if "openrouter" in (p.base_url or ""):
+            body["usage"] = {"include": True}       # report the real cost
 
         # Reasoning models can spend the whole output budget thinking and write
         # nothing. The knob for turning that down has no standard spelling.
@@ -821,10 +882,13 @@ def _openai(p: Provider):
 
         u = data.get("usage") or {}
         details = u.get("completion_tokens_details") or {}
+        usage = _usage(u.get("prompt_tokens", 0), u.get("completion_tokens", 0),
+                       count_images(msgs))
+        if isinstance(u.get("cost"), (int, float)):
+            usage.cost_usd = float(u["cost"])        # OpenRouter reports it
         return Reply(
             text=text,
-            usage=_usage(u.get("prompt_tokens", 0), u.get("completion_tokens", 0),
-                         count_images(msgs)),
+            usage=usage,
             finish=finish,
             raw_finish=raw_finish,
             reasoning_chars=reasoning_chars,
@@ -953,6 +1017,13 @@ def resolve_role(role: str, args=None, config: dict | None = None) -> Provider:
         fallback_model=pick("fallback_model"),
         fallback_base_url=pick("fallback_base_url"),
     )
+    for f in ("price_in", "price_out"):
+        v = pick(f)
+        if v is not None:
+            try:
+                setattr(p, f, float(v))
+            except (TypeError, ValueError):
+                pass
     # A generic flag should still win over a models.yaml default, so fall back
     # to the plain resolution for anything the role did not pin.
     if args is not None:

@@ -54,6 +54,9 @@ class Photo:
     annotation: str = ""                           # from annotate.run
     strength: int = 0                              # 1-5, from annotate.run
     suggested_focal: tuple[float, float] | None = None
+    features: list[str] = field(default_factory=list)  # named places nearby, from geocode
+    landmark: str = ""                             # what the vision pass recognised
+    detail: str = ""                               # one concrete observation, ditto
 
     unusable: bool = False
 
@@ -73,6 +76,12 @@ class Photo:
         ]
         if self.annotation:
             bits.append(self.annotation)
+        if self.landmark:
+            bits.append(f"recognised: {self.landmark}")
+        if self.detail:
+            bits.append(f"seen: {self.detail}")
+        if self.features:
+            bits.append("nearby: " + "; ".join(self.features[:3]))
         if self.suggested_focal:
             bits.append(f"focal {self.suggested_focal[0]:.2f},{self.suggested_focal[1]:.2f}")
         if self.unusable:

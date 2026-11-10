@@ -171,7 +171,7 @@ class FakeModel:
             "id": "fake", "object": "chat.completion",
             "choices": [{"index": 0, "finish_reason": finish,
                          "message": {"role": "assistant", "content": content, **message}}],
-            "usage": {"prompt_tokens": 100, "completion_tokens": 50,
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "cost": 0.0125,
                       "completion_tokens_details": {"reasoning_tokens": reasoning_tokens}},
         }
 

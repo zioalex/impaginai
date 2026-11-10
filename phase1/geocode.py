@@ -166,12 +166,149 @@ class Geocoder:
             pass
 
 
-def apply(photos, album_dir: Path, offline_db: bool = True) -> int:
-    """Fill photo.place for every photo that has GPS. Returns how many were named."""
+# --- named features nearby: the lake, the glacier, the peak ---------------
+#
+# A settlement database says "Pontresina". Nobody who stood on the ice calls
+# it that: it was the Morteratsch glacier. OpenStreetMap knows the names of
+# glaciers, lakes, peaks, passes, rivers and viewpoints, so the coordinates of
+# each place (rounded to about a kilometre) are sent to the public Overpass API
+# once and the answer cached in `features_cache.json`. This is the only
+# network call in the place pipeline; `online=False` (--offline-places) skips it.
+
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+FEATURE_RADIUS_M = 2500
+
+# kind of feature -> how strongly it names a place (lower wins at equal distance)
+_KINDS = {
+    "glacier": 0, "water": 0, "lake": 0, "peak": 1, "waterfall": 1,
+    "mountain_pass": 1, "bay": 1, "beach": 1, "valley": 2, "river": 2,
+    "viewpoint": 3, "attraction": 3, "castle": 3, "monument": 4,
+}
+
+_QUERY = """[out:json][timeout:25];
+(
+  nwr(around:{r},{lat},{lon})["natural"~"^(glacier|water|peak|valley|bay|beach)$"]["name"];
+  nwr(around:{r},{lat},{lon})["waterway"~"^(river|waterfall)$"]["name"];
+  nwr(around:{r},{lat},{lon})["mountain_pass"="yes"]["name"];
+  nwr(around:{r},{lat},{lon})["tourism"~"^(viewpoint|attraction)$"]["name"];
+  nwr(around:{r},{lat},{lon})["historic"~"^(castle|monument)$"]["name"];
+);
+out center tags 60;"""
+
+
+def _feature_key(gps: tuple[float, float]) -> str:
+    return f"{gps[0]:.2f},{gps[1]:.2f}"
+
+
+def _kind(tags: dict) -> str:
+    for k in ("natural", "waterway", "tourism", "historic"):
+        if tags.get(k):
+            v = tags[k]
+            if v == "water" and tags.get("water") in ("lake", "reservoir", "pond"):
+                return "lake"
+            return v
+    if tags.get("mountain_pass") == "yes":
+        return "mountain_pass"
+    return "place"
+
+
+def _overpass(lat: float, lon: float, language: str | None, timeout: float = 30.0) -> list[dict]:
+    import urllib.parse
+    import urllib.request
+
+    q = _QUERY.format(r=FEATURE_RADIUS_M, lat=f"{lat:.4f}", lon=f"{lon:.4f}")
+    req = urllib.request.Request(
+        OVERPASS_URL, data=urllib.parse.urlencode({"data": q}).encode(),
+        headers={"User-Agent": "photo-album-maker (self-hosted)"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    out = []
+    for el in data.get("elements", []):
+        tags = el.get("tags") or {}
+        name = (tags.get(f"name:{language}") if language else None) or tags.get("name")
+        c = el.get("center") or {"lat": el.get("lat"), "lon": el.get("lon")}
+        if not name or c.get("lat") is None:
+            continue
+        out.append({"name": name, "kind": _kind(tags), "lat": c["lat"], "lon": c["lon"]})
+    return out
+
+
+class Features:
+    """Named geographic features near each photograph, cached per album."""
+
+    def __init__(self, album_dir: Path, online: bool = True, language: str | None = None,
+                 fetch=None):
+        self.path = album_dir / "features_cache.json"
+        self.online = online
+        self.language = language
+        self.fetch = fetch or _overpass
+        self.cache: dict[str, list[dict]] = {}
+        if self.path.exists():
+            try:
+                self.cache = json.loads(self.path.read_text())
+            except Exception:
+                self.cache = {}
+        self.failed = False
+
+    def near(self, gps: tuple[float, float]) -> list[dict]:
+        k = _feature_key(gps)
+        if k not in self.cache:
+            if not self.online or self.failed:
+                return []
+            try:
+                self.cache[k] = self.fetch(round(gps[0], 2), round(gps[1], 2), self.language)
+            except Exception as exc:  # no network, rate limited: carry on without
+                print(f"  place lookup unavailable ({str(exc)[:80]}); using town names only")
+                self.failed = True
+                return []
+            self._save()
+        found = []
+        for f in self.cache[k]:
+            d = _haversine_m(gps, (f["lat"], f["lon"]))
+            found.append({**f, "distance_m": round(d)})
+        found.sort(key=lambda f: (f["distance_m"] + 600 * _KINDS.get(f["kind"], 5)))
+        seen, uniq = set(), []
+        for f in found:
+            if f["name"] not in seen:
+                seen.add(f["name"])
+                uniq.append(f)
+        return uniq
+
+    def _save(self) -> None:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps(self.cache, ensure_ascii=False, indent=1))
+        except Exception:
+            pass
+
+
+def _short_town(label: str) -> str:
+    return label.split(",")[0].strip()
+
+
+def apply(photos, album_dir: Path, offline_db: bool = True, online: bool = False,
+          language: str | None = None, fetch=None) -> int:
+    """Fill photo.place for every photo that has GPS. Returns how many were named.
+
+    With `online`, also fill photo.features (named glaciers, lakes, peaks... in
+    reach, nearest first) and lead the place with the nearest strong one:
+    "Morteratschgletscher · Pontresina" rather than "Pontresina, Grisons". A
+    name the user gave in places.yaml is never overridden.
+    """
     gc = Geocoder(album_dir, offline_db)
     names = gc.resolve([p.gps for p in photos])
+    feats = Features(album_dir, online=online, language=language, fetch=fetch)
+    user_named = {pl.name for pl in gc.user_places}
     n = 0
     for p, name in zip(photos, names):
+        if p.gps is not None:
+            near = feats.near(p.gps)
+            p.features = [f"{f['name']} ({f['kind'].replace('_', ' ')}, "
+                          f"{f['distance_m'] / 1000:.1f} km)" for f in near[:5]]
+            spot = next((f for f in near if _KINDS.get(f["kind"], 5) <= 1
+                         and f["distance_m"] <= 2000), None)
+            if spot and name not in user_named:
+                name = f"{spot['name']} · {_short_town(name)}" if name else spot["name"]
         if name:
             p.place = name
             n += 1

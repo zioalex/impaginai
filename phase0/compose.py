@@ -38,7 +38,7 @@ from geometry import Geometry, Rect
 COLS = 6
 ROWS = 6
 GUTTER = 4.0
-CAPTION_BAND = 11.0
+CAPTION_BAND = 10.0
 
 Side = Literal["left", "right"]
 
@@ -129,13 +129,114 @@ COMPOSITIONS: dict[str, Composition] = {
 }
 
 
-def build_page(g: Geometry, side: Side, name: str):
-    """Return (rects, feature_index, caption_rect) for one page composition."""
+def build_page(g: Geometry, side: Side, name: str, aspects=None):
+    """Return (rects, feature_index, caption_rect) for one page composition.
+
+    With `aspects` (width/height of each photograph, in slot order) the page is
+    laid out for the photographs it actually carries — see `adaptive` — instead
+    of on fixed grid cells that crop or letterbox whatever does not match.
+    """
     comp = COMPOSITIONS[name]
     if comp.blank or comp.slots == 0:
         return [], None, None
     if comp.bleed:
         return [g.full_bleed(side)], 0, None
+    if aspects and len(aspects) == comp.slots and all(a and a > 0 for a in aspects):
+        rects, cap = adaptive(g, side, list(aspects))
+        return rects, 0, cap
     rects = [grid_rect(g, side, c) for c in comp.cells]
     feature = next((i for i, c in enumerate(comp.cells) if c.feature), 0)
     return rects, feature, caption_band(g, side)
+
+
+# --- layout from the photographs' own shapes ------------------------------
+#
+# Fixed cells waste the page: a landscape frame in a square cell is either cut
+# by a quarter or shrunk inside white. `adaptive` instead tries every way of
+# putting the page's photographs (in order, feature first) into rows or into
+# columns, sizes each row so its photographs share one height (columns: one
+# width), lets each photograph be cropped by at most ADAPT_KEEP to close what
+# is left, and keeps the arrangement that covers the most paper while the
+# feature stays the largest image.
+
+ADAPT_KEEP = 0.86     # never cut more than 14% of a photograph to fill space
+
+
+def _partitions(n: int):
+    """Ordered ways to cut n items into consecutive groups."""
+    if n == 0:
+        yield []
+        return
+    for k in range(1, n + 1):
+        for rest in _partitions(n - k):
+            yield [k] + rest
+
+
+def _lines(W: float, H: float, aspects: list[float], parts: list[int]):
+    """Lay `aspects` out in rows of `parts` sizes inside W x H, top-left origin.
+    Returns [(x, y, w, h)] in slot order, and the block's (w, h)."""
+    G = GUTTER
+    rows, i = [], 0
+    for k in parts:
+        rows.append(aspects[i:i + k])
+        i += k
+    # natural height of each row when it spans the full width
+    nat = [(W - G * (len(r) - 1)) / sum(r) for r in rows]
+    avail_h = H - G * (len(rows) - 1)
+    stretch_x = 1.0
+    if sum(nat) > avail_h:                          # too tall: shrink, then widen
+        s = avail_h / sum(nat)
+        hs = [h * s for h in nat]
+        stretch_x = 1.0 / ADAPT_KEEP                # widen rows back towards W
+    else:                                           # too short: heighten rows
+        f = min(avail_h / sum(nat), 1.0 / ADAPT_KEEP)
+        hs = [h * f for h in nat]
+    out, y, block_w = [], 0.0, 0.0
+    for r, h in zip(rows, hs):
+        ws = [a * h for a in r]
+        room = W - G * (len(r) - 1)
+        # widen up to the crop allowance, or narrow a row that heightening
+        # pushed past the page (that too is a crop, bounded by ADAPT_KEEP)
+        fx = min(stretch_x, room / sum(ws))
+        ws = [w * fx for w in ws]
+        x = 0.0
+        for w in ws:
+            out.append((x, y, w, h))
+            x += w + G
+        block_w = max(block_w, x - G)
+        y += h + G
+    return out, block_w, y - G
+
+
+def adaptive(g: Geometry, side: Side, aspects: list[float]):
+    """Rectangles for photographs of the given aspect ratios on one page."""
+    c = g.text_column(side)
+    W, H = c.w, c.h - CAPTION_BAND
+    n = len(aspects)
+    best = None
+    for parts in _partitions(n):
+        for transpose in (False, True):
+            if transpose and len(parts) == n and n == 1:
+                continue
+            if transpose:
+                cells, bw, bh = _lines(H, W, [1 / a for a in aspects], parts)
+                cells = [(y, x, h, w) for (x, y, w, h) in cells]
+                bw, bh = bh, bw
+            else:
+                cells, bw, bh = _lines(W, H, aspects, parts)
+            areas = [w * h for (_, _, w, h) in cells]
+            score = sum(areas) / (W * H)
+            if n > 1:
+                if areas[0] < max(areas[1:]) * 0.999:
+                    score *= 0.75                   # the feature must lead
+                if min(areas) < 0.09 * W * H:
+                    score *= 0.8                    # nothing postage-stamp sized
+            if best is None or score > best[0] + 1e-9:
+                best = (score, cells, bw, bh)
+    _, cells, bw, bh = best
+    ox = c.x + (W - bw) / 2
+    oy = c.y + (H - bh) / 2
+    rects = [Rect(round(ox + x, 2), round(oy + y, 2), round(w, 2), round(h, 2))
+             for (x, y, w, h) in cells]
+    cap = Rect(round(ox, 2), round(oy + bh + 2.5, 2), round(bw, 2), CAPTION_BAND - 2.5)
+    return rects, cap

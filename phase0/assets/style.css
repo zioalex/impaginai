@@ -92,14 +92,37 @@ img.slot.t-soft-edge {
 }
 
 /* Captions ------------------------------------------------------------- */
+/* Captions are the album's voice — set in the display serif, italic, so they
+   read as something written about the photograph rather than a label on it.
+   At most two lines; a longer one is the writer's cue to shorten it. */
 .caption {
-  font-family: var(--font-caption);
-  font-size: 2.6mm;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 3.1mm;
   line-height: 1.35;
-  letter-spacing: 0.02em;
   color: var(--ink-soft);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
-.caption.overlay { color: var(--invert); text-shadow: 0 0 1.2mm rgba(0, 0, 0, 0.45); }
+/* White type on a photograph is always set on a scrim (see .scrim), so it
+   reads on snow and sky too. Anchored to the bottom of its box. */
+.caption.overlay {
+  color: var(--invert);
+  text-shadow: 0 0 0.8mm rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.caption.overlay.small { font-size: 2.6mm; line-height: 1.3; }
+.scrim {
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.30) 55%, rgba(0, 0, 0, 0.55) 100%);
+}
+.scrim.top {
+  background: linear-gradient(to top, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.28) 55%, rgba(0, 0, 0, 0.5) 100%);
+}
 .caption.right { text-align: right; }
 .caption.center { text-align: center; }
 
@@ -145,10 +168,12 @@ img.slot.t-soft-edge {
 .stamp {
   font-family: var(--font-caption);
   font-size: 3.2mm;
-  line-height: 1;
+  line-height: 1.2;
   letter-spacing: 0.2em;
+  overflow: hidden;
+  text-overflow: ellipsis;
   text-transform: uppercase;
   color: var(--ink-soft);
   white-space: nowrap;
 }
-.stamp.overlay { color: var(--invert); text-shadow: 0 0 1.4mm rgba(0, 0, 0, 0.55); }
+.stamp.overlay { color: var(--invert); text-shadow: 0 0 1mm rgba(0, 0, 0, 0.6); }
