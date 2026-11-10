@@ -246,7 +246,7 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
            strength: dict | None = None, together: set[str] | None = None,
            alone: set[str] | None = None, no_bleed: set[str] | None = None,
            density: str = "balanced", use_all: bool = False, place_names: bool = True,
-           split_short: bool = True) -> list[str]:
+           split_short: bool = True, include: set[str] | None = None) -> list[str]:
     """Rebuild the spreads with no empty pages. Returns a log.
 
     `spare` lists photo ids the layout left out that may still be used, in
@@ -277,7 +277,10 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
     together, "dense" also folds a single into a neighbouring pair of the same
     moment; `use_all` brings every photograph the design left out into the
     book; `place_names` False prints no place names; `split_short` False keeps the
-    compositions and pads a short book with blank pages instead."""
+    compositions and pads a short book with blank pages instead.
+
+    `include` lists photographs that must be in the book although the design
+    left them out — the ones added after the model last saw the album."""
     spreads = layout.get("spreads", [])
     if not spreads:
         return []
@@ -438,7 +441,8 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
     # A photograph the user wants composed is in the book, whatever the
     # design decided.
     on_pages = {s["photo_id"] for p in pages for s in p.slots}
-    brought = [pid for pid in (spare or []) if (use_all or pid in together)
+    brought = [pid for pid in (spare or [])
+               if (use_all or pid in together or pid in (include or ()))
                and pid not in on_pages and pid != pick]
     for pid in brought:
         insert_solo(pid)
