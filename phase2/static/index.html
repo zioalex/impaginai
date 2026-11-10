@@ -54,9 +54,37 @@ nav.tabs .grow{flex:1}
 #status{align-self:center;font-size:12px;color:var(--soft)}
 
 main{flex:1;display:grid;grid-template-columns:1fr 360px;min-height:0}
-main.book{grid-template-columns:1fr}
-main.book #panel,main.book #grid{display:none}
+main.book,main.settings{grid-template-columns:1fr}
+main.book #panel,main.book #grid,main.settings #panel,main.settings #grid,main.settings #book{display:none}
 main:not(.book) #book{display:none}
+main:not(.settings) #settings{display:none}
+#settings{overflow-y:auto;padding:18px 18px 60px}
+.setwrap{max-width:820px;margin:0 auto}
+.setsec{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px 18px 14px;margin-bottom:18px}
+.setsec h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--soft);margin:14px 0 4px}
+.setsec .labinfo{font-size:12px;color:var(--soft);margin-bottom:4px}
+.setrow{padding:12px 0;border-top:1px solid var(--line)}
+.setrow:first-of-type{border-top:0}
+.setrow .head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:7px}
+.setrow .head b{font-size:14px;font-weight:600}
+.eff{font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:5px;
+     background:var(--accent-soft);color:var(--accent)}
+.eff.redesign{background:#eef0f8;color:#3b4a8a}
+.eff.relook{background:#fbf0e0;color:var(--warn)}
+@media (prefers-color-scheme:dark){.eff.redesign{background:#232845;color:#aab6f0}.eff.relook{background:#3a2c14}}
+.infobtn{width:22px;height:22px;padding:0;border-radius:50%;font-size:12px;line-height:20px;text-align:center;
+  border:1px solid var(--line);background:var(--bg);color:var(--soft);cursor:pointer}
+.infobtn[aria-expanded="true"]{background:var(--accent);color:#fff;border-color:var(--accent)}
+.infobox{display:none;margin:8px 0 2px;padding:10px 12px;background:var(--bg);border-radius:8px;font-size:13px;line-height:1.55;white-space:pre-line}
+.infobox.on{display:block}
+.locked{font-size:12px;color:var(--warn);margin-top:6px}
+.setrow.lock .opts,.setrow.lock input{opacity:.5;pointer-events:none}
+.slider{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.slider input[type=range]{flex:1;min-width:180px;accent-color:var(--accent)}
+.slider .val{font-variant-numeric:tabular-nums;min-width:110px;font-size:13px}
+.slider .prev{font-size:12px;color:var(--soft)}
+.numrow{display:flex;gap:8px;align-items:center}
+.numrow input{width:90px;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);color:var(--ink)}
 @media (max-width:900px){main{grid-template-columns:1fr}#panel{display:none}
   body.picked main:not(.book) #panel{display:flex;position:fixed;inset:0;z-index:20}
   body.picked main:not(.book) #grid{display:none}}
@@ -203,6 +231,7 @@ kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:
 <nav class="tabs">
   <button role="tab" aria-selected="true" id="tabPhotos">Photos</button>
   <button role="tab" aria-selected="false" id="tabBook">Book <span id="pageCount" class="sub"></span></button>
+  <button role="tab" aria-selected="false" id="tabSettings">Settings</button>
   <div class="grow"></div>
   <span id="status"></span>
 </nav>
@@ -272,6 +301,7 @@ kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:
     </div>
   </aside>
   <section id="book"></section>
+  <section id="settings"></section>
 </main>
 
 <div id="bulk"><span id="bulkN"></span>
@@ -747,13 +777,114 @@ $("exportList").querySelectorAll("button").forEach(b=>b.onclick=async()=>{
 // --- the book view --------------------------------------------------------
 
 function showView(v){
-  view=v; $("main").className=v==="book"?"book":"";
+  view=v; $("main").className=v==="photos"?"":v;
   $("tabPhotos").setAttribute("aria-selected",String(v==="photos"));
   $("tabBook").setAttribute("aria-selected",String(v==="book"));
+  $("tabSettings").setAttribute("aria-selected",String(v==="settings"));
   if(v==="book")renderBook();
+  if(v==="settings")renderSettings();
 }
 $("tabPhotos").onclick=()=>showView("photos");
 $("tabBook").onclick=()=>showView("book");
+$("tabSettings").onclick=()=>showView("settings");
+
+// --- Settings ------------------------------------------------------------
+const EFFECT={instant:["Applies now · free","Re-applied to the current design at once, no model call."],
+  regroup:["Regroups now · free","The photographs are regrouped and the design re-applied, no model call."],
+  redesign:["Next design","Takes effect when you press “Design again…” (one model call)."],
+  relook:["Vision looks again","Takes effect the next time the vision model looks at photographs, which costs a little."]};
+let cfg=null;
+async function renderSettings(){
+  const host=$("settings");
+  try{cfg=await get("/api/config");}catch(e){host.innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
+  const lab=cfg.lab;
+  let h=`<div class="setwrap">`;
+  for(const [gid,gname] of Object.entries(cfg.groups)){
+    h+=`<div class="setsec"><h2>${esc(gname)}</h2>`;
+    if(gid==="book")h+=`<div class="labinfo">This lab: ${lab.pages.min}–${lab.pages.max} pages in steps of ${lab.pages.increment}, ${esc(lab.binding||"")}${lab.paper?" · "+esc(lab.paper):""}. Photographs need ${lab.resolution.warn_below_dpi} DPI to look sharp; below ${lab.resolution.block_below_dpi} they cannot be printed.</div>`;
+    if(gid==="grouping")h+=`<div class="labinfo">${cfg.photo_count} photographs in <b id="grpCount">${cfg.group_count}</b> moments.</div>`;
+    cfg.options.filter(o=>o.group===gid).forEach(o=>{h+=optionRow(o);});
+    if(gid==="grouping")h+=`<div class="setrow"><div class="head"><b>Look at every photograph again</b><span class="eff relook">${EFFECT.relook[0]}</span></div>
+      <button class="small" id="relookBtn">Look again on the next design</button>
+      <div class="hint">For when descriptions, strengths or the upright check seem wrong. The next design sends every photograph to the vision model once more.</div></div>`;
+    h+=`</div>`;
+  }
+  host.innerHTML=h+`</div>`;
+  host.querySelectorAll(".infobtn").forEach(b=>b.onclick=()=>{const box=$("info-"+b.dataset.k);const on=!box.classList.contains("on");
+    box.classList.toggle("on",on);b.setAttribute("aria-expanded",String(on));});
+  host.querySelectorAll("[data-set]").forEach(el=>{
+    const k=el.dataset.set, kind=el.dataset.kind;
+    if(kind==="choice"||kind==="bool")el.onclick=()=>setOption(k,kind==="bool"?el.dataset.v==="true":el.dataset.v);
+  });
+  host.querySelectorAll("input[data-num]").forEach(inp=>{
+    const k=inp.dataset.num;
+    inp.oninput=()=>{const v=$("val-"+k); if(v)v.textContent=fmtVal(cfg.options.find(o=>o.key===k),inp.value); previewGroups();};
+    inp.onchange=()=>setOption(k,Number(inp.value));
+  });
+  const auto=$("lenAuto"); if(auto)auto.onclick=()=>setOption("length",0);
+  const rl=$("relookBtn"); if(rl)rl.onclick=async()=>{
+    if(!confirm("On the next design, the vision model looks at every photograph again. That costs about as much as the first time. Go ahead?"))return;
+    try{const r=await send("POST","/api/relook");note(`The next design looks at ${r.photos} photographs again.`);}catch(e){note(e.message,"err");}
+  };
+}
+function fmtVal(o,v){
+  if(o.key==="length")return Number(v)?`${v} pages`:"Automatic";
+  if(o.key==="radius_m")return Number(v)>=1000?`${(Number(v)/1000).toFixed(1)} km`:`${v} m`;
+  if(o.key==="gap_hours")return `${Number(v)} h`;
+  return `${v} ${o.unit||""}`;
+}
+function optionRow(o){
+  const lock=o.locked?" lock":"";
+  let h=`<div class="setrow${lock}"><div class="head"><b>${esc(o.label)}</b>`;
+  if(o.info)h+=`<button class="infobtn" data-k="${o.key}" aria-expanded="false" title="What is the difference?">i</button>`;
+  const eff=o.also_now?["Partly now · fully on the next design","Applied to the current book at once where that needs no model (photos brought in, captions removed, pages combined); the rest takes effect when you press “Design again…”."]:EFFECT[o.effect];
+  h+=`<span class="eff ${o.effect}" title="${esc(eff[1])}">${eff[0]}</span></div>`;
+  if(o.info)h+=`<div class="infobox" id="info-${o.key}">${esc(o.info)}</div>`;
+  if(o.kind==="choice"){
+    h+=`<div class="opts">`+Object.entries(o.choices).map(([v,l])=>
+      `<div class="opt" role="button" tabindex="0" data-set="${o.key}" data-kind="choice" data-v="${esc(v)}" aria-pressed="${String(String(o.value)===v)}">${esc(l)}</div>`).join("")+`</div>`;
+  }else if(o.kind==="bool"){
+    h+=`<div class="opts">`+[["true","On"],["false","Off"]].map(([v,l])=>
+      `<div class="opt" role="button" tabindex="0" data-set="${o.key}" data-kind="bool" data-v="${v}" aria-pressed="${String(String(o.value)===v)}">${l}</div>`).join("")+`</div>`;
+  }else if(o.key==="length"){
+    const lo=cfg.lab.pages.min, hi=cfg.lab.pages.max;
+    h+=`<div class="numrow"><div class="opt" role="button" tabindex="0" id="lenAuto" aria-pressed="${String(!o.value)}">Automatic</div>
+      <span class="sub">or</span><input type="number" data-num="length" min="${lo}" max="${hi}" step="${cfg.lab.pages.increment}" value="${o.value||""}" placeholder="${lo}"> <span class="sub">pages</span></div>`;
+  }else{
+    h+=`<div class="slider"><input type="range" data-num="${o.key}" min="${o.min}" max="${o.max}" step="${o.step}" value="${o.value}">
+      <span class="val" id="val-${o.key}">${fmtVal(o,o.value)}</span></div>`;
+  }
+  h+=`<div class="hint">${esc(o.help)}</div>`;
+  if(o.locked)h+=`<div class="locked">🔒 ${esc(o.locked_by||"set when the editor was started")}</div>`;
+  return h+`</div>`;
+}
+let prevTimer=null;
+function previewGroups(){
+  clearTimeout(prevTimer);
+  prevTimer=setTimeout(async()=>{
+    const g=document.querySelector('input[data-num="gap_hours"]'), r=document.querySelector('input[data-num="radius_m"]');
+    if(!g||!r)return;
+    try{const p=await get(`/api/groups/preview?gap_hours=${g.value}&radius_m=${r.value}`);
+      $("grpCount").textContent=`${p.count}`;}catch(e){}
+  },250);
+}
+async function setOption(k,v){
+  let r;
+  try{r=await send("PUT","/api/config",{[k]:v});}catch(e){note(e.message,"err");renderSettings();return;}
+  if(!r.changed.length){renderSettings();return;}
+  if(r.changed.includes("lab")||r.changed.includes("gap_hours")||r.changed.includes("radius_m")
+     ||r.changed.includes("geocode")||r.changed.includes("online_places")){
+    album=await get("/api/album"); photos=await get("/api/photos");
+    const fs=$("fmtSel"); fs.innerHTML="";
+    Object.entries(album.formats).forEach(([kk,vv])=>{const o=document.createElement("option");o.value=kk;o.textContent=vv;fs.appendChild(o);});
+    fs.value=album.format; setHeader(); renderGrid();
+  }
+  if(r.needs.includes("rerender"))scheduleRerender();
+  if(r.needs.includes("redesign"))status(designed?"Saved — takes effect when you press “Design again…”":"Saved — used when you design the album");
+  else if(r.needs.includes("relook"))status("Saved — used the next time photographs are looked at");
+  else status("Saved");
+  renderSettings();
+}
 
 async function refreshPages(){
   try{pages=await get("/api/pages");}catch(e){pages={count:0};}
