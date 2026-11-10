@@ -48,7 +48,25 @@ Then one button: **Design the album**. After the first run it becomes *Design
 again…*, which opens a dialog asking what should change in plain language (with
 examples to click) and sends that as a revision.
 
-Around it:
+**Settings tab**: the choices that used to be command-line flags, each marked
+with what a change costs (*applies now · free*, *regroups now · free*, *next
+design*, *vision looks again*), and saved with the album in `settings.json`:
+
+- **Book**: print lab; length (automatic or a page count); photos per page
+  (airy · balanced · dense); which photos (every photo · best of · only the
+  strongest); captions (personal · descriptive · place and date only · none);
+  what to do when there are too few photos. The ⓘ next to an option explains
+  the difference between its choices.
+- **Photos and grouping**: when a new moment and a new place start (with a
+  live count of moments), vision detail, turning sideways photos upright, and
+  *look at every photograph again*.
+- **Places and privacy**: place names, and named landmarks (which sends photo
+  coordinates to OpenStreetMap's Overpass service).
+
+A flag given when the editor is started (`--gap-hours`, `--lab`, `--no-geocode`,
+…) still wins for that run; the option is shown locked with the flag's name.
+
+
 
 - **Book tab**: the pages as spreads, a larger view on click, and every version
   with *Go back to this*.

@@ -1,6 +1,6 @@
 # Plan: every backend option in the editor
 
-Status: **reviewed; decisions recorded under "Decisions" at the end.** Built in steps A–D.
+Status: **reviewed; decisions recorded under "Decisions" at the end.** Built in steps A–D. **Step A is built** (Settings tab: book, grouping, places; `phase2/config.py`). The full `open_album()` refactor moves to step C, where switching albums needs it; step A applies option changes live with `apply_options()`.
 
 ## Goal
 

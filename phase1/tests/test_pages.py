@@ -276,6 +276,59 @@ def engadin_run_fixes(groups):
             assert R.to_srgb(im).size == (300, 400)
     print("sideways photographs stood up from the vision pass: ok")
 
+    # the editor's Settings: option validation and precedence
+    sys.path.insert(0, str(ROOT.parent / "phase2"))
+    import config as CFG
+    vals = CFG.resolve({"density": "dense", "gap_hours": 6, "selection": "nonsense"},
+                       {"gap_hours": 2.0})
+    assert vals["density"] == "dense" and vals["gap_hours"] == 2.0, vals
+    assert vals["selection"] == "best", "an unknown saved value must fall back to the default"
+    for bad in (("density", "huge"), ("gap_hours", 99), ("auto_rotate", "maybe")):
+        try:
+            CFG.BY_KEY[bad[0]].check(bad[1])
+            raise AssertionError(f"{bad} accepted")
+        except ValueError:
+            pass
+    rows = {r["key"]: r for r in CFG.describe(vals, {"gap_hours": 2.0}, {"saal": "Saal"})}
+    assert rows["gap_hours"]["locked"] and "--gap-hours" in rows["gap_hours"]["locked_by"]
+    assert rows["density"]["info"] and rows["selection"]["info"], "density/selection need their pop-up"
+    assert CFG.needs(["captions"]) == ["rerender", "redesign"]
+    assert CFG.needs(["gap_hours"]) == ["rerender"] and CFG.needs(["vision_px"]) == ["relook"]
+    print("settings: validation, precedence, locks and effects: ok")
+
+    # the repacker follows them: every photo, no place names, airy pages
+    def singles_layout():
+        lay = good_layout()
+        every = [pid for g in groups for pid in g.photo_ids]
+        lay["spreads"] = [{"index": i + 1, "section_id": None, "template": "two-up-equal",
+                           "slots": [{"photo_id": a, "focal": [0.5, 0.5], "caption": None,
+                                      "caption_position": "below"} for a in pair],
+                           "text": None, "options": {}, "note": None}
+                          for i, pair in enumerate(zip(every[0:6:2], every[1:6:2]))]
+        return lay, every
+    lay, every = singles_layout()
+    spare = [x for x in every if x not in {s["photo_id"] for sp in lay["spreads"] for s in sp["slots"]}]
+    PG.repack(lay, groups, {"pages": {"min": 0, "increment": 2}}, spare=spare, front=every[0],
+              use_all=True, place_names=False)
+    ids = {s["photo_id"] for sp in lay["spreads"] for s in sp["slots"]}
+    assert set(every) <= ids, f"'every photo' left out {set(every) - ids}"
+    assert not any((sp.get("options") or {}).get("stamps") for sp in lay["spreads"]), "place names printed"
+    assert not (lay["spreads"][0].get("text") or {}).get("eyebrow")
+    lay, every = singles_layout()
+    PG.repack(lay, groups, {"pages": {"min": 0, "increment": 2}}, front=every[0], density="airy")
+    for sp in lay["spreads"][1:]:
+        assert T.REGISTRY[sp["template"]].pages and all(
+            compose.COMPOSITIONS[c].slots <= 1 for c in T.REGISTRY[sp["template"]].pages), sp["template"]
+    print("repacker follows 'every photo', 'no place names' and 'airy': ok")
+
+    import prompt as P
+    txt = P.plan_user_content("T", None, "21x21", "de", [], 12, None,
+                              {"density": "dense", "selection": "all", "captions": "descriptive"})
+    assert "DENSE" in txt and "EVERY PHOTOGRAPH" in txt and "DESCRIPTIVE" in txt, txt
+    assert "about 12 spreads" in txt
+    assert "PREFERENCES" not in P.plan_user_content("T", None, "21x21", "de", [], None, None)
+    print("the planner is told the user's preferences: ok")
+
 
 def adaptive_pages():
     """A composed page is laid out for its photographs' real shapes: nothing
