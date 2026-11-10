@@ -61,6 +61,7 @@ from versions import Store
 
 app = FastAPI(title="Album editor")
 STATE: dict = {}
+PREFLIGHT_LOCK = threading.Lock()
 JOB = {"running": False, "step": "", "progress": 0, "error": None, "done": False}
 JOB_LOCK = threading.Lock()
 
@@ -110,6 +111,46 @@ def ensure_thumbs(ph) -> None:
             im.save(out, "JPEG", quality=80, icc_profile=R.SRGB_BYTES, optimize=True)
 
 
+def _preflight_roles() -> list[str]:
+    """The roles worth checking: plan, and revise if it is a different model or
+    endpoint. Only those that could actually be called (a key, or a local model)."""
+    roles = STATE["providers"]
+    out = []
+    for name in ("plan", "revise"):
+        p = roles[name]
+        if not p.usable:
+            continue
+        if name == "revise" and (p.model, p.base_url) == (roles["plan"].model, roles["plan"].base_url):
+            continue
+        out.append(name)
+    return out
+
+
+def run_preflight() -> dict:
+    """Send one tiny request per role and record whether the model answers.
+    Never raises; the result is shown, not enforced (the failure may be brief)."""
+    names = _preflight_roles()
+    with PREFLIGHT_LOCK:
+        STATE["preflight"] = {n: {"ok": None, "status": "checking", "message": "", "seconds": 0.0}
+                              for n in names}
+    for n in names:
+        try:
+            r = providers.preflight(STATE["providers"][n])
+            res = {"ok": r.ok, "status": "ok" if r.ok else "failed",
+                   "message": r.message, "seconds": round(r.seconds, 1)}
+        except Exception as exc:  # preflight promises not to raise; belt and braces
+            res = {"ok": False, "status": "failed", "seconds": 0.0,
+                   "message": f"the model check itself failed: {exc}"}
+        with PREFLIGHT_LOCK:
+            STATE["preflight"] = {**STATE["preflight"], n: res}
+        print(f"  model check · {n}: {'ok' if res['ok'] else 'NOT OK'} — {res['message']}")
+    return STATE["preflight"]
+
+
+def start_preflight() -> None:
+    threading.Thread(target=run_preflight, daemon=True).start()
+
+
 def set_job(step: str, progress: int, error: str | None = None, done: bool = False):
     with JOB_LOCK:
         JOB.update(step=step, progress=progress, error=error, done=done,
@@ -140,9 +181,21 @@ def api_album():
         "model": STATE["providers"]["plan"].describe(mention_vision=False),
         "models": {r: p.describe(mention_vision=(r == "annotate"))
                    for r, p in STATE["providers"].items()},
+        "preflight": STATE.get("preflight", {}),
         "sizes": list(OV.SIZES),
         "treatments": list(OV.TREATMENTS),
     }
+
+
+@app.get("/api/preflight")
+def api_preflight(run: int = 0):
+    if run and STATE.get("preflight_enabled", True):
+        names = _preflight_roles()
+        with PREFLIGHT_LOCK:
+            STATE["preflight"] = {n: {"ok": None, "status": "checking", "message": "",
+                                      "seconds": 0.0} for n in names}
+        start_preflight()
+    return STATE.get("preflight", {})
 
 
 @app.get("/api/photos")
@@ -257,7 +310,9 @@ def _build(do_plan: bool, comment: str | None):
                                fmt=STATE["fmt"], language=STATE["language"],
                                photos=usable, g=STATE["g"], lab=STATE["lab"],
                                complete=providers.make_completer(roles["plan"]),
-                               groups=groups)
+                               fallback=providers.make_fallback_completer(roles["plan"]),
+                               on_event=lambda m: set_job(m, 45),
+                               groups=groups, log_dir=a / "logs")
             parent, comment_txt, summary = None, None, "initial plan"
         else:
             set_job("Revising the album", 45)
@@ -265,7 +320,9 @@ def _build(do_plan: bool, comment: str | None):
             res = planner.revise(current=current, comment=comment or "", photos=usable,
                                  g=STATE["g"], lab=STATE["lab"], language=STATE["language"],
                                  complete=providers.make_completer(roles["revise"]),
-                                 groups=groups)
+                                 fallback=providers.make_fallback_completer(roles["revise"]),
+                                 on_event=lambda m: set_job(m, 45),
+                                 groups=groups, log_dir=a / "logs")
             parent, comment_txt, summary = pv.version_no, comment, res.layout.change_summary
 
         set_job("Applying your settings", 70)
@@ -290,7 +347,11 @@ def _build(do_plan: bool, comment: str | None):
         set_job("Ready", 100, done=True)
     except Exception as exc:  # surfaced in the UI, not swallowed
         traceback.print_exc()
-        set_job("Failed", 0, error=f"{type(exc).__name__}: {exc}")
+        msg = str(exc)
+        if isinstance(exc, planner.PlanningError):
+            set_job("Failed", 0, error=msg)  # the message already says what happened
+        else:
+            set_job("Failed", 0, error=f"{type(exc).__name__}: {msg}")
 
 
 class BuildIn(BaseModel):
@@ -370,6 +431,8 @@ def main():
     ap.add_argument("--no-geocode", action="store_true")
     ap.add_argument("--vision-px", type=int, default=annotate.VISION_PX,
                     help=f"long edge sent to the vision model (default {annotate.VISION_PX})")
+    ap.add_argument("--no-preflight", action="store_true",
+                    help="skip the one-request model check at startup")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
@@ -404,6 +467,12 @@ def main():
     print(providers.describe_roles(roles))
     if not STATE["has_key"]:
         print("  no API key — editing works, designing the album does not")
+    STATE["preflight_enabled"] = not args.no_preflight
+    STATE["preflight"] = {}
+    if STATE["preflight_enabled"]:
+        STATE["preflight"] = {n: {"ok": None, "status": "checking", "message": "", "seconds": 0.0}
+                              for n in _preflight_roles()}
+        start_preflight()
     print(f"\n  Open  http://{args.host}:{args.port}\n")
 
     import uvicorn

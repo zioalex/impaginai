@@ -149,7 +149,227 @@ def ensure_fixtures() -> None:
                 print("  (skipped: needs piexif)")
 
 
+def test_run_classification() -> None:
+    """The retry loop's separate budgets, with fake completers (no network, no
+    rendering). An empty reply must change the *request*, never the messages."""
+    import tempfile
+    from planner import Reply, TransientError, PlanningError
+
+    sleeps: list[float] = []
+    planner._sleep = sleeps.append
+    good = json.dumps(good_layout())
+    u = Usage(10, 20, 1, 0)
+
+    def script(*steps):
+        seq, calls = list(steps), []
+        def complete(system, messages, **opts):
+            calls.append({"messages": json.loads(json.dumps(messages)), "opts": opts})
+            step = seq.pop(0)
+            if isinstance(step, Exception):
+                raise step
+            return step
+        return complete, calls
+
+    def run(complete, **kw):
+        return planner._run("sys", "hello", complete, **kw)
+
+    # empty + length -> same messages, reasoning low, 32000 tokens
+    c, calls = script(Reply("", u, finish="length", raw_finish="max_tokens", reasoning_tokens=15800),
+                      Reply(good, u, finish="stop"))
+    res = run(c)
+    assert len(calls) == 2 and calls[1]["opts"] == {"reasoning": "low", "max_tokens": 32000}, calls
+    assert calls[0]["messages"] == calls[1]["messages"] and len(calls[1]["messages"]) == 1
+    assert res.usage.input_tokens == 20, "failed calls must still be counted"
+
+    # length twice -> clear error
+    c, calls = script(Reply("", u, finish="length", reasoning_tokens=5),
+                      Reply("", u, finish="length", reasoning_tokens=5))
+    try:
+        run(c); raise AssertionError("expected PlanningError")
+    except PlanningError as exc:
+        assert "reasoning" in str(exc) and "32,000" in str(exc), exc
+    assert len(calls) == 2
+
+    # transient x2 then good: no repair consumed, no messages change, 2s then 4s
+    sleeps.clear()
+    c, calls = script(TransientError("503"), TransientError("429", retry_after=3), Reply(good, u))
+    run(c)
+    assert sleeps == [2, 4], sleeps
+    assert all(len(x["messages"]) == 1 for x in calls)
+
+    # finish="error" is transient; retry_after larger than backoff wins, capped at 30
+    sleeps.clear()
+    c, _ = script(Reply("", u, finish="error", error="upstream"),
+                  TransientError("x", retry_after=99), Reply(good, u))
+    run(c)
+    assert sleeps == [2, 30], sleeps
+
+    # transient budget exhausted
+    c, calls = script(*[TransientError("down")] * 4)
+    try:
+        run(c); raise AssertionError("expected PlanningError")
+    except PlanningError as exc:
+        assert "kept failing" in str(exc) and "down" in str(exc)
+    assert len(calls) == 4
+
+    # refusal: immediate
+    c, calls = script(Reply("", u, finish="refusal", refusal="cannot help"))
+    try:
+        run(c); raise AssertionError("expected PlanningError")
+    except PlanningError as exc:
+        assert "cannot help" in str(exc)
+    assert len(calls) == 1
+
+    # empty with response_format -> json_fallback on the next call only
+    c, calls = script(Reply("", u, finish="stop", response_format="json_schema"),
+                      Reply(good, u, finish="stop"))
+    run(c)
+    assert calls[1]["opts"] == {"json_fallback": True} and calls[0]["opts"] == {}
+
+    # non-empty bad JSON -> today's repair flow
+    c, calls = script(Reply("not json at all", u, finish="stop"), Reply(good, u, finish="stop"))
+    run(c)
+    msgs = calls[1]["messages"]
+    assert len(msgs) == 3 and msgs[1] == {"role": "assistant", "content": "not json at all"}
+    assert all(m["content"] for m in msgs)
+
+    # old-style tuple completer
+    res = run(lambda system, messages: (good, u))
+    assert res.layout.page_count
+
+    # logs written on failure, and a bad log dir never raises
+    with tempfile.TemporaryDirectory() as d:
+        c, _ = script(Reply("nope", u, finish="stop", raw={"id": "x"}),
+                      Reply("nope", u), Reply("nope", u))
+        try:
+            run(c, log_dir=Path(d) / "logs", kind="plan"); raise AssertionError("expected failure")
+        except PlanningError as exc:
+            assert "the raw replies are in" in str(exc), exc
+        files = sorted((Path(d) / "logs").glob("plan-*-attempt*.json"))
+        assert len(files) == 3, files
+        rec = json.loads(files[0].read_text())
+        assert rec["text"] == "nope" and rec["raw"] == {"id": "x"} and rec["kind"] == "plan"
+    c, _ = script(Reply(good, u))
+    run(c, log_dir=Path("/proc/nope/logs"))
+
+    # --- fallback model ---------------------------------------------------
+    # transient budget exhausted -> switch once, succeed on the fallback
+    sleeps.clear()
+    events: list[str] = []
+    c, calls = script(*[TransientError("down")] * 4)
+    f, fcalls = script(Reply(good, u, finish="stop"))
+    res = run(c, fallback=f, on_event=events.append)
+    assert res.layout.page_count and len(calls) == 4 and len(fcalls) == 1
+    assert any("fallback" in e.lower() for e in events), events
+    assert any("busy" in e for e in events), events
+
+    # fallback that fails too -> PlanningError that says it was tried
+    c, _ = script(*[TransientError("down")] * 4)
+    f, fcalls = script(*[TransientError("also down")] * 4)
+    try:
+        run(c, fallback=f); raise AssertionError("expected PlanningError")
+    except PlanningError as exc:
+        assert "fallback" in str(exc) and "also down" in str(exc), exc
+    assert len(fcalls) == 4, "the fallback gets a fresh transient budget, and no second switch"
+
+    # non-transient RuntimeError (unknown model) -> fallback; opts start clean
+    events.clear()
+    c, calls = script(RuntimeError("404 model not found"))
+    f, fcalls = script(Reply(good, u, finish="stop"))
+    res = run(c, fallback=f, on_event=events.append)
+    assert res.layout.page_count and fcalls[0]["opts"] == {}
+    assert any("fallback" in e.lower() for e in events), events
+
+    # empty/length recovery exhausted -> fallback, with the primary's knobs reset
+    c, calls = script(Reply("", u, finish="length", reasoning_tokens=5),
+                      Reply("", u, finish="length", reasoning_tokens=5))
+    f, fcalls = script(Reply(good, u, finish="stop"))
+    run(c, fallback=f)
+    assert len(calls) == 2 and fcalls[0]["opts"] == {}
+
+    # refusal does NOT use the fallback
+    c, _ = script(Reply("", u, finish="refusal", refusal="cannot help"))
+    f, fcalls = script(Reply(good, u))
+    try:
+        run(c, fallback=f); raise AssertionError("expected PlanningError")
+    except PlanningError as exc:
+        assert "cannot help" in str(exc)
+    assert not fcalls
+
+    # without a fallback a non-transient RuntimeError becomes a PlanningError
+    c, calls = script(RuntimeError("404 model not found"))
+    try:
+        run(c); raise AssertionError("expected PlanningError")
+    except PlanningError as exc:
+        assert "404 model not found" in str(exc), exc
+    assert len(calls) == 1
+
+    # a raising on_event never breaks planning
+    def boom(msg):
+        raise ValueError("ui is gone")
+    c, _ = script(TransientError("503"), Reply(good, u))
+    assert run(c, on_event=boom).layout.page_count
+    print("planner retry classification: ok")
+
+
+def test_openai_reply_shapes() -> None:
+    """The OpenAI-compatible completer must say *why* a reply is empty, and
+    must not call a JSON answer delivered as tool-call arguments empty."""
+    import httpx
+    import providers
+    from planner import TransientError
+
+    queue: list = []
+    sent: list = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        sent.append(json)
+        code, body = queue.pop(0)
+        return httpx.Response(code, json=body, request=httpx.Request("POST", url))
+
+    def ch(content, finish="stop", **msg):
+        return (200, {"choices": [{"message": {"content": content, **msg},
+                                   "finish_reason": finish}],
+                      "usage": {"prompt_tokens": 1, "completion_tokens": 2,
+                                "completion_tokens_details": {"reasoning_tokens": 7}}})
+
+    saved = httpx.post
+    httpx.post = fake_post
+    try:
+        providers._MODE_CACHE.clear()
+        c = providers._openai(providers.Provider(
+            "openai", "m", "https://openrouter.ai/api/v1", "k", False, json_mode=True))
+        queue[:] = [ch(None, "length", reasoning="xxxx")]
+        r = c("s", [{"role": "user", "content": "x"}], reasoning="low", max_tokens=32000)
+        assert (r.finish, r.text, r.reasoning_tokens) == ("length", "", 7)
+        assert sent[-1]["reasoning"] == {"effort": "low"} and sent[-1]["max_tokens"] == 32000
+        queue[:] = [ch(None, "tool_calls", tool_calls=[
+            {"type": "function", "function": {"name": "album_layout", "arguments": '{"a": 1}'}}])]
+        assert c("s", []).text == '{"a": 1}'
+        queue[:] = [(200, {"error": {"message": "upstream overloaded"}})]
+        try:
+            c("s", [])
+            raise AssertionError("200-with-error must be transient")
+        except TransientError as exc:
+            assert "overloaded" in str(exc)
+        queue[:] = [(503, {"error": {"message": "down"}})]
+        try:
+            c("s", [])
+            raise AssertionError("503 must be transient")
+        except TransientError:
+            pass
+        queue[:] = [ch("{}")]
+        r = c("s", [], json_fallback=True)
+        assert r.response_format == "json_object", r.response_format
+    finally:
+        httpx.post = saved
+        providers._MODE_CACHE.clear()
+    print("provider reply shapes: ok")
+
+
 def main() -> int:
+    test_run_classification()
+    test_openai_reply_shapes()
     ensure_fixtures()
     lab = R.load_lab(ROOT.parent / "phase0" / "labs" / "saal.yaml")
     g = R.geometry_for(lab, "21x21")
@@ -248,6 +468,33 @@ def main() -> int:
     reloaded = annotate.Annotations.load(ALBUM / "annotations.json")
     assert len(reloaded.missing(ph[:8])) == 0, "cache not reused"
     print(f"annotate ok: {len(anns.by_id)} cached, {ausage.line()}")
+
+    # 7b. a flaky or dead vision endpoint must not fail the build
+    from planner import TransientError
+    slept: list = []
+    saved_sleep, annotate._sleep = annotate._sleep, slept.append
+    try:
+        calls = {"n": 0}
+
+        def flaky(system, messages, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise TransientError("503 busy")
+            return fake, Usage(1, 1, 1, 0)
+        anns2, _ = annotate.run(ph[:8], thumbs, ALBUM / "annotations-flaky.json", flaky, force=True)
+        assert len(anns2.by_id) == 8 and slept == [2.0], (len(anns2.by_id), slept)
+
+        dead_calls = {"n": 0}
+
+        def dead(system, messages, **kw):
+            dead_calls["n"] += 1
+            raise TransientError("connection refused")
+        anns3, _ = annotate.run(ph[:8], thumbs, ALBUM / "annotations-dead.json", dead, force=True)
+        assert len(anns3.by_id) == 0
+        assert dead_calls["n"] == annotate.ANNOTATE_TRANSIENT, dead_calls
+    finally:
+        annotate._sleep = saved_sleep
+    print("annotate survives a flaky and a dead endpoint: ok")
 
     # 8. the model's layout must survive the real validator and renderer
     from validate import check, load_photos
