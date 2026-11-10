@@ -305,7 +305,8 @@ def finish_layout(raw: dict, usable) -> dict:
               taken={p.id: p.taken_at.isoformat() for p in usable if p.taken_at},
               front=front, strength={p.id: p.strength for p in usable},
               together=STATE["ov"].composed(),
-              alone={pid for pid, o in STATE["ov"].by_id.items() if o.size == "full-page"})
+              alone={pid for pid, o in STATE["ov"].by_id.items() if o.size == "full-page"},
+              no_bleed={p.id for p in usable if (p.can or {}).get("full-page") == "no"})
     PG.apply_focal(data, by_id)
     # The cover shows the front page's photograph and the album's own title.
     opening = (data.get("spreads") or [{}])[0]
@@ -472,6 +473,11 @@ def api_photos():
             "detail": p.detail or None,
             "features": p.features or [],
             "too_small": p.unusable,
+            # Not enough pixels to fill a page sharply: printed smaller than
+            # the layout wanted, or soft. `sharp_cm` is the largest it prints
+            # at the lab's warning DPI.
+            "low_res": (not p.unusable) and (p.can or {}).get("large", "ok") != "ok",
+            "sharp_cm": _sharp_cm(p),
             "avoid": p.avoid,
             "can": p.can,
         })
@@ -832,12 +838,61 @@ def api_download(kind: str):
     return FileResponse(f, media_type=mime, filename=f"{stem}-{STATE['fmt']}-{name}")
 
 
+def _sharp_cm(p) -> list[float]:
+    dpi = float(STATE["lab"]["resolution"]["warn_below_dpi"])
+    return [round(p.width / dpi * 2.54, 1), round(p.height / dpi * 2.54, 1)]
+
+
+def low_res_pages(data: dict) -> dict[int, list[dict]]:
+    """Page number -> photographs on it that resolution held back: printed
+    below the lab's warning DPI ("soft"), or set smaller than the layout
+    meant so that they stay sharp ("shrunk")."""
+    from geometry import effective_dpi
+
+    g = STATE["g"]
+    warn = float(STATE["lab"]["resolution"]["warn_below_dpi"])
+    by_id = {p.id: p for p in STATE["all"]}
+    out: dict[int, list[dict]] = {}
+    for n, sp in enumerate(data.get("spreads") or []):
+        slots = sp.get("slots") or []
+        if not slots:
+            continue
+        opts = dict(sp.get("options") or {})
+        try:
+            real = templates_lib.build(sp["template"], g, opts).slots
+            ideal = templates_lib.build(sp["template"], g,
+                                        {k: v for k, v in opts.items() if k != "pixels"}).slots
+        except Exception:
+            continue
+        for slot, box, want in zip(slots, real, ideal):
+            ph = by_id.get(slot["photo_id"])
+            if ph is None:
+                continue
+            dpi = effective_dpi(ph.width, ph.height, box.rect)
+            shrunk = box.rect.w * box.rect.h < 0.9 * want.rect.w * want.rect.h
+            soft = dpi < warn - 1.0      # the compositor stops at the limit itself
+            if not soft and not shrunk:
+                continue
+            page = 2 * n + (1 if box.rect.x + box.rect.w / 2 < g.fold_x else 2)
+            out.setdefault(page, []).append({
+                "id": ph.id, "dpi": round(dpi), "kind": "soft" if soft else "shrunk",
+                "sharp_cm": _sharp_cm(ph)})
+    return out
+
+
 @app.get("/api/pages")
 def api_pages():
     d = STATE["album"] / "renders" / "pages-thumb"
     files = sorted(d.glob("page-*.jpg")) if d.exists() else []
     ver = (d / "version.txt").read_text() if (d / "version.txt").exists() else None
-    return {"version": ver, "count": len(files)}
+    low = {}
+    if ver and files:
+        try:
+            _, data = Store(STATE["album"]).get(int(ver))
+            low = low_res_pages(data)
+        except Exception:
+            traceback.print_exc()
+    return {"version": ver, "count": len(files), "low_res": low}
 
 
 @app.get("/pages/{n}.jpg")

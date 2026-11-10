@@ -118,19 +118,22 @@ textarea{min-height:76px;resize:vertical;font-family:Georgia,"Iowan Old Style",s
 .navrow{display:flex;gap:6px;margin-top:18px}
 
 #preview{cursor:zoom-in}
-#lightbox{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.93);display:none;
+#photoView{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.93);display:none;
   align-items:center;justify-content:center;cursor:zoom-out}
-#lightbox.on{display:flex}
-#lightbox img{max-width:calc(100vw - 32px);max-height:calc(100vh - 72px);object-fit:contain;display:block;
+#photoView.on{display:flex}
+#photoView img{max-width:calc(100vw - 32px);max-height:calc(100vh - 72px);object-fit:contain;display:block;
   box-shadow:0 10px 40px rgba(0,0,0,.5)}
-#lightbox .lbbar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:10px;align-items:center;
+#photoView .lbbar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:10px;align-items:center;
   padding:10px 16px;color:#ddd;font-size:13px;cursor:default}
-#lightbox .lbbar .grow{flex:1}
-#lightbox button{background:rgba(255,255,255,.12);color:#fff;border:0}
-#lightbox .lbnav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:64px;font-size:22px;
+#photoView .lbbar .grow{flex:1}
+#photoView button{background:rgba(255,255,255,.12);color:#fff;border:0}
+#photoView .lbnav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:64px;font-size:22px;
   border-radius:10px}
-#lightbox .lbprev{left:12px} #lightbox .lbnext{right:12px}
+#photoView .pvprev{left:12px} #photoView .pvnext{right:12px}
 .badge.comp{background:#2f6f8f}
+.badge.low{background:#b26a00}
+.lowres{font-size:12px;color:#b26a00;margin-top:3px;text-align:center}
+.spread.low{outline:2px solid #b26a00;outline-offset:2px}
 #bulk{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:none;gap:8px;align-items:center;
   background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);border-radius:14px;padding:8px 10px;z-index:30}
 #bulk.on{display:flex}
@@ -280,12 +283,12 @@ kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:
   <button class="small ghost" data-bulk="clear">Clear</button>
 </div>
 
-<div id="lightbox" role="dialog" aria-label="Photograph">
-  <button class="lbnav lbprev" title="Previous (←)">‹</button>
+<div id="photoView" role="dialog" aria-label="Photograph">
+  <button class="lbnav pvprev" title="Previous (←)">‹</button>
   <img id="lbImg" alt="">
-  <button class="lbnav lbnext" title="Next (→)">›</button>
+  <button class="lbnav pvnext" title="Next (→)">›</button>
   <div class="lbbar"><span id="lbCap"></span><span class="grow"></span>
-    <span id="lbMeta"></span><button class="small" id="lbClose">Close (Esc)</button></div>
+    <span id="lbMeta"></span><button class="small" id="pvClose">Close (Esc)</button></div>
 </div>
 
 <dialog id="dlgRevise"><div class="pad">
@@ -436,6 +439,7 @@ function tile(p){
   const b=d.querySelector(".badges");
   if(album.front_photo===p.id) b.innerHTML+=`<span class="badge front">★ front page</span>`;
   if(p.too_small) b.innerHTML+=`<span class="badge bad">too small</span>`;
+  else if(p.low_res) b.innerHTML+=`<span class="badge low" title="Low resolution: sharp up to ${p.sharp_cm[0]} × ${p.sharp_cm[1]} cm, so it cannot fill a page">⚠ low res</span>`;
   if(p.exclude) b.innerHTML+=`<span class="badge">left out</span>`;
   if(p.compose) b.innerHTML+=`<span class="badge comp">▦ composed</span>`;
   if(p.size!=="auto") b.innerHTML+=`<span class="badge">${SIZE_LABEL[p.size]}</span>`;
@@ -485,6 +489,7 @@ function select(id,scroll=true){
   if(p.features&&p.features.length)ai.push("Nearby: "+esc(p.features.slice(0,3).join(", ")));
   if(ai.length)m+=`<div class="ai">${ai.join("<br>")}</div>`;
   if(p.too_small)m+=`<br><strong>Too small to print at any useful size.</strong>`;
+  else if(p.low_res)m+=`<br><strong style="color:#b26a00">⚠ Low resolution</strong> — sharp only up to ${p.sharp_cm[0]} × ${p.sharp_cm[1]} cm, so it is printed smaller than a full page. “Always with other photos” puts it beside others instead of alone in white space.`;
   $("meta").innerHTML=m;
   if(document.activeElement!==$("desc")) $("desc").value=p.description||"";
   $("desc").placeholder=p.caption&&!p.description?p.caption:"Your words — e.g. “Our first steps on the Morteratsch glacier”";
@@ -506,6 +511,10 @@ function select(id,scroll=true){
   $("frontHint").firstChild.textContent=isFront
     ?`This photograph opens the book and is on the cover, titled “${album.title}”. `
     :(album.front_photo?"Another photograph is the front page now. ":"No front page chosen: the album picks its strongest photograph. ");
+  if(isFront&&p.can&&p.can["full-page"]&&p.can["full-page"]!=="ok")
+    $("frontHint").firstChild.textContent+=p.can["full-page"]==="no"
+      ?"⚠ Too few pixels to fill the page: it is set inside the margins with the title beneath, and the cover will print soft. "
+      :"⚠ A little soft at full-page size, on the cover too. ";
   document.querySelectorAll(".tile.sel").forEach(t=>t.classList.remove("sel"));
   const t=document.querySelector(`.tile[data-id="${id}"]`);
   if(t){t.classList.add("sel"); if(scroll)t.scrollIntoView({block:"nearest"});}
@@ -576,16 +585,16 @@ function openLightbox(id){
   const big=new Image(); big.onload=()=>{if(lbId===id)img.src=big.src;}; big.src=`/photo/${id}.jpg?r=${r}`;
   $("lbCap").textContent=p.description||p.caption||p.landmark||p.place||"";
   $("lbMeta").textContent=[p.taken_at,`${p.width}×${p.height}`].filter(Boolean).join(" · ");
-  $("lightbox").classList.add("on");
+  $("photoView").classList.add("on");
 }
-function closeLightbox(){lbId=null;$("lightbox").classList.remove("on");}
+function closeLightbox(){lbId=null;$("photoView").classList.remove("on");}
 function lbStep(d){const o=orderedPhotos();const i=o.findIndex(p=>p.id===lbId);const n=o[Math.max(0,Math.min(o.length-1,i+d))];
   if(n){select(n.id,false);openLightbox(n.id);}}
 $("preview").onclick=()=>sel&&openLightbox(sel);
-$("lightbox").onclick=e=>{if(e.target.id==="lightbox"||e.target.id==="lbImg")closeLightbox();};
-$("lbClose").onclick=closeLightbox;
-document.querySelector(".lbprev").onclick=e=>{e.stopPropagation();lbStep(-1);};
-document.querySelector(".lbnext").onclick=e=>{e.stopPropagation();lbStep(1);};
+$("photoView").onclick=e=>{if(e.target.id==="photoView"||e.target.id==="lbImg")closeLightbox();};
+$("pvClose").onclick=closeLightbox;
+document.querySelector(".pvprev").onclick=e=>{e.stopPropagation();lbStep(-1);};
+document.querySelector(".pvnext").onclick=e=>{e.stopPropagation();lbStep(1);};
 $("frontTitle").onclick=e=>{e.preventDefault();$("title").onclick();};
 $("closeBtn").onclick=()=>{sel=null;document.body.classList.remove("picked");$("editor").style.display="none";$("noSel").style.display="block";renderGrid();};
 function step(d){const o=orderedPhotos();const i=o.findIndex(p=>p.id===sel);const n=o[Math.max(0,Math.min(o.length-1,i+d))];if(n)select(n.id);}
@@ -756,11 +765,13 @@ function renderBook(){
   const b=$("book"); const bust=`?v=${pages.version}`;
   if(!pages.count){b.innerHTML=`<div class="empty"><b>Nothing to show yet.</b><br>Choose your photographs, then press “Design the album”. The pages appear here.</div>`;return;}
   const ar=album.formats[album.format]?(()=>{const m=album.formats[album.format].match(/([\d.]+) × ([\d.]+)/);return m?m[1]/m[2]:1;})():1;
+  const low=pages.low_res||{}; const nLow=Object.keys(low).length;
   let h=`<div class="bookhead"><b>Version ${pages.version}</b><span class="sub">${pages.count} pages · ${album.formats[album.format]}. Click a spread to see it large.</span>
+    ${nLow?`<span class="lowres" title="Photographs without enough pixels for the space they were given">⚠ ${nLow} page${nLow>1?"s":""} with low-resolution photos</span>`:""}
     <div class="grow" style="flex:1"></div><button class="small" onclick="window.open('/proof.pdf','_blank')">Open preview PDF</button></div><div class="spreads">`;
   for(let i=1;i<=pages.count;i+=2){
     h+=`<div><div class="spread" data-i="${i}" style="--ar:${ar}"><img loading="lazy" src="/pages/${i}.jpg${bust}">${i+1<=pages.count?`<img loading="lazy" src="/pages/${i+1}.jpg${bust}">`:""}</div>
-      <div class="slabel">pages ${i}–${i+1}</div></div>`;
+      <div class="slabel">pages ${i}–${i+1}</div>${lowNote(low,i)}</div>`;
   }
   h+=`</div><div class="versions"><h3>Versions</h3>`+album.versions.slice().reverse().map(v=>`<div class="vrow">
       <span><b>v${v.version_no}</b></span><span class="what">${esc(v.user_comment||v.change_summary||"")}
@@ -768,9 +779,16 @@ function renderBook(){
       <span class="when">${new Date(v.created_at).toLocaleString()}</span>
       ${v.version_no===album.versions[album.versions.length-1].version_no?`<span class="sub">current</span>`:`<button class="small" data-rb="${v.version_no}">Go back to this</button>`}</div>`).join("")+`</div>`;
   b.innerHTML=h;
+  for(let i=1;i<=pages.count;i+=2) if(low[i]||low[i+1]) b.querySelector(`.spread[data-i="${i}"]`).classList.add("low");
   b.querySelectorAll(".spread").forEach(s=>s.onclick=()=>openSpread(Number(s.dataset.i)));
   b.querySelectorAll("[data-rb]").forEach(x=>x.onclick=async()=>{
     try{await send("POST","/api/rollback",{to:Number(x.dataset.rb)});}catch(e){note(e.message,"err");return;} poll(true);});
+}
+function lowNote(low,i){
+  const items=[...(low[i]||[]),...(low[i+1]||[])]; if(!items.length)return "";
+  return `<div class="lowres">`+items.map(x=>x.kind==="soft"
+    ?`⚠ ${x.id} prints soft (${x.dpi} DPI)`
+    :`⚠ ${x.id} shown smaller — sharp only up to ${x.sharp_cm[0]} × ${x.sharp_cm[1]} cm`).join("<br>")+`</div>`;
 }
 let lbAt=1;
 function openSpread(i){lbAt=i;const bust=`?v=${pages.version}`;
