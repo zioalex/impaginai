@@ -234,6 +234,24 @@ def main() -> int:
             assert all(sp.get("options", {}).get("aspects") or not T_pages(sp)
                        for sp in cur["spreads"]), "composed pages were not laid out for their photographs"
             assert (ed.get("/api/pages") or {}).get("count") == len(cur["spreads"]) * 2, "no page previews"
+            pg = ed.get("/api/pages")
+            assert isinstance(pg.get("low_res"), dict), pg
+            ph = ed.get("/api/photos")
+            assert all("low_res" in x and "sharp_cm" in x and "rotate" in x for x in ph)
+            # turning a photograph by hand swaps its shape everywhere
+            turn = ph[2]
+            ed.send("PATCH", f"/api/photos/{turn['id']}", {"rotate": 90})
+            back = next(x for x in ed.get("/api/photos") if x["id"] == turn["id"])
+            assert (back["width"], back["height"]) == (turn["height"], turn["width"]), back
+            ed.send("PATCH", f"/api/photos/{turn['id']}", {"rotate": 0})
+            # "always with other photographs" and "full page" exclude each other
+            ed.send("PATCH", f"/api/photos/{turn['id']}", {"compose": True})
+            try:
+                ed.send("PATCH", f"/api/photos/{turn['id']}", {"size": "full-page"})
+                raise AssertionError("full page accepted on a composed photograph")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 400
+            ed.send("PATCH", f"/api/photos/{turn['id']}", {"compose": False})
             ed.send("PATCH", "/api/photos", {"ids": [drop], "exclude": False})
             ed.job("/api/rerender")
             cur = json.loads(sorted((album_dir / "layouts").glob("v0*[0-9].json"))[-1].read_text())

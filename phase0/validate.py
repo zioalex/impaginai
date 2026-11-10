@@ -75,6 +75,8 @@ def load_photos(photo_dir: Path) -> dict[str, PhotoInfo]:
                 orient = 1
             if orient in (5, 6, 7, 8):
                 w, h = h, w
+            if imaging.rotation_of(p) in (90, 270):
+                w, h = h, w
         out[p.stem] = PhotoInfo(p.stem, p, w, h, taken)
     return out
 

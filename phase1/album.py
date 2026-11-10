@@ -231,7 +231,10 @@ def finish(data: dict, ov, groups, photos, lab=None) -> dict:
     notes += PG.repack(data, groups, lab,
                        spare=[p.id for p in chrono if p.id not in placed and not p.unusable],
                        taken={p.id: p.taken_at.isoformat() for p in photos if p.taken_at},
-                       strength={p.id: p.strength for p in photos})
+                       strength={p.id: p.strength for p in photos},
+                       together=ov.composed(),
+                       alone={pid for pid, o in ov.by_id.items() if o.size == "full-page"},
+                       no_bleed={p.id for p in photos if (p.can or {}).get("full-page") == "no"})
     refocused = PG.apply_focal(data, {p.id: p for p in photos})
     import templates_lib
     templates_lib.attach_aspects(data.get("spreads", []),
