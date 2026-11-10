@@ -54,7 +54,8 @@ default your home folder) or drop photos into a new album, and reopen recent
 albums. **＋ Add photos** and dropping files anywhere add photographs to the open
 album (copied into its photo folder; a file is never replaced; only images are
 accepted). **Settings → Album** shows where the photographs and the album's work
-live, changes the photo folder, and opens or makes another album — no restart.
+live, changes the photo folder, opens or makes another album — no restart — and
+sets where new albums are made (`ALBUM_LIBRARY` in the environment wins).
 
 **Settings tab**: the choices that used to be command-line flags, each marked
 with what a change costs (*applies now · free*, *regroups now · free*, *next
@@ -75,8 +76,12 @@ design*, *vision looks again*), and saved with the album in `settings.json`:
   *plan* designs the book, *revise* applies comments) the endpoint, the model
   and the **effort**. *High* is offered for the planner only: it thinks longer
   before laying out the book — slower and costlier, and the output budget is
-  raised to 32,000 tokens; the ⓘ explains it. *Test models* sends one tiny
-  request per model; the line below shows what the next design will cost.
+  raised to 32,000 tokens; the ⓘ explains it. The model field suggests what
+  the chosen endpoint offers (OpenRouter with prices, Ollama, Anthropic, any
+  OpenAI-compatible `/models`); for *annotate* only models that can see images.
+  *Test models* sends one tiny request per model; the line below shows what the
+  next design will cost. *Save as models.yaml* exports the choice for the
+  command line (`--models`), without keys.
 - **API keys**: paste a key once; it is stored for your user only
   (`~/.config/photo_album_maker/keys.json`, readable only by you, never in an
   album folder) and never shown again — only masked, `sk-or-…a1b2`. A key in
