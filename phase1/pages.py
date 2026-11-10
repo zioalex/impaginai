@@ -244,7 +244,7 @@ def apply_focal(layout: dict, photos_by_id: dict) -> int:
 def repack(layout: dict, groups, lab: dict | None = None, spare=None,
            taken: dict | None = None, front: str | None = None,
            strength: dict | None = None, together: set[str] | None = None,
-           alone: set[str] | None = None) -> list[str]:
+           alone: set[str] | None = None, no_bleed: set[str] | None = None) -> list[str]:
     """Rebuild the spreads with no empty pages. Returns a log.
 
     `spare` lists photo ids the layout left out that may still be used, in
@@ -266,7 +266,10 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
     `together` lists photographs the user wants on a page with others: they
     are brought into the book if the design left them out, never left alone
     on a page, and merging them wins over the lab's page count. Photographs
-    in `alone` (marked full-page) are never composed with them."""
+    in `alone` (marked full-page) are never composed with them.
+
+    A front photograph in `no_bleed` (too few pixels to fill a page) is set
+    inside the margins with the title beneath it instead of to the edges."""
     spreads = layout.get("spreads", [])
     if not spreads:
         return []
@@ -279,7 +282,7 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
     rest = spreads[1:] if opening else spreads
 
     pages: list[Page] = []
-    if spreads[0]["template"].startswith("front:"):
+    if spreads[0]["template"].startswith(("front:", "front-framed:")):
         # A revision of a finished layout: the front photograph stays the
         # front, its facing page goes back into the book.
         sp0 = spreads[0]
@@ -452,7 +455,8 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
         if first is not None and first.stamp:
             opts["stamps"] = {"right": first.stamp}
         out.append({**opening,
-                    "template": T.front_name(first.comp if first else "blank"),
+                    "template": (T.front_framed_name if pick in (no_bleed or ())
+                                 else T.front_name)(first.comp if first else "blank"),
                     "slots": opening["slots"] + (first.slots if first else []),
                     "options": opts})
         rest_pages = pages[1:]

@@ -233,7 +233,8 @@ def finish(data: dict, ov, groups, photos, lab=None) -> dict:
                        taken={p.id: p.taken_at.isoformat() for p in photos if p.taken_at},
                        strength={p.id: p.strength for p in photos},
                        together=ov.composed(),
-                       alone={pid for pid, o in ov.by_id.items() if o.size == "full-page"})
+                       alone={pid for pid, o in ov.by_id.items() if o.size == "full-page"},
+                       no_bleed={p.id for p in photos if (p.can or {}).get("full-page") == "no"})
     refocused = PG.apply_focal(data, {p.id: p for p in photos})
     import templates_lib
     templates_lib.attach_aspects(data.get("spreads", []),

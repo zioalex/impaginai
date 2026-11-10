@@ -198,6 +198,19 @@ def engadin_run_fixes(groups):
     print(f"front page with title on the photograph, {len(want)} photo(s) kept in a "
           f"composition: ok")
 
+    # a front photograph without the pixels to fill the page is set inside
+    # the margins with the title beneath, rather than blocking the render
+    lay = good_layout()
+    PG.repack(lay, groups, LAB, front="p001", no_bleed={"p001"})
+    Layout.model_validate(lay)
+    first = lay["spreads"][0]
+    assert first["template"].startswith("front-framed:"), first["template"]
+    rend = T.build(first["template"], R.geometry_for(LAB, "21x21"), first["options"])
+    assert not rend.slots[0].bleeds and any(tb.key == "title" for tb in rend.texts)
+    PG.repack(lay, groups, LAB, front="p001", no_bleed={"p001"})   # a revision keeps it
+    assert lay["spreads"][0]["slots"][0]["photo_id"] == "p001"
+    print("low-resolution front page set inside the margins: ok")
+
 
 def adaptive_pages():
     """A composed page is laid out for its photographs' real shapes: nothing

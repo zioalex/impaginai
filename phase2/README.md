@@ -33,6 +33,7 @@ Four controls per photograph:
 | **Edge** | None · White frame · Rounded · Vignette · Soft edge |
 | **Use this photograph** | include or leave out |
 | **Front page** | opens the book: the photograph fills page 1 with the title set on it, and page 2 is the first page of photographs |
+| **Resolution** | a photograph without the pixels to fill a page is badged **⚠ low res** (red **too small** when it cannot print at all), with the largest size it prints sharp. The Book tab outlines every spread where a photograph was set smaller to stay sharp, or prints soft. A low-resolution front photograph is set inside the margins with the title beneath it |
 | **Orientation** | ⟲ / ⟳ for a photograph whose EXIF orientation is wrong or missing; kept in `rotations.yaml` beside the photographs and applied everywhere |
 | **Composition** | *Always with other photos*: never alone on its page, even when the book is at the lab's 24-page minimum. Other photographs can still be composed with it, except one set to *Full page* (the two cannot both be on for one photograph) |
 
