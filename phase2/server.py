@@ -52,6 +52,7 @@ from pydantic import BaseModel
 
 import annotate
 import cluster
+import config as CFG
 import imaging
 import geocode
 import overrides as OV
@@ -258,9 +259,49 @@ def settings_path() -> Path:
 
 
 def save_settings() -> None:
-    settings_path().write_text(json.dumps(
-        {k: STATE.get(k) for k in ("fmt", "title", "subtitle", "language", "front_photo")},
-        ensure_ascii=False, indent=2))
+    data = {k: STATE.get(k) for k in ("fmt", "title", "subtitle", "language", "front_photo")}
+    # Options pinned by a command-line flag are not saved: the flag holds only
+    # for that run, and the album keeps what was chosen in the editor.
+    saved = dict(STATE.get("saved_options") or {})
+    for k, v in (STATE.get("opts") or {}).items():
+        if k not in STATE.get("pinned", {}):
+            saved[k] = v
+    data["options"] = saved
+    STATE["saved_options"] = saved
+    settings_path().write_text(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def apply_options() -> None:
+    """Make STATE follow the current options (lab, grouping, places, vision)."""
+    o = STATE["opts"]
+    lab_path = STATE["lab_paths"].get(o["lab"])
+    if lab_path is not None and lab_path != STATE.get("lab_path"):
+        lab = R.load_lab(lab_path)
+        STATE["lab"], STATE["lab_path"] = lab, lab_path
+        if STATE.get("fmt") not in lab["formats"]:
+            STATE["fmt"] = next((k for k, v in lab["formats"].items() if v.get("default")),
+                                next(iter(lab["formats"])))
+        STATE["g"] = R.geometry_for(lab, STATE["fmt"])
+    STATE["gap_hours"] = float(o["gap_hours"])
+    STATE["radius_m"] = float(o["radius_m"])
+    STATE["geocode"] = bool(o["geocode"])
+    STATE["online_places"] = bool(o["geocode"] and o["online_places"])
+    STATE["vision_px"] = int(o["vision_px"])
+
+
+def prefs() -> dict:
+    """The options the planner is told about."""
+    o = STATE["opts"]
+    return {k: o[k] for k in ("density", "selection", "captions")}
+
+
+def target_spreads() -> int | None:
+    n = int(STATE["opts"].get("length") or 0)
+    if not n:
+        return None
+    pages = STATE["lab"]["pages"]
+    n = max(int(pages["min"]), min(int(pages["max"]), n))
+    return n // 2
 
 
 def apply_format(fmt: str) -> None:
@@ -291,6 +332,14 @@ def finish_layout(raw: dict, usable) -> dict:
         t = sp.get("text") or {}
         if old_title and t.get("title") == old_title:
             t["title"] = STATE["title"]
+    o = STATE.get("opts") or {}
+    if o.get("captions") in ("place", "none"):
+        # No captions but the user's own (from the caption box or the
+        # captions file): the model's are taken out here.
+        mine = {p.id: p.caption for p in usable if p.caption}
+        for sp in data.get("spreads", []):
+            for sl in sp.get("slots") or []:
+                sl["caption"] = mine.get(sl["photo_id"])
     for n in OV.apply_to_layout(data, STATE["ov"], known=[p.id for p in usable]):
         print(f"  {n}")
     by_id = {p.id: p for p in usable}
@@ -307,7 +356,10 @@ def finish_layout(raw: dict, usable) -> dict:
               front=front, strength={p.id: p.strength for p in usable},
               together=STATE["ov"].composed(),
               alone={pid for pid, o in STATE["ov"].by_id.items() if o.size == "full-page"},
-              no_bleed={p.id for p in usable if (p.can or {}).get("full-page") == "no"})
+              no_bleed={p.id for p in usable if (p.can or {}).get("full-page") == "no"},
+              density=o.get("density", "balanced"), use_all=o.get("selection") == "all",
+              place_names=o.get("captions") != "none",
+              split_short=o.get("short_book", "split") == "split")
     PG.apply_focal(data, by_id)
     # The cover shows the front page's photograph and the album's own title.
     opening = (data.get("spreads") or [{}])[0]
@@ -435,6 +487,86 @@ def api_settings(body: SettingsIn):
     return {"ok": True, "changed": changed,
             # A new language means new captions, which only the model writes.
             "needs_design": "language" in changed}
+
+
+# --- settings tab -----------------------------------------------------
+
+
+def _lab_choices() -> dict[str, str]:
+    out = {}
+    for name, path in STATE["lab_paths"].items():
+        try:
+            lab = R.load_lab(path)
+            pg = lab["pages"]
+            out[name] = (f"{lab.get('lab', name)} {lab.get('line', '')}".strip()
+                         + f" · {pg['min']}–{pg['max']} pages")
+        except Exception:
+            out[name] = name
+    return out
+
+
+@app.get("/api/config")
+def api_config():
+    lab = STATE["lab"]
+    return {
+        "options": CFG.describe(STATE["opts"], STATE["pinned"], _lab_choices()),
+        "groups": CFG.GROUPS,
+        "lab": {"pages": lab["pages"], "resolution": lab["resolution"],
+                "binding": lab.get("binding"), "paper": (lab.get("paper") or {}).get("name")},
+        "photo_count": len(STATE.get("all") or []),
+        "group_count": len(STATE.get("groups") or []),
+    }
+
+
+@app.put("/api/config")
+def api_config_put(body: dict):
+    if JOB["running"]:
+        raise HTTPException(409, "busy — try again when the current job finishes")
+    new = dict(STATE["opts"])
+    changed = []
+    for k, v in body.items():
+        o = CFG.BY_KEY.get(k)
+        if o is None:
+            raise HTTPException(400, f"unknown setting {k!r}")
+        if k in STATE["pinned"]:
+            raise HTTPException(409, f"{o.label} is set by {o.flag} when the editor was started")
+        try:
+            v = o.check(v) if k != "lab" else str(v)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        if k == "lab" and v not in STATE["lab_paths"]:
+            raise HTTPException(400, f"no lab {v!r}; have {', '.join(STATE['lab_paths'])}")
+        if new.get(k) != v:
+            new[k] = v
+            changed.append(k)
+    if changed:
+        STATE["opts"] = new
+        apply_options()
+        save_settings()
+        reload_photos()
+    return {"ok": True, "changed": changed, "needs": CFG.needs(changed),
+            "group_count": len(STATE["groups"]), "format": STATE["fmt"]}
+
+
+@app.get("/api/groups/preview")
+def api_groups_preview(gap_hours: float, radius_m: float):
+    """How many moments the photographs fall into with these values, without
+    changing anything — for the sliders."""
+    return {"count": len(cluster.assign(list(STATE["all"]), gap_hours, radius_m))}
+
+
+@app.post("/api/relook")
+def api_relook():
+    """Have the vision pass look at every photograph again on the next design."""
+    if JOB["running"]:
+        raise HTTPException(409, "busy — try again when the current job finishes")
+    path = STATE["album"] / "annotations.json"
+    anns = annotate.Annotations.load(path)
+    for a in anns.by_id.values():
+        a.v = 0
+    anns.save(path)
+    n = len([p for p in STATE["all"] if not STATE["ov"].get(p.id).exclude])
+    return {"ok": True, "photos": n}
 
 
 @app.get("/api/preflight")
@@ -650,7 +782,8 @@ def _build(do_plan: bool, comment: str | None):
             anns, _ = annotate.run(usable, vdir, a / "annotations.json",
                                    session.wrap(providers.make_completer(roles["annotate"]),
                                                 roles["annotate"]))
-        turned = annotate.apply_turns(usable, anns, a / "annotations.json", STATE["photos"], a)
+        turned = (annotate.apply_turns(usable, anns, a / "annotations.json", STATE["photos"], a)
+                  if STATE["opts"].get("auto_rotate", True) else [])
         if turned:
             # Their shape changed: measure again, and remake the thumbnails.
             print(f"  turned upright: {', '.join(turned)}")
@@ -672,7 +805,8 @@ def _build(do_plan: bool, comment: str | None):
                                photos=usable, g=STATE["g"], lab=STATE["lab"],
                                complete=complete, fallback=fallback,
                                on_event=lambda m: set_job(m, 45),
-                               groups=groups, log_dir=a / "logs")
+                               groups=groups, log_dir=a / "logs",
+                               target_spreads=target_spreads(), prefs=prefs())
             parent, comment_txt, summary = None, None, "initial plan"
         else:
             set_job("Revising the album", 45)
@@ -681,7 +815,7 @@ def _build(do_plan: bool, comment: str | None):
                                  g=STATE["g"], lab=STATE["lab"], language=STATE["language"],
                                  complete=complete, fallback=fallback,
                                  on_event=lambda m: set_job(m, 45),
-                                 groups=groups, log_dir=a / "logs")
+                                 groups=groups, log_dir=a / "logs", prefs=prefs())
             parent, comment_txt, summary = pv.version_no, comment, res.layout.change_summary
 
         set_job("Applying your settings", 70)
@@ -979,7 +1113,8 @@ def main():
     ap.add_argument("--album", type=Path, required=True)
     ap.add_argument("--photos", type=Path, required=True)
     ap.add_argument("--captions", type=Path)
-    ap.add_argument("--lab", type=Path, default=ROOT / "phase0" / "labs" / "saal.yaml")
+    ap.add_argument("--lab", type=Path, default=None,
+                    help="lab file (default: chosen in the editor, else saal)")
     ap.add_argument("--format", default=None,
                     help="book size from the lab config (default 21x21, or what was last "
                          "chosen in the editor)")
@@ -987,13 +1122,13 @@ def main():
     ap.add_argument("--subtitle", default=None)
     ap.add_argument("--language", default=None, help="album language (default de)")
     providers.add_arguments(ap)
-    ap.add_argument("--gap-hours", type=float, default=4.0)
-    ap.add_argument("--radius-m", type=float, default=400.0)
+    ap.add_argument("--gap-hours", type=float, default=None)
+    ap.add_argument("--radius-m", type=float, default=None)
     ap.add_argument("--no-geocode", action="store_true")
     ap.add_argument("--offline-places", action="store_true",
                     help="do not look up glacier, lake and peak names on OpenStreetMap "
                          "(that lookup sends photo coordinates to overpass-api.de)")
-    ap.add_argument("--vision-px", type=int, default=annotate.VISION_PX,
+    ap.add_argument("--vision-px", type=int, default=None,
                     help=f"long edge sent to the vision model (default {annotate.VISION_PX})")
     ap.add_argument("--no-preflight", action="store_true",
                     help="skip the one-request model check at startup")
@@ -1004,7 +1139,6 @@ def main():
     import os
 
     args.album.mkdir(parents=True, exist_ok=True)
-    lab = R.load_lab(args.lab)
     # What was chosen in the editor last time, unless a flag says otherwise.
     saved = {}
     sp = args.album / "settings.json"
@@ -1013,21 +1147,45 @@ def main():
             saved = json.loads(sp.read_text())
         except ValueError:
             saved = {}
+    # Options: a flag pins one for this run (shown locked in the editor).
+    lab_paths = CFG.labs(ROOT / "phase0" / "labs")
+    pinned = {}
+    if args.lab is not None:
+        lab_paths.setdefault(args.lab.stem, args.lab)
+        lab_paths[args.lab.stem] = args.lab
+        pinned["lab"] = args.lab.stem
+    if args.gap_hours is not None:
+        pinned["gap_hours"] = args.gap_hours
+    if args.radius_m is not None:
+        pinned["radius_m"] = args.radius_m
+    if args.vision_px is not None:
+        pinned["vision_px"] = str(args.vision_px)
+    if args.no_geocode:
+        pinned["geocode"] = False
+        pinned["online_places"] = False
+    elif args.offline_places:
+        pinned["online_places"] = False
+    opts = CFG.resolve(saved.get("options") or {}, pinned)
+    if opts["lab"] not in lab_paths:
+        opts["lab"] = "saal"
+    lab_path = lab_paths[opts["lab"]]
+    lab = R.load_lab(lab_path)
     fmt = args.format or saved.get("fmt") or "21x21"
+    if fmt not in lab["formats"]:
+        fmt = next(iter(lab["formats"]))
+    STATE.update(opts=opts, pinned=pinned, lab_paths=lab_paths,
+                 saved_options=dict(saved.get("options") or {}))
     STATE.update(
         album=args.album, photos=args.photos,
         captions=args.captions or (args.photos / "captions.yaml"),
-        lab=lab, lab_path=args.lab, fmt=fmt,
+        lab=lab, lab_path=lab_path, fmt=fmt,
         g=R.geometry_for(lab, fmt),
         title=args.title or saved.get("title") or args.album.name,
         subtitle=args.subtitle if args.subtitle is not None else saved.get("subtitle"),
         language=args.language or saved.get("language") or "de",
-        gap_hours=args.gap_hours, radius_m=args.radius_m,
-        geocode=not args.no_geocode,
-        online_places=not (args.no_geocode or args.offline_places),
-        vision_px=args.vision_px,
         front_photo=saved.get("front_photo"),
     )
+    apply_options()
     roles = providers.resolve_all(args, args.models)
     STATE["providers"] = roles
     # Planning is the call that cannot be skipped, so its key decides whether

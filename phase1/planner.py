@@ -471,6 +471,7 @@ def plan(
     groups=None, log_dir: Path | None = None,
     fallback: Completer | None = None,
     on_event: Callable[[str], None] | None = None,
+    prefs: dict | None = None,
 ) -> Result:
     """Plan the whole album in one call.
 
@@ -479,7 +480,8 @@ def plan(
     and every later revision are text-only.
     """
     system = P.system_prompt(g, lab, language)
-    text = P.plan_user_content(title, subtitle, fmt, language, photos, target_spreads, groups)
+    text = P.plan_user_content(title, subtitle, fmt, language, photos, target_spreads, groups,
+                               prefs)
     if thumb_dir:
         content: list[dict] | str = [{"type": "text", "text": text}] + image_blocks(photos, thumb_dir)
     else:
@@ -495,8 +497,9 @@ def revise(
     log_dir: Path | None = None,
     fallback: Completer | None = None,
     on_event: Callable[[str], None] | None = None,
+    prefs: dict | None = None,
 ) -> Result:
     system = P.system_prompt(g, lab, language)
-    return _run(system, P.revise_user_content(current, photos, comment, groups), complete,
+    return _run(system, P.revise_user_content(current, photos, comment, groups, prefs), complete,
                 lambda lay: resolution_errors(lay, photos, g, lab),
                 log_dir=log_dir, kind="revise", fallback=fallback, on_event=on_event)
