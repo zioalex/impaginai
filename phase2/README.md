@@ -32,12 +32,16 @@ Four controls per photograph:
 | **How big** | Automatic · Full page · Large · Small |
 | **Edge** | None · White frame · Rounded · Vignette · Soft edge |
 | **Use this photograph** | include or leave out |
+| **Front page** | opens the book: the photograph fills page 1 with the title set on it, and page 2 is the first page of photographs |
+| **Orientation** | ⟲ / ⟳ for a photograph whose EXIF orientation is wrong or missing; kept in `rotations.yaml` beside the photographs and applied everywhere |
+| **Composition** | *Always with other photos*: never alone on its page, even when the book is at the lab's 24-page minimum. Other photographs can still be composed with it, except one set to *Full page* (the two cannot both be on for one photograph) |
 
 The common ones are on the photograph itself: hover a tile and use 👁 to leave it
-out or bring it back, or ✎ to write its caption. Shift/Ctrl-click selects several,
-and a bar appears to leave them out, include them or size them together. Each
+out or bring it back, or ✎ to write its caption, or ⤢ to see it bigger (also: click the preview). Shift/Ctrl-click selects several,
+and a bar appears to leave them out, include them, compose them or size them together. Each
 place has *Include all* / *Leave out all*. Keys: arrows move, `X` leaves out or
-includes, `Enter` edits the caption.
+includes, `Enter` edits the caption, `Space` shows the photograph large (arrows
+page through, `Esc` closes), `[` / `]` turn it left / right.
 
 Then one button: **Design the album**. After the first run it becomes *Design
 again…*, which opens a dialog asking what should change in plain language (with

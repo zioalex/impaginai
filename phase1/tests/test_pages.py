@@ -58,7 +58,7 @@ def main() -> int:
     Layout.model_validate(lay)
     placed_after = sorted(s["photo_id"] for sp in lay["spreads"] for s in sp["slots"])
     assert placed_before == placed_after, "a photograph was lost or duplicated"
-    assert lay["spreads"][0]["template"] == "section-divider", "the opening is not a front page"
+    assert lay["spreads"][0]["template"].startswith("front:"), "the opening is not a front page"
     assert lay["spreads"][0]["slots"][0]["photo_id"] == "p001", "the opening's own photograph was not kept"
     assert lay["spreads"][0]["text"]["title"] == lay["meta"]["title"]
     assert lay["spreads"][0]["text"]["eyebrow"] == "Cala Gonone · 3. Mai"
@@ -150,7 +150,7 @@ def engadin_run_fixes(groups):
     log = PG.repack(lay, groups, LAB, spare=spare, front="p006")
     Layout.model_validate(lay)
     opening = lay["spreads"][0]
-    assert opening["template"] == "section-divider" and opening["slots"][0]["photo_id"] == "p006", opening
+    assert opening["template"].startswith("front:") and opening["slots"][0]["photo_id"] == "p006", opening
     assert opening["text"]["title"] == lay["meta"]["title"]
     ids = [s["photo_id"] for sp in lay["spreads"] for s in sp["slots"]]
     assert ids.count("p006") == 1, "the front page photograph is printed twice"
@@ -158,6 +158,45 @@ def engadin_run_fixes(groups):
     assert brought, f"no spare photograph was used: {log}"
     print(f"short book: {len(brought)} spare photograph(s) used before blank paper, "
           f"front page p006: ok")
+
+    # the user's case: few photographs, one per page, at the lab minimum. The
+    # front page is the photograph with the title on it (no page of ink), and
+    # a photograph marked "in a composition" never stands alone on a page.
+    every = [pid for g in groups for pid in g.photo_ids]
+    lay = good_layout()
+    lay["spreads"] = [{"index": i + 1, "section_id": None, "template": "two-up-equal",
+                       "slots": [{"photo_id": a, "focal": [0.5, 0.5], "caption": None,
+                                  "caption_position": "below"} for a in pair],
+                       "text": None, "options": {}, "note": None}
+                      for i, pair in enumerate(zip(every[0::2], every[1::2]))]
+    lay["meta"]["spread_count"] = len(lay["spreads"])
+    left_out = every[-1] if len(every) % 2 else None
+    want = {"p005", "p009"} | ({left_out} if left_out else set())
+    log = PG.repack(lay, groups, LAB, spare=[left_out] if left_out else [],
+                    front="p001", together=want)
+    Layout.model_validate(lay)
+    first = lay["spreads"][0]
+    assert first["template"].startswith("front:") and first["template"] != "front:blank", first
+    assert first["slots"][0]["photo_id"] == "p001" and len(first["slots"]) > 1
+    rend = T.build(first["template"], R.geometry_for(LAB, "28x21"), first["options"])
+    assert not rend.background.startswith("ink"), "the front page is printed on black"
+    assert any(tb.key == "title" and tb.invert for tb in rend.texts)
+    for pid in want:
+        hit = None
+        for sp in lay["spreads"]:
+            spec = T.REGISTRY[sp["template"]]
+            a, b = spec.pages
+            if (sp.get("options") or {}).get("side") == "right":
+                a, b = b, a
+            n = compose.COMPOSITIONS[a].slots
+            for part in (sp["slots"][:n], sp["slots"][n:]):
+                if any(s["photo_id"] == pid for s in part):
+                    hit = part
+        assert hit is not None, f"{pid} is not in the book: {log}"
+        assert len(hit) > 1, f"{pid} is alone on its page: {log}"
+    assert len(lay["spreads"]) * 2 >= LAB["pages"]["min"]
+    print(f"front page with title on the photograph, {len(want)} photo(s) kept in a "
+          f"composition: ok")
 
 
 def adaptive_pages():

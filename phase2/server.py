@@ -303,7 +303,9 @@ def finish_layout(raw: dict, usable) -> dict:
         front = None
     PG.repack(data, STATE["groups"], STATE["lab"], spare=spare,
               taken={p.id: p.taken_at.isoformat() for p in usable if p.taken_at},
-              front=front, strength={p.id: p.strength for p in usable})
+              front=front, strength={p.id: p.strength for p in usable},
+              together=STATE["ov"].composed(),
+              alone={pid for pid, o in STATE["ov"].by_id.items() if o.size == "full-page"})
     PG.apply_focal(data, by_id)
     # The cover shows the front page's photograph and the album's own title.
     opening = (data.get("spreads") or [{}])[0]
@@ -462,6 +464,8 @@ def api_photos():
             "size": o.size,
             "treatment": o.treatment,
             "exclude": o.exclude,
+            "compose": o.compose,
+            "rotate": imaging.rotation_of(p.path),
             "strength": p.strength or None,
             "annotation": p.annotation or None,
             "landmark": p.landmark or None,
@@ -479,6 +483,8 @@ class OverrideIn(BaseModel):
     size: str | None = None
     treatment: str | None = None
     exclude: bool | None = None
+    compose: bool | None = None      # always on a page with other photographs
+    rotate: int | None = None        # degrees clockwise, for a wrong EXIF orientation
 
 
 @app.patch("/api/photos/{photo_id}")
@@ -524,6 +530,10 @@ def _patch_one(photo_id: str, body: OverrideIn) -> None:
             dpi = photo.can.get(body.size + "_dpi")
             raise HTTPException(400, f"{photo_id} is {photo.width}x{photo.height} pixels — printed that "
                                      f"big it would be {dpi} DPI, too coarse to print. Choose a smaller size.")
+        if (body.size == "full-page" and STATE["ov"].get(photo_id).compose
+                and body.compose is not False):
+            raise HTTPException(400, f"{photo_id} is set to always share its page with other "
+                                     f"photographs — turn that off before making it full page.")
         kw["size"] = body.size
     if body.treatment is not None:
         if body.treatment not in OV.TREATMENTS:
@@ -531,7 +541,43 @@ def _patch_one(photo_id: str, body: OverrideIn) -> None:
         kw["treatment"] = body.treatment
     if body.exclude is not None:
         kw["exclude"] = body.exclude
+    if body.compose is not None:
+        kw["compose"] = body.compose
+    if body.rotate is not None:
+        _rotate(photo_id, body.rotate)
     STATE["ov"].set(photo_id, **kw)
+
+
+def _turn_point(f, deg: int):
+    """A normalised point on the photograph, after turning it `deg` clockwise."""
+    x, y = float(f[0]), float(f[1])
+    return {90: (1 - y, x), 180: (1 - x, 1 - y), 270: (y, 1 - x)}.get(deg % 360, (x, y))
+
+
+def _rotate(photo_id: str, degrees: int) -> None:
+    """Turn one photograph by hand (its EXIF orientation is wrong or missing).
+
+    Every cached copy of it was made the wrong way round, so they go; the
+    focal point the vision pass measured is turned with it rather than
+    measured again."""
+    if degrees % 90:
+        raise HTTPException(400, "rotation must be 0, 90, 180 or 270 degrees")
+    old = imaging.rotation_of(next(p.path for p in STATE["all"] if p.id == photo_id))
+    new = imaging.set_rotation(STATE["photos"], photo_id, degrees)
+    delta = (new - old) % 360
+    if not delta:
+        return
+    for f in (STATE["album"] / "derivatives").rglob(f"{photo_id}.jpg"):
+        f.unlink(missing_ok=True)
+    for f in (STATE["album"] / "renders" / "derivatives").rglob(f"{photo_id}.jpg"):
+        f.unlink(missing_ok=True)
+    apath = STATE["album"] / "annotations.json"
+    anns = annotate.Annotations.load(apath)
+    a = anns.by_id.get(photo_id)
+    if a is not None and a.focal:
+        a.focal = _turn_point(a.focal, delta)
+        anns.save(apath)
+    ensure_thumbs([p for p in STATE["all"] if p.id == photo_id])
 
 
 @app.get("/thumb/{photo_id}.jpg")
@@ -540,6 +586,28 @@ def api_thumb(photo_id: str):
     if not f.exists():
         raise HTTPException(404)
     return FileResponse(f, media_type="image/jpeg")
+
+
+@app.get("/photo/{photo_id}.jpg")
+def api_photo_large(photo_id: str):
+    """A large copy for looking at one photograph closely (2400 px), made on
+    first request and kept. The original may be HEIC or 50 MB; this never is."""
+    from PIL import Image
+
+    p = next((x for x in STATE["all"] if x.id == photo_id), None)
+    if p is None:
+        raise HTTPException(404)
+    d = STATE["album"] / "derivatives" / "view2400"
+    out = d / f"{photo_id}.jpg"
+    if not out.exists():
+        d.mkdir(parents=True, exist_ok=True)
+        with Image.open(p.path) as im:
+            im = R.to_srgb(im)
+            im.thumbnail((2400, 2400), Image.LANCZOS)
+            tmp = out.with_suffix(".tmp")
+            im.save(tmp, "JPEG", quality=86, icc_profile=R.SRGB_BYTES, optimize=True)
+            tmp.replace(out)
+    return FileResponse(out, media_type="image/jpeg")
 
 
 @app.get("/api/job")
