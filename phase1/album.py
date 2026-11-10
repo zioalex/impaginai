@@ -223,7 +223,7 @@ def finish(data: dict, ov, groups, photos, lab=None) -> dict:
     """Everything the model does not decide: the user's own instructions, the
     measured focal points, closing up empty pages, and the location stamps.
     Re-run on every version so an override set once holds."""
-    notes = OV.apply_to_layout(data, ov)
+    notes = OV.apply_to_layout(data, ov, known=[p.id for p in photos])
     placed = {s["photo_id"] for sp in data.get("spreads", []) for s in sp.get("slots") or []}
     chrono = sorted(photos, key=lambda p: (p.taken_at is None,
                                            p.taken_at.timestamp() if p.taken_at else 0.0,

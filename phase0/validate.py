@@ -202,12 +202,16 @@ def check(
     # A travel album runs forward in time unless there is a reason not to.
     # The planner is told this; here it is checked, because an album that
     # jumps back and forth reads as shuffled rather than designed.
+    # A spread is seen all at once, and a composed page puts its feature
+    # first whatever its time: only the order across spreads is a sequence.
     seq = []
     for sp in layout.spreads:
+        here = []
         for slot in sp.slots:
             info = photos.get(slot.photo_id)
             if info is not None and getattr(info, "taken_at", None):
-                seq.append((sp.index, slot.photo_id, info.taken_at))
+                here.append((sp.index, slot.photo_id, info.taken_at))
+        seq += sorted(here, key=lambda x: x[2])
     inversions = [
         (a, b) for (si, a, ta), (sj, b, tb) in zip(seq, seq[1:]) if tb < ta
     ]

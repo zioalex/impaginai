@@ -291,7 +291,8 @@ def finish_layout(raw: dict, usable) -> dict:
         t = sp.get("text") or {}
         if old_title and t.get("title") == old_title:
             t["title"] = STATE["title"]
-    OV.apply_to_layout(data, STATE["ov"])
+    for n in OV.apply_to_layout(data, STATE["ov"], known=[p.id for p in usable]):
+        print(f"  {n}")
     by_id = {p.id: p for p in usable}
     placed = {sl["photo_id"] for sp in data.get("spreads", []) for sl in sp.get("slots") or []}
     chrono = sorted(usable, key=lambda p: (p.taken_at is None,
