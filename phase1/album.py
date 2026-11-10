@@ -104,6 +104,10 @@ def do_annotate(args) -> int:
           f"{annotate.BATCH} per call (~{est:,} image tokens)")
     anns, usage = annotate.run(ph, thumbs, args.album / "annotations.json",
                                providers.make_completer(prov), force=args.force)
+    turned = annotate.apply_turns(ph, anns, args.album / "annotations.json", args.photos,
+                                  args.album)
+    if turned:
+        print(f"  turned upright (undo in rotations.yaml beside the photos): {', '.join(turned)}")
     print(f"  {usage.line(priced=prov.name == 'anthropic' and not prov.base_url)}")
     print(f"  {len(anns.by_id)} annotations cached — planning and every revision from "
           f"here on is text only")
@@ -223,7 +227,7 @@ def finish(data: dict, ov, groups, photos, lab=None) -> dict:
     """Everything the model does not decide: the user's own instructions, the
     measured focal points, closing up empty pages, and the location stamps.
     Re-run on every version so an override set once holds."""
-    notes = OV.apply_to_layout(data, ov)
+    notes = OV.apply_to_layout(data, ov, known=[p.id for p in photos])
     placed = {s["photo_id"] for sp in data.get("spreads", []) for s in sp.get("slots") or []}
     chrono = sorted(photos, key=lambda p: (p.taken_at is None,
                                            p.taken_at.timestamp() if p.taken_at else 0.0,

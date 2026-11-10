@@ -291,7 +291,8 @@ def finish_layout(raw: dict, usable) -> dict:
         t = sp.get("text") or {}
         if old_title and t.get("title") == old_title:
             t["title"] = STATE["title"]
-    OV.apply_to_layout(data, STATE["ov"])
+    for n in OV.apply_to_layout(data, STATE["ov"], known=[p.id for p in usable]):
+        print(f"  {n}")
     by_id = {p.id: p for p in usable}
     placed = {sl["photo_id"] for sp in data.get("spreads", []) for sl in sp.get("slots") or []}
     chrono = sorted(usable, key=lambda p: (p.taken_at is None,
@@ -554,12 +555,6 @@ def _patch_one(photo_id: str, body: OverrideIn) -> None:
     STATE["ov"].set(photo_id, **kw)
 
 
-def _turn_point(f, deg: int):
-    """A normalised point on the photograph, after turning it `deg` clockwise."""
-    x, y = float(f[0]), float(f[1])
-    return {90: (1 - y, x), 180: (1 - x, 1 - y), 270: (y, 1 - x)}.get(deg % 360, (x, y))
-
-
 def _rotate(photo_id: str, degrees: int) -> None:
     """Turn one photograph by hand (its EXIF orientation is wrong or missing).
 
@@ -581,7 +576,7 @@ def _rotate(photo_id: str, degrees: int) -> None:
     anns = annotate.Annotations.load(apath)
     a = anns.by_id.get(photo_id)
     if a is not None and a.focal:
-        a.focal = _turn_point(a.focal, delta)
+        a.focal = imaging.turn_point(a.focal, delta)
         anns.save(apath)
     ensure_thumbs([p for p in STATE["all"] if p.id == photo_id])
 
@@ -655,6 +650,13 @@ def _build(do_plan: bool, comment: str | None):
             anns, _ = annotate.run(usable, vdir, a / "annotations.json",
                                    session.wrap(providers.make_completer(roles["annotate"]),
                                                 roles["annotate"]))
+        turned = annotate.apply_turns(usable, anns, a / "annotations.json", STATE["photos"], a)
+        if turned:
+            # Their shape changed: measure again, and remake the thumbnails.
+            print(f"  turned upright: {', '.join(turned)}")
+            ph = reload_photos()
+            usable = [p for p in ph if not STATE["ov"].get(p.id).exclude]
+            ensure_thumbs(usable)
         annotate.apply(usable, anns)
 
         store = Store(a)
