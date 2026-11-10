@@ -16,6 +16,8 @@ import base64
 import json
 import os
 import sys
+import time
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -33,7 +35,10 @@ from photos import Photo  # noqa: E402
 
 MODEL = "claude-sonnet-5"
 MAX_TOKENS = 16000
-MAX_ATTEMPTS = 3
+MAX_ATTEMPTS = 3      # repair attempts: the model answered, but the answer was wrong
+MAX_TRANSIENT = 3     # resends of the same request after a network/server failure
+MAX_RECOVERY = 2      # resends after an empty or truncated reply (changed knobs, same messages)
+_sleep = time.sleep   # module-level so tests can replace it
 
 # Rough figures for the cost line, in Anthropic's terms. They exist to make the
 # vision-on-revision trap visible, not to be an invoice, and they are nonsense
@@ -69,6 +74,40 @@ class Usage:
         return base + (f" ≈ ${self.usd:.2f}" if priced else "")
 
 
+class TransientError(RuntimeError):
+    """Worth resending the same request after a pause: 429, 5xx, timeouts,
+    connection errors, a 200 whose body carries an `error` object."""
+
+    def __init__(self, message: str, retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class PlanningError(RuntimeError):
+    """The planner gave up. The message says why and where the logs are."""
+
+
+@dataclass
+class Reply:
+    """What a completer hands back. Beyond the text it carries everything
+    needed to tell *why* a reply is empty — a model mistake, a spent token
+    budget, a refusal and a provider error all need different handling."""
+    text: str
+    usage: "Usage"
+    finish: str | None = None      # "stop" | "length" | "refusal" | "filter" | "error" | None (unknown)
+    raw_finish: str | None = None  # the provider's own string
+    reasoning_chars: int = 0
+    reasoning_tokens: int = 0
+    refusal: str | None = None
+    error: str | None = None       # provider error carried in an otherwise-200 body
+    response_format: str | None = None  # "json_schema" | "json_object" | None — what was sent
+    raw: dict | None = None        # parsed body, for logging failed attempts
+
+    def __iter__(self):            # `text, usage = complete(...)` keeps working
+        yield self.text
+        yield self.usage
+
+
 @dataclass
 class Result:
     layout: Layout
@@ -76,8 +115,9 @@ class Result:
     raw: str = ""
 
 
-Completer = Callable[[str, list[dict]], tuple[str, Usage]]
-"""(system, messages) -> (assistant text, usage). Swappable for tests."""
+Completer = Callable[..., "Reply | tuple[str, Usage]"]
+"""(system, messages, **opts) -> Reply, or the older (text, usage) tuple.
+opts: max_tokens, reasoning ("low"|"off"), json_fallback. Swappable for tests."""
 
 
 def anthropic_completer(model: str = MODEL) -> Completer:
@@ -163,27 +203,159 @@ def resolution_errors(layout: Layout, photos: list[Photo], g, lab: dict) -> list
     return out
 
 
-def _run(system: str, first_user: list[dict] | str, complete: Completer,
-         check: Callable[[Layout], list[str]] | None = None) -> Result:
-    """One logical call, with retries that feed the validation error back.
+def _backoff(n: int, retry_after: float | None) -> float:
+    """2s, 4s, 8s — or what the server asked for if that is longer; never over 30s."""
+    return min(30.0, max(2.0 * 2 ** (n - 1), retry_after or 0.0))
 
-    `check` returns blocking problems the schema cannot express. They are fed
-    back like schema errors, but a layout that still has them on the last
-    attempt is returned rather than discarded: it is valid, and the validator
-    downstream reports exactly what is wrong with it.
+
+def _write_log(log_dir: Path | None, kind: str, n: int, diagnosis: str,
+               reply: Reply | None, text: str, error: str | None = None) -> str | None:
+    """Keep what the model actually said on a failed attempt. A failed plan is
+    otherwise undiagnosable after the fact. Logging must never break planning."""
+    if log_dir is None:
+        return None
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        path = log_dir / f"{kind}-{stamp}-attempt{n}.json"
+        r = reply
+        body = {
+            "kind": kind, "attempt": n, "diagnosis": diagnosis,
+            "finish": r.finish if r else None, "raw_finish": r.raw_finish if r else None,
+            "reasoning_chars": r.reasoning_chars if r else 0,
+            "reasoning_tokens": r.reasoning_tokens if r else 0,
+            "refusal": r.refusal if r else None,
+            "error": (r.error if r else None) or error,
+            "response_format": r.response_format if r else None,
+            "text": text[:20000], "raw": r.raw if r else None,
+        }
+        path.write_text(json.dumps(body, ensure_ascii=False, indent=2, default=str))
+        return str(path)
+    except Exception:
+        return None
+
+
+def _run(system: str, first_user: list[dict] | str, complete: Completer,
+         check: Callable[[Layout], list[str]] | None = None,
+         log_dir: Path | None = None, kind: str = "plan") -> Result:
+    """One logical call, with three separate retry budgets.
+
+    * repair (MAX_ATTEMPTS): the model answered but the answer was wrong; the
+      error is fed back. `check` returns blocking problems the schema cannot
+      express; a layout that still has them on the last attempt is returned
+      rather than discarded — it is valid, and the validator downstream reports
+      exactly what is wrong with it.
+    * transient (MAX_TRANSIENT): the request failed in transit; resend it
+      unchanged after a pause.
+    * recovery (MAX_RECOVERY): the reply was empty or cut off. Telling the model
+      "you sent nothing" is pointless — it is the request that has to change
+      (less reasoning, more room, weaker structured-output mode).
+
+    Only the repair path ever touches `messages`.
     """
     messages: list[dict] = [{"role": "user", "content": first_user}]
     total = Usage()
     last_error = ""
+    logs: list[str] = []
+    opts: dict = {}          # sticky knobs: max_tokens, reasoning
+    one_shot: dict = {}      # json_fallback applies to the next call only
+    repair = transient = recovery = calls = 0
+    length_hit = False
 
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        text, usage = complete(system, messages)
-        total.add(usage)
+    def fail(msg: str):
+        where = ("\nlogs: " + ", ".join(logs)) if logs else ""
+        raise PlanningError(msg + where)
+
+    def note(diagnosis: str, reply: Reply | None, text: str, error: str | None = None):
+        print(f"  attempt {calls} rejected: {diagnosis}")
+        p = _write_log(log_dir, kind, calls, diagnosis, reply, text, error)
+        if p:
+            logs.append(p)
+
+    def facts(r: Reply) -> str:
+        bits = [f"finish={r.finish}"]
+        if r.raw_finish and r.raw_finish != r.finish:
+            bits.append(f"raw={r.raw_finish}")
+        if r.reasoning_tokens:
+            bits.append(f"{r.reasoning_tokens:,} reasoning tokens")
+        elif r.reasoning_chars:
+            bits.append(f"{r.reasoning_chars:,} reasoning chars")
+        return ", ".join(bits)
+
+    def transient_failure(msg: str, retry_after: float | None, reply: Reply | None):
+        nonlocal transient
+        transient += 1
+        if transient > MAX_TRANSIENT:
+            note(f"endpoint error: {msg[:200]}", reply, "", msg)
+            fail(f"the endpoint kept failing: {msg}")
+        delay = _backoff(transient, retry_after)
+        note(f"endpoint error: {msg[:200]} — resending in {delay:g}s", reply, "", msg)
+        _sleep(delay)
+
+    while True:
+        calls += 1
+        try:
+            got = complete(system, messages, **opts, **one_shot)
+        except TransientError as exc:
+            one_shot = {}
+            transient_failure(str(exc), exc.retry_after, None)
+            continue
+        one_shot = {}
+        reply = got if isinstance(got, Reply) else Reply(got[0], got[1])
+        total.add(reply.usage)
+        text = reply.text or ""
+
+        if reply.finish == "error" or (reply.error and not text.strip()):
+            transient_failure(reply.error or f"the provider reported {reply.raw_finish or 'an error'}",
+                              None, reply)
+            continue
+
+        if reply.finish in ("refusal", "filter") or (reply.refusal and not text.strip()):
+            why = reply.refusal or f"blocked by the provider ({reply.raw_finish or reply.finish})"
+            note(f"the model refused ({facts(reply)})", reply, text)
+            fail(f"the model refused: {why}")
+
+        if reply.finish == "length":
+            cur = opts.get("max_tokens")
+            reasoned = bool(reply.reasoning_tokens or reply.reasoning_chars)
+            if length_hit or recovery >= MAX_RECOVERY:
+                budget = f"{cur:,} tokens" if cur else "its output budget"
+                note(f"{'empty reply' if not text.strip() else 'reply cut off'} ({facts(reply)})",
+                     reply, text)
+                if not text.strip() and reasoned:
+                    fail(f"the planner spent its whole output budget ({budget}) on reasoning "
+                         f"and wrote nothing — set a lower reasoning level or a larger "
+                         f"max_tokens for the {kind} role")
+                fail(f"the planner's answer was cut off at {budget} — set a larger "
+                     f"max_tokens for the {kind} role")
+            length_hit = True
+            recovery += 1
+            new = 32000 if not cur else min(64000, max(cur * 2, 32000))
+            opts = {**opts, "reasoning": "low", "max_tokens": new}
+            note(f"{'empty reply' if not text.strip() else 'reply cut off'} ({facts(reply)}) "
+                 f"— retrying with reasoning=low, max_tokens={new}", reply, text)
+            continue
+
+        if not text.strip():
+            if recovery >= MAX_RECOVERY:
+                note(f"empty reply ({facts(reply)})", reply, text)
+                fail(f"the planner returned nothing, repeatedly ({facts(reply)}) — "
+                     f"try another model or turn json_mode off for the {kind} role")
+            recovery += 1
+            if reply.response_format:
+                one_shot = {"json_fallback": True}
+                note(f"empty reply ({facts(reply)}) — retrying without strict "
+                     f"{reply.response_format} output", reply, text)
+            else:
+                note(f"empty reply ({facts(reply)}) — resending unchanged", reply, text)
+            continue
+
+        repair += 1
         try:
             data = json.loads(extract_json(text))
             layout = Layout.model_validate(data)
             problems = check(layout) if check else []
-            if not problems or attempt == MAX_ATTEMPTS:
+            if not problems or repair == MAX_ATTEMPTS:
                 return Result(layout, total, text)
             raise ValueError("the layout cannot be printed as it stands:\n"
                              + "\n".join(problems))
@@ -191,25 +363,26 @@ def _run(system: str, first_user: list[dict] | str, complete: Completer,
             last_error = str(exc)
             lines = last_error.splitlines()
             shown = lines[1] if len(lines) > 1 and lines[0].endswith("as it stands:") else lines[0]
-            print(f"  attempt {attempt} rejected: {shown[:120]}")
-            if attempt == MAX_ATTEMPTS:
+            p = _write_log(log_dir, kind, calls, shown[:300], reply, text)
+            if p:
+                logs.append(p)
+            print(f"  attempt {repair} rejected: {shown[:120]}")
+            if repair == MAX_ATTEMPTS:
                 break
             messages += [
                 {"role": "assistant", "content": text},
                 {"role": "user", "content": P.retry_user_content(last_error)},
             ]
 
-    raise RuntimeError(
-        f"model failed to produce a valid layout in {MAX_ATTEMPTS} attempts.\n"
-        f"last error:\n{last_error}"
-    )
+    fail(f"model failed to produce a valid layout in {MAX_ATTEMPTS} attempts.\n"
+         f"last error:\n{last_error}")
 
 
 def plan(
     *, title: str, subtitle: str | None, fmt: str, language: str,
     photos: list[Photo], g, lab: dict, complete: Completer,
     target_spreads: int | None = None, thumb_dir: Path | None = None,
-    groups=None,
+    groups=None, log_dir: Path | None = None,
 ) -> Result:
     """Plan the whole album in one call.
 
@@ -224,13 +397,16 @@ def plan(
     else:
         content = text
     return _run(system, content, complete,
-                lambda lay: resolution_errors(lay, photos, g, lab))
+                lambda lay: resolution_errors(lay, photos, g, lab),
+                log_dir=log_dir, kind="plan")
 
 
 def revise(
     *, current: dict, comment: str, photos: list[Photo], g, lab: dict,
     language: str, complete: Completer, groups=None,
+    log_dir: Path | None = None,
 ) -> Result:
     system = P.system_prompt(g, lab, language)
     return _run(system, P.revise_user_content(current, photos, comment, groups), complete,
-                lambda lay: resolution_errors(lay, photos, g, lab))
+                lambda lay: resolution_errors(lay, photos, g, lab),
+                log_dir=log_dir, kind="revise")

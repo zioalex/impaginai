@@ -257,7 +257,7 @@ def _build(do_plan: bool, comment: str | None):
                                fmt=STATE["fmt"], language=STATE["language"],
                                photos=usable, g=STATE["g"], lab=STATE["lab"],
                                complete=providers.make_completer(roles["plan"]),
-                               groups=groups)
+                               groups=groups, log_dir=a / "logs")
             parent, comment_txt, summary = None, None, "initial plan"
         else:
             set_job("Revising the album", 45)
@@ -265,7 +265,7 @@ def _build(do_plan: bool, comment: str | None):
             res = planner.revise(current=current, comment=comment or "", photos=usable,
                                  g=STATE["g"], lab=STATE["lab"], language=STATE["language"],
                                  complete=providers.make_completer(roles["revise"]),
-                                 groups=groups)
+                                 groups=groups, log_dir=a / "logs")
             parent, comment_txt, summary = pv.version_no, comment, res.layout.change_summary
 
         set_job("Applying your settings", 70)
