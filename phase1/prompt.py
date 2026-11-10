@@ -294,13 +294,19 @@ def plan_user_content(
 
 
 def revise_user_content(current: dict, photos: list[Photo], comment: str, groups=None,
-                        prefs: dict | None = None) -> str:
+                        prefs: dict | None = None, new_photos=None) -> str:
+    new = ""
+    if new_photos:
+        new = ("\n\nNEW PHOTOGRAPHS: the user added these after the current layout was made. "
+               "Place every one of them, in the place and time they belong to (their group "
+               "says where), even where the comment does not mention them: "
+               + ", ".join(sorted(new_photos)) + ".")
     return (
         "Here is the current album layout, the photo list, and a comment from the user.\n\n"
         "Return the COMPLETE revised layout JSON — not a patch, not a diff. Change what the "
         "comment asks for and what follows from it; leave everything else alone. Set "
         "`change_summary` to one line describing what you changed.\n\n"
-        f"USER COMMENT:\n{comment}{preferences_block(prefs)}\n\n"
+        f"USER COMMENT:\n{comment}{preferences_block(prefs)}{new}\n\n"
         f"CURRENT LAYOUT:\n{json.dumps(current, ensure_ascii=False, indent=1)}\n\n"
         f"PHOTOS:{groups_block(groups)}\n{photo_block(photos)}"
     )

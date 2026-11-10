@@ -321,6 +321,19 @@ def engadin_run_fixes(groups):
             compose.COMPOSITIONS[c].slots <= 1 for c in T.REGISTRY[sp["template"]].pages), sp["template"]
     print("repacker follows 'every photo', 'no place names' and 'airy': ok")
 
+    # a photograph added after the design is brought in, even when the book is
+    # long enough and the design left it out
+    lay, every = singles_layout()
+    placed = {s["photo_id"] for sp in lay["spreads"] for s in sp["slots"]}
+    newcomer = next(x for x in every if x not in placed)
+    PG.repack(lay, groups, {"pages": {"min": 0, "increment": 2}},
+              spare=[x for x in every if x not in placed], front=every[0], include={newcomer})
+    ids = [s["photo_id"] for sp in lay["spreads"] for s in sp["slots"]]
+    assert newcomer in ids and ids.count(newcomer) == 1, ids
+    others = set(every) - placed - {newcomer}
+    assert not (others & set(ids)), "only the new photograph should be brought in"
+    print("photographs added after the design are brought in: ok")
+
     import prompt as P
     txt = P.plan_user_content("T", None, "21x21", "de", [], 12, None,
                               {"density": "dense", "selection": "all", "captions": "descriptive"})
