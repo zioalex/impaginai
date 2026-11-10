@@ -35,6 +35,7 @@ import annotate  # noqa: E402
 import cluster  # noqa: E402
 import geocode  # noqa: E402
 import overrides as OV  # noqa: E402
+import pages as PG  # noqa: E402
 import photos as PH  # noqa: E402
 import planner  # noqa: E402
 import providers  # noqa: E402
@@ -155,7 +156,7 @@ def do_plan(args) -> int:
         complete=providers.make_completer(prov),
         target_spreads=args.spreads, thumb_dir=thumb_dir, groups=groups,
     )
-    data = finish(res.layout.model_dump(mode="json", exclude_none=False), ov, groups, ph)
+    data = finish(res.layout.model_dump(mode="json", exclude_none=False), ov, groups, ph, lab)
     v = store.add(data, parent=None, change_summary="initial plan")
     print(f"  {res.usage.line(priced=prov.name == 'anthropic' and not prov.base_url)}")
     print(f"  wrote v{v.version_no:03d} — {len(res.layout.spreads)} spreads / {res.layout.page_count} pages")
@@ -175,7 +176,7 @@ def do_revise(args) -> int:
         language=args.language, complete=providers.make_completer(prov),
         groups=groups,
     )
-    data = finish(res.layout.model_dump(mode="json", exclude_none=False), ov, groups, ph)
+    data = finish(res.layout.model_dump(mode="json", exclude_none=False), ov, groups, ph, lab)
     v = store.add(data, parent=parent.version_no, user_comment=args.comment,
                   change_summary=res.layout.change_summary)
     print(f"  {res.usage.line(priced=prov.name == 'anthropic' and not prov.base_url)}")
@@ -183,15 +184,17 @@ def do_revise(args) -> int:
     return report(res.layout, args, g, lab, groups)
 
 
-def finish(data: dict, ov, groups, photos) -> dict:
-    """Everything the model does not decide: the user's own instructions, and
-    the location stamp. Re-run on every version so an override set once holds."""
+def finish(data: dict, ov, groups, photos, lab=None) -> dict:
+    """Everything the model does not decide: the user's own instructions, the
+    measured focal points, closing up empty pages, and the location stamps.
+    Re-run on every version so an override set once holds."""
     notes = OV.apply_to_layout(data, ov)
-    stamped = OV.stamp_locations(data, groups, {p.id: p for p in photos})
+    refocused = PG.apply_focal(data, {p.id: p for p in photos})
+    notes += PG.repack(data, groups, lab)
     for n in notes:
-        print(f"  override: {n}")
-    if stamped:
-        print(f"  stamped {stamped} chapter opening(s) with place and date")
+        print(f"  {n}")
+    if refocused:
+        print(f"  {refocused} focal point(s) taken from the photo annotations")
     return data
 
 
