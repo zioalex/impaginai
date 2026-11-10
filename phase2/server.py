@@ -29,11 +29,16 @@ takes a minute or two and the user needs to see that something is happening.
 from __future__ import annotations
 
 import argparse
+import copy
+import io
 import json
 import sys
 import threading
+import time
 import traceback
+import zipfile
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -42,7 +47,7 @@ sys.path.insert(0, str(ROOT / "phase0"))
 sys.path.insert(0, str(ROOT / "phase1"))
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 import annotate
@@ -55,6 +60,8 @@ import photos as PH
 import planner
 import providers
 import render as R
+import templates_lib
+from planner import Usage
 from schema import Layout
 from validate import check, load_photos
 from versions import Store
@@ -62,7 +69,8 @@ from versions import Store
 app = FastAPI(title="Album editor")
 STATE: dict = {}
 PREFLIGHT_LOCK = threading.Lock()
-JOB = {"running": False, "step": "", "progress": 0, "error": None, "done": False}
+JOB = {"running": False, "step": "", "progress": 0, "error": None, "done": False,
+       "kind": None, "cost": None, "seconds": 0.0, "result": None}
 JOB_LOCK = threading.Lock()
 
 
@@ -74,16 +82,23 @@ def reload_photos():
     ph = PH.load(STATE["photos"], STATE["captions"], STATE["g"],
                  STATE["lab"]["resolution"]["warn_below_dpi"],
                  STATE["lab"]["resolution"]["block_below_dpi"])
-    geocode.apply(ph, a, offline_db=STATE["geocode"])
+    geocode.apply(ph, a, offline_db=STATE["geocode"], online=STATE.get("online_places", False),
+                  language=STATE["language"])
     ov = OV.Overrides.load(a)
     # Keep excluded photographs visible in the UI — the user has to be able to
     # bring one back. Exclusion is applied when building, not when listing.
     for p in ph:
         p.override = ov.get(p.id)
+        # The user's description is the caption, and the planner sees it as
+        # such — so it writes the others in the same voice and leaves it alone.
+        if p.override.description:
+            p.caption = p.override.description
     anns = annotate.Annotations.load(a / "annotations.json")
     annotate.apply(ph, anns)
-    kept = [p for p in ph if not ov.get(p.id).exclude]
-    STATE["groups"] = cluster.assign(kept, STATE["gap_hours"], STATE["radius_m"])
+    # Grouped with everything, left-out photographs included, so a photograph
+    # stays in its place in the editor when it is left out and brought back.
+    # (A group's left-out members are simply absent from every layout.)
+    STATE["groups"] = cluster.assign(list(ph), STATE["gap_hours"], STATE["radius_m"])
     gmap = {pid: grp for grp in STATE["groups"] for pid in grp.photo_ids}
     for p in ph:
         p.group = gmap[p.id].id if p.id in gmap else None
@@ -155,6 +170,141 @@ def set_job(step: str, progress: int, error: str | None = None, done: bool = Fal
     with JOB_LOCK:
         JOB.update(step=step, progress=progress, error=error, done=done,
                    running=not (done or error))
+        if JOB.get("started"):
+            JOB["seconds"] = round(time.time() - JOB["started"], 1)
+
+
+def start_job(kind: str) -> None:
+    with JOB_LOCK:
+        JOB.update(running=True, step="Starting", progress=1, error=None, done=False,
+                   kind=kind, cost=None, seconds=0.0, result=None, started=time.time())
+
+
+class Session:
+    """What one design session costs: every model call it makes, live.
+
+    The completers are wrapped rather than the results summed afterwards, so
+    the cost shown while the album is being designed is the cost so far, and
+    retries and the fallback model are counted because they were paid for."""
+
+    def __init__(self):
+        self.usage = Usage()
+        self.models: set[str] = set()
+
+    def wrap(self, complete, prov):
+        if complete is None:
+            return None
+
+        def tracked(system, messages, **opts):
+            reply = complete(system, messages, **opts)
+            u = reply.usage if hasattr(reply, "usage") else reply[1]
+            self.usage.add(u)
+            self.models.add(prov.model)
+            with JOB_LOCK:
+                JOB["cost"] = self.usage.as_dict()
+            return reply
+        return tracked
+
+
+def log_session(kind: str, session: Session, started: float, *, ok: bool,
+                comment: str | None = None, version: int | None = None,
+                error: str | None = None) -> dict:
+    rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+           "kind": kind, "ok": ok, "comment": comment, "version": version,
+           "seconds": round(time.time() - started, 1),
+           "models": sorted(session.models), **session.usage.as_dict()}
+    if error:
+        rec["error"] = error[:300]
+    f = STATE["album"] / "costs.jsonl"
+    with f.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    return rec
+
+
+def read_sessions() -> list[dict]:
+    f = STATE["album"] / "costs.jsonl"
+    if not f.exists():
+        return []
+    out = []
+    for line in f.read_text(encoding="utf-8").splitlines():
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return out
+
+
+# --- settings: book size, title, language ------------------------------
+
+
+def settings_path() -> Path:
+    return STATE["album"] / "settings.json"
+
+
+def save_settings() -> None:
+    settings_path().write_text(json.dumps(
+        {k: STATE[k] for k in ("fmt", "title", "subtitle", "language")},
+        ensure_ascii=False, indent=2))
+
+
+def apply_format(fmt: str) -> None:
+    if fmt not in STATE["lab"]["formats"]:
+        raise HTTPException(400, f"unknown format {fmt!r}; have {list(STATE['lab']['formats'])}")
+    STATE["fmt"] = fmt
+    STATE["g"] = R.geometry_for(STATE["lab"], fmt)
+
+
+# --- finishing a layout without the model ------------------------------
+
+
+def finish_layout(raw: dict, usable) -> dict:
+    """The model's layout -> the printed one: the user's settings, measured
+    focal points, no empty pages, place stamps, the album's own title. Pure
+    and repeatable, so it runs again whenever a setting changes."""
+    data = copy.deepcopy(raw)
+    data.setdefault("meta", {})
+    data["meta"]["format"] = STATE["fmt"]
+    old_title = data["meta"].get("title")
+    data["meta"]["title"] = STATE["title"]
+    data["meta"]["subtitle"] = STATE["subtitle"]
+    cov = data.get("cover") or {}
+    for k in ("title", "spine_title"):
+        if cov.get(k) == old_title:
+            cov[k] = STATE["title"]
+    for sp in data.get("spreads", []):
+        t = sp.get("text") or {}
+        if old_title and t.get("title") == old_title:
+            t["title"] = STATE["title"]
+    OV.apply_to_layout(data, STATE["ov"])
+    PG.apply_focal(data, {p.id: p for p in usable})
+    PG.repack(data, STATE["groups"], STATE["lab"])
+    templates_lib.attach_aspects(data.get("spreads", []),
+                                 {p.id: (p.width, p.height) for p in usable})
+    return data
+
+
+def render_proof(store: Store, v, data: dict) -> None:
+    a = STATE["album"]
+    tmp = a / f"layout-v{v.version_no:03d}.json"
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    run_render("proof", tmp, a / "renders")
+    # Small page images for the editor's Book view, from the same HTML.
+    html = a / "renders" / "inner-proof.html"
+    if html.exists():
+        R.render_jpegs(html.read_text(encoding="utf-8"), html, a / "renders" / "pages-thumb",
+                       thumb_px=520)
+        (a / "renders" / "pages-thumb" / "version.txt").write_text(str(v.version_no))
+
+
+def run_render(command: str, layout_path: Path, out: Path, *extra: str) -> int:
+    argv = ["render.py", command, "--layout", str(layout_path), "--photos", str(STATE["photos"]),
+            "--lab", str(STATE["lab_path"]), "--out", str(out), "--format", STATE["fmt"], *extra]
+    saved, sys.argv = sys.argv, argv
+    try:
+        code = R.main()
+    finally:
+        sys.argv = saved
+    return code
 
 
 # --- API -----------------------------------------------------------------
@@ -184,7 +334,56 @@ def api_album():
         "preflight": STATE.get("preflight", {}),
         "sizes": list(OV.SIZES),
         "treatments": list(OV.TREATMENTS),
+        "formats": {k: f"{v['page_w_mm'] / 10:g} × {v['page_h_mm'] / 10:g} cm"
+                    for k, v in STATE["lab"]["formats"].items()},
+        "costs": cost_summary(),
     }
+
+
+def cost_summary() -> dict:
+    sess = read_sessions()
+    priced = [x for x in sess if x.get("usd") is not None]
+    return {"sessions": len(sess),
+            "total_usd": round(sum(x["usd"] for x in priced), 4) if priced else None,
+            "last": sess[-1] if sess else None,
+            "estimated": any(x.get("estimated") for x in sess)}
+
+
+@app.get("/api/costs")
+def api_costs():
+    return {**cost_summary(), "sessions": list(reversed(read_sessions()))}
+
+
+class SettingsIn(BaseModel):
+    format: str | None = None
+    title: str | None = None
+    subtitle: str | None = None
+    language: str | None = None
+
+
+@app.put("/api/settings")
+def api_settings(body: SettingsIn):
+    if JOB["running"]:
+        raise HTTPException(409, "busy — try again when the current job finishes")
+    changed = []
+    if body.format and body.format != STATE["fmt"]:
+        apply_format(body.format)
+        changed.append("format")
+    if body.title is not None and body.title.strip() and body.title.strip() != STATE["title"]:
+        STATE["title"] = body.title.strip()
+        changed.append("title")
+    if body.subtitle is not None and (body.subtitle.strip() or None) != STATE["subtitle"]:
+        STATE["subtitle"] = body.subtitle.strip() or None
+        changed.append("subtitle")
+    if body.language and body.language.strip() != STATE["language"]:
+        STATE["language"] = body.language.strip()
+        changed.append("language")
+    if changed:
+        save_settings()
+        reload_photos()
+    return {"ok": True, "changed": changed,
+            # A new language means new captions, which only the model writes.
+            "needs_design": "language" in changed}
 
 
 @app.get("/api/preflight")
@@ -218,6 +417,9 @@ def api_photos():
             "exclude": o.exclude,
             "strength": p.strength or None,
             "annotation": p.annotation or None,
+            "landmark": p.landmark or None,
+            "detail": p.detail or None,
+            "features": p.features or [],
             "too_small": p.unusable,
             "avoid": p.avoid,
             "can": p.can,
@@ -234,6 +436,32 @@ class OverrideIn(BaseModel):
 
 @app.patch("/api/photos/{photo_id}")
 def api_patch(photo_id: str, body: OverrideIn):
+    _patch_one(photo_id, body)
+    STATE["ov"].save()
+    reload_photos()
+    return {"ok": True}
+
+
+class BulkIn(OverrideIn):
+    ids: list[str]
+
+
+@app.patch("/api/photos")
+def api_patch_many(body: BulkIn):
+    """The same change to several photographs at once (leave out a whole
+    group, make three small). One save, one reload."""
+    errors = []
+    for pid in body.ids:
+        try:
+            _patch_one(pid, body)
+        except HTTPException as exc:
+            errors.append(f"{pid}: {exc.detail}")
+    STATE["ov"].save()
+    reload_photos()
+    return {"ok": not errors, "errors": errors}
+
+
+def _patch_one(photo_id: str, body: OverrideIn) -> None:
     if not any(p.id == photo_id for p in STATE["all"]):
         raise HTTPException(404, "no such photo")
     kw = {}
@@ -257,9 +485,6 @@ def api_patch(photo_id: str, body: OverrideIn):
     if body.exclude is not None:
         kw["exclude"] = body.exclude
     STATE["ov"].set(photo_id, **kw)
-    STATE["ov"].save()
-    reload_photos()
-    return {"ok": True}
 
 
 @app.get("/thumb/{photo_id}.jpg")
@@ -277,7 +502,12 @@ def api_job():
 
 
 def _build(do_plan: bool, comment: str | None):
-    """The long job: annotate (once), plan or revise, apply overrides, render."""
+    """The long job: annotate (once), plan or revise, apply overrides, render.
+
+    One run is one design session, and what it costs is shown live and logged."""
+    session = Session()
+    started = time.time()
+    kind = "design" if do_plan else "revise"
     try:
         a = STATE["album"]
         ph = reload_photos()
@@ -299,18 +529,22 @@ def _build(do_plan: bool, comment: str | None):
                 todo, a / "derivatives" / f"vision{STATE['vision_px']}",
                 STATE["vision_px"])
             anns, _ = annotate.run(usable, vdir, a / "annotations.json",
-                                   providers.make_completer(roles["annotate"]))
+                                   session.wrap(providers.make_completer(roles["annotate"]),
+                                                roles["annotate"]))
         annotate.apply(usable, anns)
 
         store = Store(a)
         groups = STATE["groups"]
+        role = roles["plan" if do_plan else "revise"]
+        complete = session.wrap(providers.make_completer(role), role)
+        fb_prov = providers.fallback_provider(role)
+        fallback = session.wrap(providers.make_fallback_completer(role), fb_prov) if fb_prov else None
         if do_plan:
             set_job("Designing the album", 45)
             res = planner.plan(title=STATE["title"], subtitle=STATE["subtitle"],
                                fmt=STATE["fmt"], language=STATE["language"],
                                photos=usable, g=STATE["g"], lab=STATE["lab"],
-                               complete=providers.make_completer(roles["plan"]),
-                               fallback=providers.make_fallback_completer(roles["plan"]),
+                               complete=complete, fallback=fallback,
                                on_event=lambda m: set_job(m, 45),
                                groups=groups, log_dir=a / "logs")
             parent, comment_txt, summary = None, None, "initial plan"
@@ -319,39 +553,104 @@ def _build(do_plan: bool, comment: str | None):
             pv, current = store.get()
             res = planner.revise(current=current, comment=comment or "", photos=usable,
                                  g=STATE["g"], lab=STATE["lab"], language=STATE["language"],
-                                 complete=providers.make_completer(roles["revise"]),
-                                 fallback=providers.make_fallback_completer(roles["revise"]),
+                                 complete=complete, fallback=fallback,
                                  on_event=lambda m: set_job(m, 45),
                                  groups=groups, log_dir=a / "logs")
             parent, comment_txt, summary = pv.version_no, comment, res.layout.change_summary
 
         set_job("Applying your settings", 70)
-        data = res.layout.model_dump(mode="json", exclude_none=False)
-        OV.apply_to_layout(data, STATE["ov"])
-        PG.apply_focal(data, {p.id: p for p in usable})
-        PG.repack(data, groups, STATE["lab"])
-        v = store.add(data, parent=parent, user_comment=comment_txt, change_summary=summary)
+        raw = res.layout.model_dump(mode="json", exclude_none=False)
+        data = finish_layout(raw, usable)
+        Layout.model_validate(data)
+        cost = session.usage.cost_usd
+        v = store.add(data, parent=parent, user_comment=comment_txt, change_summary=summary,
+                      raw=raw, cost_usd=cost, kind=kind)
 
         set_job("Printing the preview", 85)
-        layout = Layout.model_validate(data)
-        tmp = a / f"layout-v{v.version_no:03d}.json"
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-        argv = ["render.py", "proof", "--layout", str(tmp), "--photos", str(STATE["photos"]),
-                "--lab", str(STATE["lab_path"]), "--out", str(a / "renders"),
-                "--format", STATE["fmt"]]
-        saved, sys.argv = sys.argv, argv
-        try:
-            R.main()
-        finally:
-            sys.argv = saved
+        render_proof(store, v, data)
+        rec = log_session(kind, session, started, ok=True, comment=comment_txt,
+                          version=v.version_no)
+        with JOB_LOCK:
+            JOB["result"] = rec
         set_job("Ready", 100, done=True)
     except Exception as exc:  # surfaced in the UI, not swallowed
         traceback.print_exc()
         msg = str(exc)
+        if session.usage.attempts:
+            # Paid for even though it failed — the user should see that too.
+            log_session(kind, session, started, ok=False, comment=comment, error=msg)
         if isinstance(exc, planner.PlanningError):
             set_job("Failed", 0, error=msg)  # the message already says what happened
         else:
             set_job("Failed", 0, error=f"{type(exc).__name__}: {msg}")
+
+
+def _rerender():
+    """Re-apply the user's settings to the current design and print a new
+    preview. No model call, no cost: descriptions, sizes, edges and what is
+    left out show up in the book as soon as they are made."""
+    try:
+        a = STATE["album"]
+        store = Store(a)
+        pv, current = store.get()
+        raw = store.raw() or current
+        ph = reload_photos()
+        usable = [p for p in ph if not STATE["ov"].get(p.id).exclude]
+        if not usable:
+            raise RuntimeError("every photograph is excluded")
+        set_job("Applying your changes", 30)
+        ensure_thumbs(usable)
+        data = finish_layout(raw, usable)
+        placed = {s["photo_id"] for sp in data["spreads"] for s in sp.get("slots") or []}
+        missing = [p.id for p in usable if p.id not in placed]
+        Layout.model_validate(data)
+        v = store.add(data, parent=pv.version_no, change_summary="your changes applied",
+                      raw=raw, kind="settings")
+        set_job("Printing the preview", 60)
+        render_proof(store, v, data)
+        with JOB_LOCK:
+            JOB["result"] = {"version": v.version_no, "not_placed": missing}
+        set_job("Ready", 100, done=True)
+    except Exception as exc:
+        traceback.print_exc()
+        set_job("Failed", 0, error=f"{type(exc).__name__}: {exc}")
+
+
+EXPORTS = {
+    "proof": ("Preview PDF", "inner-proof.pdf", "application/pdf"),
+    "print": ("Print-ready PDF (inner pages)", "inner-print.pdf", "application/pdf"),
+    "cover": ("Cover PDF", "cover.pdf", "application/pdf"),
+    "jpeg": ("Page images (JPEG, zip)", "pages.zip", "application/zip"),
+}
+
+
+def _export(kind: str, dpi: int):
+    try:
+        a = STATE["album"]
+        store = Store(a)
+        v, data = store.get()
+        out = a / "exports"
+        tmp = a / f"layout-v{v.version_no:03d}.json"
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        set_job(f"Exporting: {EXPORTS[kind][0]}", 30)
+        if kind == "jpeg":
+            code = run_render("jpeg", tmp, out, "--dpi", str(dpi))
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+                for f in sorted((out / "pages").glob("page-*.jpg")):
+                    z.write(f, f.name)
+            (out / "pages.zip").write_bytes(buf.getvalue())
+        else:
+            code = run_render(kind, tmp, out)
+        if code:
+            raise RuntimeError("the export did not pass the print checks — see the "
+                               "report under 'Open preview' and the server log")
+        with JOB_LOCK:
+            JOB["result"] = {"download": f"/export/{kind}"}
+        set_job("Ready", 100, done=True)
+    except Exception as exc:
+        traceback.print_exc()
+        set_job("Failed", 0, error=f"{type(exc).__name__}: {exc}")
 
 
 class BuildIn(BaseModel):
@@ -368,9 +667,94 @@ def api_plan(body: BuildIn):
                                  "Set ALBUM_API_KEY (or ANTHROPIC_API_KEY / OPENROUTER_API_KEY), "
                                  "or point --base-url at a local model. Everything else in this "
                                  "editor works without one.")
-    set_job("Starting", 1)
+    start_job("design" if body.comment is None else "revise")
     threading.Thread(target=_build, args=(body.comment is None, body.comment), daemon=True).start()
     return {"ok": True}
+
+
+@app.post("/api/rerender")
+def api_rerender():
+    if JOB["running"]:
+        raise HTTPException(409, "already working")
+    if Store(STATE["album"]).latest() is None:
+        raise HTTPException(400, "nothing designed yet")
+    start_job("rerender")
+    threading.Thread(target=_rerender, daemon=True).start()
+    return {"ok": True}
+
+
+class ExportIn(BaseModel):
+    kind: str
+    dpi: int = 300
+
+
+@app.post("/api/export")
+def api_export(body: ExportIn):
+    if body.kind not in EXPORTS:
+        raise HTTPException(400, f"kind must be one of {list(EXPORTS)}")
+    if JOB["running"]:
+        raise HTTPException(409, "already working")
+    if Store(STATE["album"]).latest() is None:
+        raise HTTPException(400, "design the album first")
+    start_job("export")
+    threading.Thread(target=_export, args=(body.kind, max(72, min(body.dpi, 600))),
+                     daemon=True).start()
+    return {"ok": True}
+
+
+@app.get("/export/{kind}")
+def api_download(kind: str):
+    if kind not in EXPORTS:
+        raise HTTPException(404)
+    label, name, mime = EXPORTS[kind]
+    f = STATE["album"] / "exports" / name
+    if not f.exists():
+        raise HTTPException(404, "not exported yet")
+    stem = "".join(c if c.isalnum() or c in "-_" else "-" for c in STATE["title"]).strip("-") or "album"
+    return FileResponse(f, media_type=mime, filename=f"{stem}-{STATE['fmt']}-{name}")
+
+
+@app.get("/api/pages")
+def api_pages():
+    d = STATE["album"] / "renders" / "pages-thumb"
+    files = sorted(d.glob("page-*.jpg")) if d.exists() else []
+    ver = (d / "version.txt").read_text() if (d / "version.txt").exists() else None
+    return {"version": ver, "count": len(files)}
+
+
+@app.get("/pages/{n}.jpg")
+def api_page_image(n: int):
+    f = STATE["album"] / "renders" / "pages-thumb" / f"page-{n:03d}.jpg"
+    if not f.exists():
+        raise HTTPException(404)
+    return FileResponse(f, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
+
+
+class RollbackIn(BaseModel):
+    to: int
+
+
+@app.post("/api/rollback")
+def api_rollback(body: RollbackIn):
+    if JOB["running"]:
+        raise HTTPException(409, "already working")
+    store = Store(STATE["album"])
+    try:
+        v = store.rollback(body.to)
+    except SystemExit as exc:
+        raise HTTPException(404, str(exc))
+    start_job("rerender")
+
+    def go():
+        try:
+            set_job("Printing the preview", 50)
+            render_proof(store, v, store.get(v.version_no)[1])
+            set_job("Ready", 100, done=True)
+        except Exception as exc:
+            traceback.print_exc()
+            set_job("Failed", 0, error=f"{type(exc).__name__}: {exc}")
+    threading.Thread(target=go, daemon=True).start()
+    return {"ok": True, "version": v.version_no}
 
 
 @app.get("/api/report")
@@ -421,14 +805,19 @@ def main():
     ap.add_argument("--photos", type=Path, required=True)
     ap.add_argument("--captions", type=Path)
     ap.add_argument("--lab", type=Path, default=ROOT / "phase0" / "labs" / "saal.yaml")
-    ap.add_argument("--format", default="21x21")
+    ap.add_argument("--format", default=None,
+                    help="book size from the lab config (default 21x21, or what was last "
+                         "chosen in the editor)")
     ap.add_argument("--title", default=None)
     ap.add_argument("--subtitle", default=None)
-    ap.add_argument("--language", default="de")
+    ap.add_argument("--language", default=None, help="album language (default de)")
     providers.add_arguments(ap)
     ap.add_argument("--gap-hours", type=float, default=4.0)
     ap.add_argument("--radius-m", type=float, default=400.0)
     ap.add_argument("--no-geocode", action="store_true")
+    ap.add_argument("--offline-places", action="store_true",
+                    help="do not look up glacier, lake and peak names on OpenStreetMap "
+                         "(that lookup sends photo coordinates to overpass-api.de)")
     ap.add_argument("--vision-px", type=int, default=annotate.VISION_PX,
                     help=f"long edge sent to the vision model (default {annotate.VISION_PX})")
     ap.add_argument("--no-preflight", action="store_true",
@@ -441,15 +830,26 @@ def main():
 
     args.album.mkdir(parents=True, exist_ok=True)
     lab = R.load_lab(args.lab)
+    # What was chosen in the editor last time, unless a flag says otherwise.
+    saved = {}
+    sp = args.album / "settings.json"
+    if sp.exists():
+        try:
+            saved = json.loads(sp.read_text())
+        except ValueError:
+            saved = {}
+    fmt = args.format or saved.get("fmt") or "21x21"
     STATE.update(
         album=args.album, photos=args.photos,
         captions=args.captions or (args.photos / "captions.yaml"),
-        lab=lab, lab_path=args.lab, fmt=args.format,
-        g=R.geometry_for(lab, args.format),
-        title=args.title or args.album.name, subtitle=args.subtitle,
-        language=args.language,
+        lab=lab, lab_path=args.lab, fmt=fmt,
+        g=R.geometry_for(lab, fmt),
+        title=args.title or saved.get("title") or args.album.name,
+        subtitle=args.subtitle if args.subtitle is not None else saved.get("subtitle"),
+        language=args.language or saved.get("language") or "de",
         gap_hours=args.gap_hours, radius_m=args.radius_m,
         geocode=not args.no_geocode,
+        online_places=not (args.no_geocode or args.offline_places),
         vision_px=args.vision_px,
     )
     roles = providers.resolve_all(args, args.models)
@@ -463,7 +863,7 @@ def main():
         raise SystemExit(problem)
     ph = reload_photos()
     ensure_thumbs(ph)
-    print(f"\n  {len(ph)} photographs · {len(STATE['groups'])} groups · {args.format}")
+    print(f"\n  {len(ph)} photographs · {len(STATE['groups'])} groups · {fmt}")
     print(providers.describe_roles(roles))
     if not STATE["has_key"]:
         print("  no API key — editing works, designing the album does not")

@@ -54,23 +54,42 @@ class Usage:
     output_tokens: int = 0
     attempts: int = 0
     images: int = 0
+    # What the calls cost, in USD, when it is known: reported by the endpoint
+    # (OpenRouter does) or priced from the model's list price (providers.price).
+    # None means no call so far could be priced; `estimated` that at least one
+    # was priced by guesswork rather than a known rate.
+    cost_usd: float | None = None
+    estimated: bool = False
 
     def add(self, other: "Usage") -> None:
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
         self.attempts += other.attempts
         self.images += other.images
+        if other.cost_usd is not None:
+            self.cost_usd = (self.cost_usd or 0.0) + other.cost_usd
+        self.estimated = self.estimated or other.estimated
 
     @property
     def usd(self) -> float:
+        if self.cost_usd is not None:
+            return self.cost_usd
         return (
             self.input_tokens / 1e6 * USD_PER_MTOK_IN
             + self.output_tokens / 1e6 * USD_PER_MTOK_OUT
         )
 
+    def as_dict(self) -> dict:
+        return {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens,
+                "calls": self.attempts, "images": self.images,
+                "usd": None if self.cost_usd is None else round(self.cost_usd, 4),
+                "estimated": self.estimated}
+
     def line(self, priced: bool = True) -> str:
         base = (f"{self.attempts} call(s), {self.images} image(s), "
                 f"{self.input_tokens:,} in / {self.output_tokens:,} out tokens")
+        if self.cost_usd is not None:
+            return base + f" {'≈' if self.estimated else '='} ${self.cost_usd:.3f}"
         return base + (f" ≈ ${self.usd:.2f}" if priced else "")
 
 
