@@ -707,6 +707,14 @@ python phase1/album.py check --models models.yaml
 
 It exits with status 1 if the plan model fails.
 
+**Trying the whole thing without a key.** `phase1/tests/fake_model.py` is a
+fake OpenAI-compatible endpoint that returns a fixed layout, and can be told to
+misbehave the way real providers do (`503`, `empty_schema`, `tool_calls`,
+`length`, `refusal`, …). `python phase1/tests/test_e2e.py` starts it, runs the
+real CLI and the real editor against it with a mocked key, and checks that
+every one of those failures is survived or reported clearly. It needs no
+network and costs nothing; CI runs it on every push.
+
 **`can't open file 'album.py'`** — the CLI lives in `phase1/`; `cd phase1` first.
 
 **`ModuleNotFoundError`** — the virtual environment is not activated. Run
