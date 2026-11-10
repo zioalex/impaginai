@@ -417,8 +417,19 @@ def finish_layout(raw: dict, usable) -> dict:
               split_short=o.get("short_book", "split") == "split",
               # Photographs added after the design: the model never had the
               # chance to leave them out, so they go in.
-              include=unseen_photos(raw, usable))
+              include=unseen_photos(raw, usable),
+              features={p.id: {"scene": p.scene, "subject": p.subject, "who": p.who}
+                        for p in usable})
     PG.apply_focal(data, by_id)
+    # Never cut the people or the main subject: a page set to the edges whose
+    # crop would cut them holds the photograph inside its margins instead, and
+    # every slot carries the box the renderer must keep in view.
+    fb = STATE["g"].full_bleed("left")
+    keeps = {p.id: p.keep for p in usable if p.keep}
+    for n in PG.protect_subjects(data, keeps, {p.id: p.width / p.height for p in usable},
+                                 fb.w / fb.h):
+        print(f"  {n}")
+    PG.attach_keeps(data, keeps)
     # The cover shows the front page's photograph and the album's own title.
     opening = (data.get("spreads") or [{}])[0]
     cover = data.get("cover") or {}
@@ -1362,6 +1373,7 @@ def _rotate(photo_id: str, degrees: int) -> None:
     a = anns.by_id.get(photo_id)
     if a is not None and a.focal:
         a.focal = imaging.turn_point(a.focal, delta)
+        a.keep = imaging.turn_box(a.keep, delta)
         anns.save(apath)
     ensure_thumbs([p for p in STATE["all"] if p.id == photo_id])
 

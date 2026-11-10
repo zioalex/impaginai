@@ -133,6 +133,13 @@ supporting ones after it. Order matters; it is not a list of equals.
 - Composition is for photographs that belong together — the same subject from two \
 angles, a detail beside the thing it came from, three frames of one moment. Unrelated \
 pictures on one page look like a contact sheet.
+- **Similar scenes go together.** When three or four photographs show the same scene \
+— the same place and moment, a similar subject, the same people — put them on ONE \
+composed page (`trio-page`, `grid-four`, `hero-and-trio`, `mosaic-spread` for six) \
+with the strongest as the feature, rather than giving each its own page.
+- **Never plan a crop through people.** A group whose people reach the edges of the \
+frame, or a subject that fills it, goes in a slot of its own shape — not \
+`full-bleed-single`, which crops to the page.
 - Weak frames (strength 1-2) belong in the small rectangles of a composed page, never \
 on a page of their own.
 - Vary the density. A composed page wants a quiet one facing it or next to it; \

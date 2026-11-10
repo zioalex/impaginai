@@ -57,6 +57,14 @@ class Photo:
     features: list[str] = field(default_factory=list)  # named places nearby, from geocode
     landmark: str = ""                             # what the vision pass recognised
     detail: str = ""                               # one concrete observation, ditto
+    # What a crop must never cut: the box around every person and the main
+    # subject, as fractions [x0, y0, x1, y1]; None for a scene with no single
+    # subject (a landscape). From the vision pass.
+    keep: list[float] | None = None
+    scene: str = ""                                # landscape, portrait, group, …
+    subject: str = ""                              # a few words, from the vision pass
+    who: str = ""                                  # recurring people, if any
+    people: int = 0
 
     unusable: bool = False
 

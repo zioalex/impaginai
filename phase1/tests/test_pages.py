@@ -334,6 +334,94 @@ def engadin_run_fixes(groups):
     assert not (others & set(ids)), "only the new photograph should be brought in"
     print("photographs added after the design are brought in: ok")
 
+    # never crop the people or the main subject: the keep-box from the vision
+    # pass, read in any unit, positions every crop, and a page set to the edges
+    # that would cut it holds the photograph inside its margins instead
+    import annotate
+    nb = annotate.normalise_box
+    assert nb([0.1, 0.2, 0.6, 0.9], None) == [0.1, 0.2, 0.6, 0.9]
+    assert nb([256, 0, 128, 384], (512, 384)) == [0.25, 0.0, 0.5, 1.0], "pixels, corners swapped"
+    assert nb([10, 20, 60, 90], None) == [0.1, 0.2, 0.6, 0.9], "percent"
+    assert nb([0, 0, 1, 1], None) is None, "a whole-frame box protects nothing"
+    assert nb("nonsense", None) is None and nb([0.5, 0.5, 0.5, 0.9], None) is None
+    from geometry import Rect as _R
+    tall = _R(0, 0, 100, 150)                       # a portrait slot
+    # a wide group (people across 80% of a 3:2 frame) cannot fit a portrait
+    # crop: the photograph is shown whole instead of cut
+    rect, px, py = R.place_photo(tall, 1.5, (0.5, 0.5), [0.1, 0.2, 0.9, 0.8], False)
+    assert rect.w <= tall.w and rect.h < tall.h - 1, rect
+    # a subject at the right edge: the crop moves to keep it all, despite the focal
+    sq = _R(0, 0, 100, 70)                          # a 1.43 slot, a 1.6 photo: a real crop
+    rect, px, py = R.place_photo(sq, 1.6, (0.2, 0.5), [0.6, 0.2, 0.95, 0.8], False)
+    v = R._visible(rect, 1.6)[0]
+    assert v < 1, "this slot must crop"
+    start = px / 100 * (1 - v)
+    assert start <= 0.6 + 1e-6 and start + v >= 0.95 - 1e-6, (px, v, start)
+    # without a box the focal point decides, as before
+    _, px0, _ = R.place_photo(sq, 1.6, (0.2, 0.5), None, False)
+    assert px0 < px
+    lay = {"meta": {}, "spreads": [
+        {"index": 1, "template": "full-bleed-single", "options": {"side": "left"},
+         "slots": [{"photo_id": "wide", "focal": [.5, .5], "caption": None,
+                    "caption_position": "none"}], "text": None, "section_id": None},
+        {"index": 2, "template": T.front_name("solo"), "options": {"side": "left"},
+         "slots": [{"photo_id": "wide", "focal": [.5, .5], "caption": None, "caption_position": "none"},
+                   {"photo_id": "ok", "focal": [.5, .5], "caption": None, "caption_position": "none"}],
+         "text": None, "section_id": None}]}
+    notes = PG.protect_subjects(lay, {"wide": [0.05, 0.1, 0.95, 0.9], "ok": [0.4, 0.3, 0.6, 0.7]},
+                                {"wide": 2.0, "ok": 1.0}, 1.0)
+    pages0 = T.REGISTRY[lay["spreads"][0]["template"]].pages
+    assert "bleed" not in pages0 and "solo" in pages0, lay["spreads"][0]["template"]
+    assert lay["spreads"][1]["template"] == T.front_framed_name("solo"), lay["spreads"][1]["template"]
+    assert len(notes) == 2, notes
+    lay["spreads"][0]["template"] = "full-bleed-single"
+    assert not PG.protect_subjects(lay, {"wide": [0.4, 0.1, 0.6, 0.9]}, {"wide": 2.0}, 1.0), \
+        "a subject that fits the page crop keeps the bleed"
+    PG.attach_keeps(lay, {"wide": [0.4, 0.1, 0.6, 0.9]})
+    assert lay["spreads"][1]["options"]["keeps"] == [[0.4, 0.1, 0.6, 0.9], None]
+    print("subjects never cropped: keep-box read, crops placed, edge pages framed: ok")
+
+    # similar photographs of one moment go together, three or four to a page
+    gs = [NS(id="g1", photo_ids=["a", "b", "c", "d", "e"], place="Lej da Staz", date_label="")]
+    feats = {"a": {"scene": "seascape", "subject": "turquoise lake with boats", "who": ""},
+             "b": {"scene": "seascape", "subject": "lake shore at noon", "who": ""},
+             "c": {"scene": "landscape", "subject": "boats on the lake", "who": ""},
+             "d": {"scene": "seascape", "subject": "lake reflections", "who": ""},
+             "e": {"scene": "portrait", "subject": "woman in red jacket", "who": "anna"}}
+    tk = {x: f"2026-08-05T10:{10 + i:02d}" for i, x in enumerate("abcde")}
+
+    def singles():
+        return {"meta": {}, "spreads": [{"index": i + 1, "section_id": None, "template": "two-up-equal",
+                "slots": [{"photo_id": x, "focal": [.5, .5], "caption": None, "caption_position": "below"}
+                          for x in pair], "text": None, "options": {}, "note": None}
+                for i, pair in enumerate((("z", "a"), ("b", "c"), ("d", "e")))]}
+    gs[0].photo_ids.append("z")
+    lay = singles()
+    PG.repack(lay, gs, {"pages": {"min": 0, "increment": 2}}, front="z", taken=tk,
+              strength={"c": 5}, features=feats)
+    comps = []
+    for sp in lay["spreads"]:
+        a, b = T.REGISTRY[sp["template"]].pages
+        if (sp.get("options") or {}).get("side") == "right":
+            a, b = b, a
+        n = compose.COMPOSITIONS[a].slots
+        comps += [(a, [x["photo_id"] for x in sp["slots"][:n]]), (b, [x["photo_id"] for x in sp["slots"][n:]])]
+    # four similar photographs; the odd page count may take one of them back
+    # out, but never more: at least three stay together, the strongest first
+    big = [c for c in comps if c[0] in ("quad", "trio-feature")]
+    assert big and len(big[0][1]) >= 3 and set(big[0][1]) <= set("abcd"), comps
+    assert big[0][1][0] == "c", "the strongest photograph leads the page"
+    assert any("e" in ids and len(ids) == 1 for _, ids in comps), "a different scene stays apart"
+    lay = singles()
+    PG.repack(lay, gs, {"pages": {"min": 0, "increment": 2}}, front="z", taken=tk,
+              features=feats, density="airy")
+    assert not any(T.REGISTRY[sp["template"]].pages and "quad" in T.REGISTRY[sp["template"]].pages
+                   for sp in lay["spreads"]), "airy keeps single photographs apart"
+    print("similar photographs of one moment composed three or four to a page: ok")
+
+    # a photograph turned by the vision pass turns its keep-box too
+    assert imaging.turn_box([0.1, 0.2, 0.3, 0.4], 90) == [0.6, 0.1, 0.8, 0.3]
+
     import prompt as P
     txt = P.plan_user_content("T", None, "21x21", "de", [], 12, None,
                               {"density": "dense", "selection": "all", "captions": "descriptive"})
