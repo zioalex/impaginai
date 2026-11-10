@@ -104,6 +104,10 @@ def do_annotate(args) -> int:
           f"{annotate.BATCH} per call (~{est:,} image tokens)")
     anns, usage = annotate.run(ph, thumbs, args.album / "annotations.json",
                                providers.make_completer(prov), force=args.force)
+    turned = annotate.apply_turns(ph, anns, args.album / "annotations.json", args.photos,
+                                  args.album)
+    if turned:
+        print(f"  turned upright (undo in rotations.yaml beside the photos): {', '.join(turned)}")
     print(f"  {usage.line(priced=prov.name == 'anthropic' and not prov.base_url)}")
     print(f"  {len(anns.by_id)} annotations cached — planning and every revision from "
           f"here on is text only")

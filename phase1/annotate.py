@@ -29,7 +29,7 @@ from planner import Completer, Usage, extract_json
 from photos import Photo
 
 BATCH = 8
-ANNOTATION_VERSION = 2
+ANNOTATION_VERSION = 3   # 3: adds `turn` (photographs stored sideways)
 ANNOTATE_TRANSIENT = 3   # tries per batch on a network/server failure
 _sleep = time.sleep      # module-level so tests can replace it
 
@@ -79,11 +79,16 @@ invent a name>",
   "detail": "<6-12 words: one concrete, specific thing in this frame a person \
 would remember — the light, the weather, what someone is doing, a colour. \
 Not a category ('mountain landscape') but an observation ('fresh snow on the \
-ridge above the tongue of the glacier')>"}]
+ridge above the tongue of the glacier')>",
+  "turn": <0, 90, 180 or 270: degrees CLOCKWISE the image as shown must be \
+rotated to stand upright — sky at the top, horizon level, people and buildings \
+upright. 0 for almost every photograph; give another value only when the image \
+is clearly lying on its side or upside down>}]
 
 Be specific in `subject` too: "milky turquoise meltwater lake", not "lake".
 
-`focal` is given as FRACTIONS of the width and height, each between 0 and 1 \
+`focal` is measured on the image exactly as shown, even when `turn` is not 0. \
+It is given as FRACTIONS of the width and height, each between 0 and 1 \
 (e.g. [0.5, 0.35] is the centre, a third of the way down) — never pixels. It is \
 the point that must survive a crop — a face, the eyes of \
 the main subject, or the centre of interest. `strength` is a craft judgement: 5 is \
@@ -103,6 +108,9 @@ class Annotation:
     strength: int = 3
     landmark: str = ""
     detail: str = ""
+    # Degrees clockwise the photograph still needs to stand upright, as the
+    # model saw it. Consumed by apply_turns, which sets it back to 0.
+    turn: int = 0
     # 1: subject/people/scene only. 2: adds landmark and detail, which the
     # captions need; version-1 entries are looked at again once.
     v: int = 1
@@ -248,6 +256,7 @@ def run(
                 strength=max(1, min(5, int(item.get("strength", 3) or 3))),
                 landmark=str(item.get("landmark", "") or "")[:60],
                 detail=str(item.get("detail", "") or "")[:120],
+                turn=_turn(item.get("turn")),
                 v=ANNOTATION_VERSION,
             )
         store.save(cache)
@@ -325,6 +334,45 @@ def vision_size(width: int, height: int, px: int = VISION_PX) -> tuple[int, int]
     """The size of the vision copy made from a photograph of this size."""
     s = min(1.0, px / max(width, height))
     return (max(1, round(width * s)), max(1, round(height * s)))
+
+
+def _turn(v) -> int:
+    try:
+        d = int(round(float(v))) % 360
+    except (TypeError, ValueError):
+        return 0
+    return d if d in (90, 180, 270) else 0
+
+
+def apply_turns(photos: list[Photo], anns: Annotations, cache: Path, photo_dir: Path,
+                album_dir: Path) -> list[str]:
+    """Stand up the photographs the vision pass saw lying on their side.
+
+    A missing or wrong EXIF orientation (messenger copies drop it) leaves a
+    photograph sideways in every derivative. The model said by how much; the
+    turn goes into rotations.yaml beside the photographs — the same place as
+    the user's own turns, so it can be undone with the same buttons. A
+    photograph the user has already turned by hand is left to them. Returns
+    the ids turned; their cached copies are removed so they are made again."""
+    manual = imaging.rotations(photo_dir)
+    turned, changed = [], False
+    for p in photos:
+        a = anns.by_id.get(p.id)
+        if a is None or not a.turn:
+            continue
+        if p.id not in manual:
+            imaging.set_rotation(photo_dir, p.id, a.turn)
+            a.focal = imaging.turn_point(a.focal, a.turn)
+            for root in (album_dir / "derivatives", album_dir / "renders" / "derivatives"):
+                if root.exists():
+                    for f in root.rglob(f"{p.id}.jpg"):
+                        f.unlink(missing_ok=True)
+            turned.append(p.id)
+        a.turn = 0
+        changed = True
+    if changed:
+        anns.save(cache)
+    return turned
 
 
 def apply(photos: list[Photo], anns: Annotations) -> None:
