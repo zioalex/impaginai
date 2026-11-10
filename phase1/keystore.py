@@ -1,0 +1,186 @@
+"""API keys entered in the editor: stored, looked up, masked, never shown.
+
+A key from the environment ALWAYS wins over one stored here. Run as a service,
+that means the operator's key is used when there is one, and a user's own key
+only when there is not.
+
+Stored keys live per user, outside every album folder (so an album can be
+zipped and shared), in a file only that user can read:
+
+    $ALBUM_CONFIG_DIR/keys.json         (default ~/.config/photo_album_maker)
+    {"openrouter": "sk-or-...", "anthropic": "sk-ant-..."}
+
+Nothing in this module returns a key to a caller that displays things: the
+editor gets `status()` (where a key comes from and its masked form), and every
+log line and error that could carry one goes through `redact()`.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from pathlib import Path
+
+# Slot -> (label, environment variables that win over a stored key, in order).
+SLOTS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "anthropic": ("Anthropic", ("ALBUM_API_KEY", "ANTHROPIC_API_KEY")),
+    "openrouter": ("OpenRouter", ("ALBUM_API_KEY", "OPENROUTER_API_KEY")),
+    "openai": ("OpenAI", ("ALBUM_API_KEY", "OPENAI_API_KEY")),
+    "together": ("Together", ("ALBUM_API_KEY", "TOGETHER_API_KEY")),
+    "groq": ("Groq", ("ALBUM_API_KEY", "GROQ_API_KEY")),
+    "other": ("Other endpoint", ("ALBUM_API_KEY",)),
+}
+
+_EXTRA: set[str] = set()      # keys seen at runtime (e.g. --api-key), for redact()
+
+
+def config_dir() -> Path:
+    d = os.environ.get("ALBUM_CONFIG_DIR")
+    return Path(d) if d else Path.home() / ".config" / "photo_album_maker"
+
+
+def _path() -> Path:
+    return config_dir() / "keys.json"
+
+
+def slot_for(provider: str, base_url: str | None) -> str:
+    """Which stored key a provider/endpoint uses."""
+    url = (base_url or "").lower()
+    if provider == "anthropic" and (not url or "anthropic.com" in url):
+        return "anthropic"
+    for s in ("openrouter", "together", "groq"):
+        if s in url:
+            return s
+    if not url or "api.openai.com" in url:
+        return "openai"
+    return "other"
+
+
+def _load() -> dict[str, str]:
+    try:
+        raw = json.loads(_path().read_text())
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in raw.items() if k in SLOTS and isinstance(v, str) and v}
+
+
+def stored(slot: str) -> str | None:
+    return _load().get(slot)
+
+
+def set_key(slot: str, key: str) -> None:
+    if slot not in SLOTS:
+        raise ValueError(f"unknown key slot {slot!r}")
+    key = (key or "").strip()
+    if not key:
+        raise ValueError("the key is empty")
+    if any(c.isspace() for c in key) or len(key) > 512:
+        raise ValueError("that does not look like an API key")
+    data = _load()
+    data[slot] = key
+    _write(data)
+
+
+def delete_key(slot: str) -> None:
+    data = _load()
+    if data.pop(slot, None) is not None:
+        _write(data)
+
+
+def _write(data: dict) -> None:
+    d = config_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(d, 0o700)
+    except OSError:
+        pass
+    p = _path()
+    tmp = p.with_suffix(".tmp")
+    # Created 0600 from the start: never readable by anyone else, not even
+    # for the moment between writing and chmod.
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        json.dump(data, fh)
+    os.replace(tmp, p)
+    os.chmod(p, 0o600)
+
+
+def env_key(slot: str) -> tuple[str | None, str | None]:
+    """(key, variable name) from the environment, or (None, None)."""
+    for var in SLOTS.get(slot, SLOTS["other"])[1]:
+        v = os.environ.get(var)
+        if v:
+            return v, var
+    return None, None
+
+
+def lookup(provider: str, base_url: str | None) -> str | None:
+    """The key for this endpoint: environment first, then the stored one."""
+    slot = slot_for(provider, base_url)
+    k, _ = env_key(slot)
+    return k or stored(slot)
+
+
+def mask(key: str | None) -> str:
+    """`sk-or-v1-…a1b2`: enough to tell two keys apart, never enough to use one."""
+    if not key:
+        return ""
+    if len(key) < 12:
+        return "…" + key[-2:]
+    m = re.match(r"^([a-zA-Z]{2,5}[-_](?:[a-zA-Z0-9]{1,4}[-_])?)", key)
+    head = m.group(1) if m else key[:3]
+    return f"{head[:8]}…{key[-4:]}"
+
+
+def status(slot: str) -> dict:
+    """Where this slot's key comes from — never the key itself."""
+    k, var = env_key(slot)
+    if k:
+        return {"slot": slot, "label": SLOTS[slot][0], "source": "env", "env_var": var,
+                "masked": mask(k), "stored": bool(stored(slot))}
+    s = stored(slot)
+    return {"slot": slot, "label": SLOTS[slot][0], "source": "user" if s else "missing",
+            "env_var": SLOTS[slot][1][-1], "masked": mask(s), "stored": bool(s)}
+
+
+def remember(key: str | None) -> None:
+    """A key that reached the process another way (a flag, models.yaml):
+    redact() hides it as well."""
+    if key and len(key) >= 8:
+        _EXTRA.add(key)
+
+
+def _known() -> list[str]:
+    keys = set(_EXTRA)
+    for _, envs in SLOTS.values():
+        for var in envs:
+            v = os.environ.get(var)
+            if v and len(v) >= 8:
+                keys.add(v)
+    keys.update(v for v in _load().values() if len(v) >= 8)
+    return sorted(keys, key=len, reverse=True)
+
+
+def redact(text):
+    """Every known key in `text` replaced by its masked form."""
+    if not isinstance(text, str) or not text:
+        return text
+    for k in _known():
+        if k in text:
+            text = text.replace(k, mask(k))
+    return text
+
+
+class RedactingStream:
+    """Wraps stdout/stderr so nothing printed — a log line, a traceback —
+    can carry a key to the terminal or a service's log collector."""
+
+    def __init__(self, stream):
+        self._s = stream
+
+    def write(self, s):
+        return self._s.write(redact(s))
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)

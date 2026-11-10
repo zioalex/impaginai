@@ -27,10 +27,12 @@ environment, then a sensible default.
     ALBUM_MODEL      model identifier as that provider names it
     ALBUM_BASE_URL   endpoint root, e.g. https://openrouter.ai/api/v1
     ALBUM_API_KEY    key; falls back to ANTHROPIC_API_KEY / OPENAI_API_KEY /
-                     OPENROUTER_API_KEY depending on the provider
+                     OPENROUTER_API_KEY depending on the provider, and then to
+                     a key entered in the editor (keystore.py) — an environment
+                     key always wins
     ALBUM_VISION     "0" to declare the model cannot see images
     ALBUM_MAX_TOKENS     output budget per call (default 16000)
-    ALBUM_REASONING      default | low | off — how much a reasoning model may think
+    ALBUM_REASONING      default | low | off | high — how much a reasoning model may think
     ALBUM_FALLBACK_MODEL second model for the same role, tried only after the
                          first has clearly failed (ALBUM_FALLBACK_BASE_URL if it
                          lives on another endpoint)
@@ -124,9 +126,14 @@ def _reasoning(v) -> str | None:
     level = str(v).strip().lower()
     if level in ("", "default"):
         return None
-    if level not in ("low", "off"):
-        raise SystemExit(f"unknown reasoning level {v!r}; use 'default', 'low' or 'off'")
+    if level not in ("low", "off", "high"):
+        raise SystemExit(f"unknown reasoning level {v!r}; use 'default', 'low', 'off' or 'high'")
     return level
+
+
+# Thinking hard is billed as output, so "high" needs room to think and still
+# write the whole layout.
+HIGH_MIN_TOKENS = 32000
 
 
 def _max_tokens(v) -> int | None:
@@ -158,6 +165,8 @@ def resolve(provider=None, model=None, base_url=None, api_key=None,
 
     mdl = model or os.environ.get("ALBUM_MODEL") or DEFAULT_MODELS[name]
 
+    import keystore
+
     key = api_key or os.environ.get("ALBUM_API_KEY")
     if not key:
         for env in (("ANTHROPIC_API_KEY",) if name == "anthropic"
@@ -165,6 +174,11 @@ def resolve(provider=None, model=None, base_url=None, api_key=None,
             if os.environ.get(env):
                 key = os.environ[env]
                 break
+    if not key:
+        # A key the user entered in the editor: only when the environment has
+        # none, so an operator's key always wins.
+        key = keystore.lookup(name, url)
+    keystore.remember(key)
 
     see = vision
     if see is None:
@@ -185,6 +199,8 @@ def resolve(provider=None, model=None, base_url=None, api_key=None,
                     else os.environ.get("ALBUM_REASONING"))
     fb = fallback_model or os.environ.get("ALBUM_FALLBACK_MODEL") or None
     fb_url = fallback_base_url or os.environ.get("ALBUM_FALLBACK_BASE_URL") or None
+    if rs == "high":
+        mt = max(mt or 0, HIGH_MIN_TOKENS)
     return Provider(name, mdl, url, key, see, jm, max_tokens=mt or 16000,
                     extra_headers=headers, reasoning=rs,
                     fallback_model=fb, fallback_base_url=fb_url)
@@ -276,6 +292,16 @@ def count_images(messages: list[dict]) -> int:
 # (OpenRouter's `usage.cost`) always wins over this table, and a local model
 # costs nothing.
 PRICES: list[tuple[str, float, float]] = [
+    # Current Claude models (list prices, USD per million tokens). The ids
+    # appear as `claude-sonnet-5-5` (Anthropic) and `claude-sonnet-5.5`
+    # (OpenRouter), so both spellings are listed.
+    ("haiku-5-5", 0.10, 0.50), ("haiku-5.5", 0.10, 0.50),
+    ("sonnet-5", 2.0, 10.0),
+    ("opus-5-5", 4.0, 20.0), ("opus-5.5", 4.0, 20.0),
+    ("opus-5", 5.0, 25.0),
+    ("fable-5-2", 8.0, 40.0), ("fable-5.2", 8.0, 40.0),
+    ("fable-5", 10.0, 50.0),
+    ("opus-4-8", 5.0, 25.0), ("opus-4.8", 5.0, 25.0),
     ("haiku-3", 0.25, 1.25),
     ("haiku", 1.0, 5.0),
     ("opus-4-1", 15.0, 75.0),
@@ -293,6 +319,21 @@ PRICES: list[tuple[str, float, float]] = [
 ]
 
 
+def rate_for(p: Provider) -> tuple[tuple[float, float], bool]:
+    """(USD per million input, per million output) for this provider, and
+    whether that is known rather than guessed. Local models cost nothing."""
+    if p.is_local:
+        return (0.0, 0.0), True
+    if p.price_in is not None and p.price_out is not None:
+        return (float(p.price_in), float(p.price_out)), True
+    m = (p.model or "").lower()
+    for key, i, o in PRICES:
+        if key in m:
+            return (i, o), True
+    # Unknown model: an honest guess at a mid-range rate, marked as such.
+    return (3.0, 15.0), False
+
+
 def price(p: Provider, usage) -> None:
     """Fill usage.cost_usd for one call made through provider `p`, unless the
     endpoint already reported it."""
@@ -301,18 +342,8 @@ def price(p: Provider, usage) -> None:
     if p.is_local:
         usage.cost_usd = 0.0
         return
-    rate = None
-    if p.price_in is not None and p.price_out is not None:
-        rate = (float(p.price_in), float(p.price_out))
-    else:
-        m = (p.model or "").lower()
-        for key, i, o in PRICES:
-            if key in m:
-                rate = (i, o)
-                break
-    if rate is None:
-        # Unknown model: an honest guess at a mid-range rate, marked as such.
-        rate = (3.0, 15.0)
+    rate, known = rate_for(p)
+    if not known:
         usage.estimated = True
     usage.cost_usd = usage.input_tokens / 1e6 * rate[0] + usage.output_tokens / 1e6 * rate[1]
 
@@ -478,11 +509,33 @@ def _anthropic(p: Provider):
         from planner import Reply, TransientError
 
         msgs = messages if p.vision else _strip_images(messages)
-        try:
-            resp = client.messages.create(
+        level = opts.get("reasoning", p.reasoning)
+        extra = {}
+        if level == "high":
+            # Effort is the depth control on current Claude models (thinking
+            # is adaptive). Sent as a raw body field so it works with any SDK
+            # version; a long budget needs an explicit timeout, or the SDK
+            # refuses a non-streamed call it expects to run past ten minutes.
+            extra = {"extra_body": {"output_config": {"effort": "high"}},
+                     "timeout": opts.get("timeout") or 900}
+        elif opts.get("timeout"):
+            extra = {"timeout": opts["timeout"]}
+
+        def call(**kw):
+            return client.messages.create(
                 model=p.model, max_tokens=opts.get("max_tokens") or p.max_tokens,
-                system=system, messages=msgs,
-                **({"timeout": opts["timeout"]} if opts.get("timeout") else {}))
+                system=system, messages=msgs, **kw)
+        try:
+            try:
+                resp = call(**extra)
+            except Exception as e:
+                # An older model that does not know `effort`: ask again without.
+                if ("extra_body" in extra and getattr(e, "status_code", None) == 400
+                        and re.search(r"effort|output_config", str(e))):
+                    extra.pop("extra_body")
+                    resp = call(**extra)
+                else:
+                    raise
         except Exception as e:
             # Overload (529) is not a subclass of anything we can name portably,
             # so it is recognised by status as well as by type.
@@ -780,6 +833,11 @@ def _openai(p: Provider):
                 body["reasoning_effort"] = "low"
             elif "localhost:11434" in base or "127.0.0.1:11434" in base:
                 body["think"] = False
+        elif level == "high":
+            if "openrouter" in base:
+                body["reasoning"] = {"effort": "high"}
+            elif not ("localhost:11434" in base or "127.0.0.1:11434" in base):
+                body["reasoning_effort"] = "high"
 
         # The annotate pass returns a bare array, which the layout schema does
         # not describe; detect it and leave json_mode off for that call.
@@ -1102,7 +1160,7 @@ def describe_roles(by_role: dict[str, Provider]) -> str:
     return "\n".join(rows)
 
 
-REASONING_LEVELS = ["default", "low", "off"]
+REASONING_LEVELS = ["default", "low", "off", "high"]
 
 
 def add_arguments(ap) -> None:

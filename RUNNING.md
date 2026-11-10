@@ -286,7 +286,7 @@ export ALBUM_API_KEY=sk-or-...
 export ALBUM_VISION=1          # 0 if the model cannot see images
 export ALBUM_JSON_MODE=0       # 1 to ask the endpoint to guarantee JSON
 export ALBUM_MAX_TOKENS=16000  # output budget per call
-export ALBUM_REASONING=default # default | low | off, see "When planning fails"
+export ALBUM_REASONING=default # default | low | off | high, see "When planning fails"
 export ALBUM_FALLBACK_MODEL=   # second model, used only after the first fails
 ```
 
@@ -699,7 +699,7 @@ flag, or as an environment variable:
 | `models.yaml` | Flag | Environment | |
 |---|---|---|---|
 | `max_tokens` | `--max-tokens`, `--plan-max-tokens` | `ALBUM_MAX_TOKENS`, `ALBUM_PLAN_MAX_TOKENS` | output budget, default 16000 |
-| `reasoning` | `--reasoning`, `--plan-reasoning` | `ALBUM_REASONING`, `ALBUM_PLAN_REASONING` | `default` sends nothing, `low` limits thinking, `off` disables it where the endpoint allows (OpenRouter, Ollama) |
+| `reasoning` | `--reasoning`, `--plan-reasoning` | `ALBUM_REASONING`, `ALBUM_PLAN_REASONING` | `default` sends nothing, `low` limits thinking, `off` disables it where the endpoint allows (OpenRouter, Ollama), `high` asks the model to think longer (Anthropic `output_config.effort`, OpenRouter `reasoning.effort`, OpenAI `reasoning_effort`) and raises the output budget to at least 32,000 — slower and costlier; the editor offers it for the planner only |
 | `fallback_model` | `--plan-fallback-model` | `ALBUM_FALLBACK_MODEL`, `ALBUM_PLAN_FALLBACK_MODEL` | second model for the role |
 | `fallback_base_url` | | `ALBUM_FALLBACK_BASE_URL` | only if the fallback lives on another endpoint |
 

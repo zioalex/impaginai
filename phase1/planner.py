@@ -257,7 +257,12 @@ def _write_log(log_dir: Path | None, kind: str, n: int, diagnosis: str,
             "response_format": r.response_format if r else None,
             "text": text[:20000], "raw": r.raw if r else None,
         }
-        path.write_text(json.dumps(body, ensure_ascii=False, indent=2, default=str))
+        import keystore
+
+        # A model's error text can echo a request, and a request can carry a
+        # key: nothing reaches the log directory unredacted.
+        path.write_text(keystore.redact(json.dumps(body, ensure_ascii=False, indent=2,
+                                                   default=str)))
         return str(path)
     except Exception:
         return None

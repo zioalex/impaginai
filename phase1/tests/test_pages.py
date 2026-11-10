@@ -329,6 +329,48 @@ def engadin_run_fixes(groups):
     assert "PREFERENCES" not in P.plan_user_content("T", None, "21x21", "de", [], None, None)
     print("the planner is told the user's preferences: ok")
 
+    # API keys: stored 0600 outside the album, an environment key always wins,
+    # never shown except masked, and redacted from anything written
+    import os
+    import stat
+    import json
+    import keystore
+    import providers
+    secret = "sk-or-v1-0123456789abcdefSECRETtail9876"
+    saved_env = {k: os.environ.pop(k) for k in list(os.environ)
+                 if k in ("ALBUM_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY",
+                          "ANTHROPIC_API_KEY", "ALBUM_CONFIG_DIR")}
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["ALBUM_CONFIG_DIR"] = td
+            keystore.set_key("openrouter", secret)
+            mode = stat.S_IMODE(os.stat(Path(td) / "keys.json").st_mode)
+            assert mode == 0o600, oct(mode)
+            st = keystore.status("openrouter")
+            assert st["source"] == "user" and secret not in json.dumps(st), st
+            assert st["masked"].startswith("sk-or-") and st["masked"].endswith("9876")
+            p = providers.resolve(base_url="openrouter", model="x/y")
+            assert p.api_key == secret, "a stored key is used when the environment has none"
+            os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-fromtheenvironment0000"
+            p = providers.resolve(base_url="openrouter", model="x/y")
+            assert p.api_key == "sk-or-v1-fromtheenvironment0000", "the environment key must win"
+            assert keystore.status("openrouter")["source"] == "env"
+            line = f"401 from openrouter for key {secret} and {os.environ['OPENROUTER_API_KEY']}"
+            red = keystore.redact(line)
+            assert secret not in red and "fromtheenvironment" not in red, red
+            keystore.delete_key("openrouter")
+            assert keystore.stored("openrouter") is None
+    finally:
+        for k in ("OPENROUTER_API_KEY", "ALBUM_CONFIG_DIR"):
+            os.environ.pop(k, None)
+        os.environ.update(saved_env)
+    hp = providers.resolve(base_url="openrouter", model="a/b", reasoning="high")
+    assert hp.reasoning == "high" and hp.max_tokens >= providers.HIGH_MIN_TOKENS
+    rate, known = providers.rate_for(providers.Provider("openai", "anthropic/claude-sonnet-5.5",
+                                                        "https://openrouter.ai/api/v1", "k"))
+    assert known and rate == (2.0, 10.0), rate
+    print("keys: stored 0600, environment wins, masked, redacted; effort high; prices: ok")
+
 
 def adaptive_pages():
     """A composed page is laid out for its photographs' real shapes: nothing
