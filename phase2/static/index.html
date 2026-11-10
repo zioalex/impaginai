@@ -84,6 +84,25 @@ main:not(.settings) #settings{display:none}
 .slider .val{font-variant-numeric:tabular-nums;min-width:110px;font-size:13px}
 .slider .prev{font-size:12px;color:var(--soft)}
 .numrow{display:flex;gap:8px;align-items:center}
+.presets{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin:6px 0 4px}
+.preset{border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer;background:var(--bg);font-size:13px;line-height:1.4}
+.preset b{display:block;font-size:13px;margin-bottom:4px}
+.preset .c{color:var(--soft);font-size:12px}
+.preset[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);background:var(--accent-soft)}
+.role{display:grid;grid-template-columns:110px 1fr;gap:6px 12px;align-items:center;padding:12px 0;border-top:1px solid var(--line)}
+.role>b{font-size:14px}
+.role .why{grid-column:2;font-size:12px;color:var(--soft)}
+.role .fields{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.role select,.role input,.keyrow input{font:inherit;font-size:13px;padding:6px 8px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);color:var(--ink)}
+.role input.model{min-width:260px;flex:1}
+.role details{grid-column:2;font-size:13px}
+.role details .fields{margin-top:6px}
+.keyrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
+.keyrow .src{min-width:220px}
+.keyrow .src code{font-size:12px;background:var(--bg);padding:1px 5px;border-radius:4px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--line);vertical-align:middle}
+.dot.ok{background:#2f9e6b}.dot.bad{background:var(--bad)}.dot.wait{background:var(--warn)}
+.estimate{font-size:13px;margin:10px 0 2px;padding:9px 12px;background:var(--bg);border-radius:8px}
 .numrow input{width:90px;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);color:var(--ink)}
 @media (max-width:900px){main{grid-template-columns:1fr}#panel{display:none}
   body.picked main:not(.book) #panel{display:flex;position:fixed;inset:0;z-index:20}
@@ -794,11 +813,12 @@ const EFFECT={instant:["Applies now · free","Re-applied to the current design a
   redesign:["Next design","Takes effect when you press “Design again…” (one model call)."],
   relook:["Vision looks again","Takes effect the next time the vision model looks at photographs, which costs a little."]};
 let cfg=null;
+let mdl=null;
 async function renderSettings(){
   const host=$("settings");
-  try{cfg=await get("/api/config");}catch(e){host.innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
+  try{[cfg,mdl]=await Promise.all([get("/api/config"),get("/api/models")]);}catch(e){host.innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
   const lab=cfg.lab;
-  let h=`<div class="setwrap">`;
+  let h=`<div class="setwrap">`+modelsSection();
   for(const [gid,gname] of Object.entries(cfg.groups)){
     h+=`<div class="setsec"><h2>${esc(gname)}</h2>`;
     if(gid==="book")h+=`<div class="labinfo">This lab: ${lab.pages.min}–${lab.pages.max} pages in steps of ${lab.pages.increment}, ${esc(lab.binding||"")}${lab.paper?" · "+esc(lab.paper):""}. Photographs need ${lab.resolution.warn_below_dpi} DPI to look sharp; below ${lab.resolution.block_below_dpi} they cannot be printed.</div>`;
@@ -822,6 +842,7 @@ async function renderSettings(){
     inp.onchange=()=>setOption(k,Number(inp.value));
   });
   const auto=$("lenAuto"); if(auto)auto.onclick=()=>setOption("length",0);
+  wireModels(host);
   const rl=$("relookBtn"); if(rl)rl.onclick=async()=>{
     if(!confirm("On the next design, the vision model looks at every photograph again. That costs about as much as the first time. Go ahead?"))return;
     try{const r=await send("POST","/api/relook");note(`The next design looks at ${r.photos} photographs again.`);}catch(e){note(e.message,"err");}
@@ -857,6 +878,96 @@ function optionRow(o){
   h+=`<div class="hint">${esc(o.help)}</div>`;
   if(o.locked)h+=`<div class="locked">🔒 ${esc(o.locked_by||"set when the editor was started")}</div>`;
   return h+`</div>`;
+}
+const ROLE_LABEL={plan:"Designs the book",revise:"Applies your comments",annotate:"Looks at the photos"};
+const EFFORT_LABEL={default:"Default",low:"Low",off:"Off",high:"High"};
+function usdEst(v){return v==null?"—":v<0.01?"under $0.01":"$"+v.toFixed(2);}
+function modelsSection(){
+  const m=mdl, lock=!!m.locked_by;
+  let h=`<div class="setsec"><h2>AI models</h2>`;
+  if(lock)h+=`<div class="locked">🔒 The models are ${esc(m.locked_by)}. Start the editor without it to choose them here.</div>`;
+  h+=`<div class="setrow${lock?" lock":""}"><div class="head"><b>Preset</b><span class="eff instant">Applies now · free</span></div><div class="presets">`+
+    m.presets.map(p=>`<div class="preset" role="button" tabindex="0" data-preset="${esc(p.name)}" aria-pressed="${String(m.preset===p.name)}"><b>${esc(p.title)}</b>${esc(p.blurb||"")}${p.cost?`<span class="c" style="display:block;margin-top:4px">${esc(p.cost)}</span>`:""}</div>`).join("")+
+    `</div><div class="hint">${m.custom?"Your own choice below — pick a preset to start again from one.":"A starting point; every role can be changed below."}</div></div>`;
+  for(const [r,v] of Object.entries(m.roles)){
+    const pf=(album&&album.preflight||{})[r];
+    const dot=!v.usable?"bad":pf?(pf.status==="checking"?"wait":pf.ok?"ok":"bad"):"";
+    h+=`<div class="role${lock?" lock":""}" data-role="${r}"><b>${r[0].toUpperCase()+r.slice(1)} <span class="dot ${dot}" title="${esc(pf?pf.message||pf.status:(v.usable?"not checked":"no API key"))}"></span></b>
+      <div class="fields">
+        <select data-f="base_url" title="Endpoint">${m.endpoints.map(e=>`<option ${e===v.base_url?"selected":""}>${esc(e)}</option>`).join("")}${m.endpoints.includes(v.base_url)?"":`<option selected>${esc(v.base_url)}</option>`}</select>
+        <input class="model" data-f="model" value="${esc(v.model)}" title="Model, as the endpoint names it" spellcheck="false">
+        <label class="sub">Effort <select data-f="reasoning">${v.effort.map(e=>`<option value="${e}" ${e===v.reasoning?"selected":""}>${EFFORT_LABEL[e]}</option>`).join("")}</select></label>
+        ${r==="plan"?`<button class="infobtn" data-k="effort" aria-expanded="false" title="What does High mean?">i</button>`:""}
+      </div>
+      <div class="why">${esc(ROLE_LABEL[r])} — ${esc(v.needs)}</div>
+      ${r==="plan"?`<div class="infobox" id="info-effort" style="grid-column:2">High — the model thinks longer before it lays out the book. It helps most on large albums with many places and people.
+It is slower (about one to three minutes instead of under one) and the thinking is billed as output, so a design costs more — see the estimate below.
+The output budget is raised to at least 32,000 tokens so the thinking cannot crowd out the layout. Models without a reasoning setting ignore it.
+Low and Off make reasoning models answer faster and cheaper; Default lets the model decide.</div>`:""}
+      <details><summary class="sub">Advanced</summary><div class="fields">
+        <label class="sub">Output budget <input type="number" data-f="max_tokens" value="${v.max_tokens}" min="1000" step="1000" style="width:100px"></label>
+        <label class="sub">Fallback model <input data-f="fallback_model" value="${esc(v.fallback_model)}" placeholder="another vendor's model" spellcheck="false"></label>
+      </div></details></div>`;
+  }
+  h+=`<h2 style="margin-top:18px">API keys</h2>`;
+  if(!m.keys.length)h+=`<div class="hint">The models chosen run locally — no key needed.</div>`;
+  m.keys.forEach(k=>{
+    const src=k.source==="env"?`from the environment (<code>${esc(k.env_var)}</code>) <code>${esc(k.masked)}</code> — always used first`
+      :k.source==="user"?`your key <code>${esc(k.masked)}</code>`:`<span style="color:var(--bad)">missing</span>`;
+    h+=`<div class="keyrow"><b style="min-width:100px">${esc(k.label)}</b><span class="src">${src}</span>`;
+    if(m.keys_editable){
+      h+=`<input type="password" autocomplete="off" data-key="${k.slot}" placeholder="${k.source==="user"?"replace your key":"paste your key"}" spellcheck="false" style="flex:1;min-width:180px">
+        <button class="small" data-keysave="${k.slot}">Save</button>${k.stored?`<button class="small ghost" data-keydel="${k.slot}">Remove</button>`:""}`;
+    }
+    h+=`</div>`;
+  });
+  h+=`<div class="hint">A key is stored for your user only, outside every album, and is never shown again — only its first and last characters. A key from the environment always wins over one entered here.${m.keys_editable?"":" Keys cannot be set here: the editor is reachable over the network."}</div>`;
+  const e=m.estimate;
+  h+=`<div class="estimate">Next design costs about <b>${usdEst(e.total_usd)}</b>`+
+    (e.annotate_photos?` (looking at ${e.annotate_photos} photograph${e.annotate_photos>1?"s":""}: ${usdEst(e.annotate_usd)}, designing: ${usdEst(e.plan_usd)})`:` (designing)`)+
+    (e.high?`, with High effort.`:`; High effort adds about ${usdEst(e.high_extra_usd)}.`)+
+    (e.guessed?` <span class="sub">Some prices are guessed — the model is not in the price list.</span>`:"")+`</div>`;
+  h+=`<div class="navrow"><button class="small" id="testModels">Test models</button><span class="sub" id="testMsg"></span></div>`;
+  return h+`</div>`;
+}
+function wireModels(host){
+  host.querySelectorAll("[data-preset]").forEach(el=>el.onclick=()=>putModels({preset:el.dataset.preset}));
+  host.querySelectorAll(".role [data-f]").forEach(el=>{
+    el.onchange=()=>{const r=el.closest(".role").dataset.role;
+      putModels({roles:{[r]:{[el.dataset.f]:el.type==="number"?Number(el.value):el.value}}});};
+  });
+  host.querySelectorAll("[data-keysave]").forEach(b=>b.onclick=async()=>{
+    const slot=b.dataset.keysave, inp=host.querySelector(`input[data-key="${slot}"]`), v=inp.value; inp.value="";
+    if(!v.trim())return;
+    try{const st=await send("PUT","/api/keys",{slot,key:v});
+      note(st.source==="env"?`Saved — but the key from ${st.env_var} in the environment is used first.`:`Saved: ${st.masked}`);}
+    catch(e){note(e.message,"err");}
+    album=await get("/api/album"); setHeader(); checkModel(); renderSettings();
+  });
+  host.querySelectorAll("[data-keydel]").forEach(b=>b.onclick=async()=>{
+    if(!confirm("Remove your stored key?"))return;
+    try{await send("DELETE","/api/keys/"+b.dataset.keydel);}catch(e){note(e.message,"err");}
+    album=await get("/api/album"); setHeader(); renderSettings();
+  });
+  const t=$("testModels"); if(t)t.onclick=async()=>{
+    $("testMsg").textContent="Checking…";
+    try{await get("/api/preflight?run=1");}catch(e){}
+    const until=Date.now()+60000;
+    while(Date.now()<until){
+      const pf=await get("/api/preflight").catch(()=>({}));
+      if(!Object.values(pf).some(x=>x.status==="checking")){
+        album.preflight=pf; const bad=Object.entries(pf).filter(([,x])=>!x.ok);
+        $("testMsg").textContent=!Object.keys(pf).length?"Nothing to check — no key for the planner yet."
+          :bad.length?bad.map(([r,x])=>`${r}: ${x.message}`).join(" · "):"All models answered.";
+        renderSettings(); setTimeout(()=>{const m=$("testMsg");if(m)m.textContent=Object.keys(pf).length&&!bad.length?"All models answered.":"";},50); return;}
+      await new Promise(r=>setTimeout(r,1500));
+    }
+  };
+}
+async function putModels(body){
+  try{await send("PUT","/api/models",body);}catch(e){note(e.message,"err");}
+  album=await get("/api/album"); setHeader(); checkModel.warned=0; checkModel();
+  status("Saved — the models are being checked"); renderSettings();
 }
 let prevTimer=null;
 function previewGroups(){
