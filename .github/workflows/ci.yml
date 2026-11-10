@@ -33,6 +33,8 @@ jobs:
         run: python -c "import reverse_geocoder as rg; rg.search([(47.4, 8.6)])"
       - name: Loop, validator, renderer and provider tests
         run: python phase1/tests/test_loop.py
+      - name: Page repacker and crop guard
+        run: python phase1/tests/test_pages.py
       - name: Calibration book renders to spec
         run: |
           cd phase0
