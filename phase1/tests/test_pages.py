@@ -211,6 +211,42 @@ def engadin_run_fixes(groups):
     assert lay["spreads"][0]["slots"][0]["photo_id"] == "p001"
     print("low-resolution front page set inside the margins: ok")
 
+    # a photo id the model shortened is read as the real one; one that names
+    # no photograph is left out instead of blocking the render
+    import overrides as OV
+    known = ["IMG-20260805-WA0019", "IMG_20260805_090039_1", "IMG_20260805_085308", "p002"]
+    assert OV.match_id("WA0019", known) == "IMG-20260805-WA0019"
+    assert OV.match_id("img_20260805_085308", known) == "IMG_20260805_085308"
+    assert OV.match_id("IMG_20260805", known) is None, "ambiguous ids must not be guessed"
+    lay = {"spreads": [
+        {"index": 1, "template": "two-up-hero", "options": {}, "text": None, "section_id": None,
+         "slots": [{"photo_id": "p002", "focal": [.5, .5], "caption": None, "caption_position": "below"},
+                   {"photo_id": "WA0019", "focal": [.5, .5], "caption": None, "caption_position": "below"}]},
+        {"index": 2, "template": "two-up-equal", "options": {}, "text": None, "section_id": None,
+         "slots": [{"photo_id": "IMG_20260805_085308", "focal": [.5, .5], "caption": None, "caption_position": "below"},
+                   {"photo_id": "nonexistent", "focal": [.5, .5], "caption": None, "caption_position": "below"}]}],
+        "meta": {}}
+    notes = OV.apply_to_layout(lay, OV.Overrides(), known=known)
+    ids = [s["photo_id"] for sp in lay["spreads"] for s in sp["slots"]]
+    assert "IMG-20260805-WA0019" in ids and "WA0019" not in ids, ids
+    assert "nonexistent" not in ids, ids
+    for sp in lay["spreads"]:
+        assert T.REGISTRY[sp["template"]].slot_count == len(sp["slots"]), sp
+    print(f"mistyped photo ids repaired, unknown ones left out ({len(notes)} note(s)): ok")
+
+    # within one place, pages run in the order the photographs were taken
+    g1 = NS(id="g1", photo_ids=["a", "b", "c", "d"], place="Pontresina", date_label="5. August")
+    lay = {"meta": {}, "spreads": [
+        {"index": 1, "template": "two-up-equal", "options": {}, "text": None, "section_id": None,
+         "slots": [{"photo_id": x, "focal": [.5, .5], "caption": None, "caption_position": "below"}
+                   for x in pair]} for pair in (("c", "a"), ("d", "b"))]}
+    taken = {"a": "2026-08-05T08:53", "b": "2026-08-05T09:00", "c": "2026-08-05T09:36",
+             "d": "2026-08-05T10:23"}
+    PG.repack(lay, [g1], {"pages": {"min": 0, "increment": 2}}, taken=taken, front="a")
+    order = [s["photo_id"] for sp in lay["spreads"] for s in sp["slots"]]
+    assert order == ["a", "b", "c", "d"], order
+    print("pages of one place in the order taken: ok")
+
 
 def adaptive_pages():
     """A composed page is laid out for its photographs' real shapes: nothing

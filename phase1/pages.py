@@ -335,8 +335,30 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
             "note": "front page",
         }
 
-    # Location stamps: the first page carrying each group's first photograph.
     by_photo = {pid: g for g in (groups or []) for pid in g.photo_ids}
+
+    # Within one place, pages run in the order they were taken: the planner
+    # orders by feeling and often swaps two frames minutes apart. The groups
+    # themselves stay in the planner's order.
+    if taken:
+        def first_time(p: Page):
+            ts = [taken.get(s["photo_id"]) for s in p.slots]
+            ts = [t for t in ts if t]
+            return min(ts) if ts else None
+
+        i = 0
+        while i < len(pages):
+            g = by_photo.get(pages[i].slots[0]["photo_id"]) if pages[i].slots else None
+            j = i + 1
+            while (g is not None and j < len(pages) and pages[j].slots
+                   and by_photo.get(pages[j].slots[0]["photo_id"]) is g):
+                j += 1
+            run = pages[i:j]
+            if len(run) > 1 and all(first_time(p) for p in run):
+                pages[i:j] = sorted(run, key=first_time)
+            i = j
+
+    # Location stamps: the first page carrying each group's first photograph.
     seen: set[str] = set()
     if opening:
         for s in opening.get("slots") or []:
