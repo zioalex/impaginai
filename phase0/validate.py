@@ -120,6 +120,10 @@ def check(
     spread that mixes clusters is flagged: it usually means the album jumped
     location or day mid-page, which reads as clutter however well it is laid out."""
     issues: list[Issue] = []
+    # Composed pages are laid out for the photographs' real shapes. Measured
+    # here, from the same files the renderer reads, so the DPI checked is the
+    # DPI printed (render.py calls this before it draws anything).
+    templates_lib.attach_aspects(layout.spreads, {k: (v.width, v.height) for k, v in photos.items()})
     res = lab["resolution"]
     pages_cfg = lab["pages"]
     allow_fold = bool(lab.get("safety", {}).get("allow_fold_crossing", False))

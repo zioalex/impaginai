@@ -128,7 +128,7 @@ exactly one photograph reads as a slideshow, not a designed album, and it wastes
 on facing pages left blank.
 
 - In a composed page the FIRST photograph you list is the feature — it gets the largest \
-rectangle and the only caption. Put your strongest frame of that group there and the \
+rectangle and its caption sits under the page. Put your strongest frame of that group there and the \
 supporting ones after it. Order matters; it is not a list of equals.
 - Composition is for photographs that belong together — the same subject from two \
 angles, a detail beside the thing it came from, three frames of one moment. Unrelated \
@@ -153,10 +153,39 @@ spread with a quiet one; `single-centered` is how the book breathes.
 spine of a travel album; break it only for a reason you can state in `note`.
 - Start each location with its strongest photograph, and use `grid-four` for supporting \
 detail shots rather than for your best frames.
-- Captions: keep the user's wording. Shorten only if it is unwieldy. Leave a caption out \
-entirely when the photograph is doing the talking — a full-bleed hero rarely needs one.
 - Write section titles, `intro_text` and any `text` blocks in the album's language \
 ({language}). Match the register of the user's captions; do not write travel-brochure prose.
+
+## Captions — the album's voice
+
+The person reading this book was there. A caption that describes what is visible \
+("glacier landscape", "a lake in the mountains") tells them nothing; one that names \
+the place and remembers the moment brings it back.
+
+- **Name it.** Use the proper name from `recognised:`, `nearby:` or the place column: \
+"Morteratsch glacier", "Lej da Staz", "Piz Bernina" — never "the glacier" or "a lake" \
+when the name is known. Take the name only from those fields; never invent one.
+- **Make it personal.** Write as the people who made the trip, first person plural, \
+in {language}: what we did, saw, felt there. Use the `seen:` detail and, where people \
+are in the frame, who they are ("who"). E.g. "Our first steps onto the Morteratsch \
+glacier — the ice creaked under us" rather than "Glacier with hikers".
+- 6 to 16 words, at most two short lines. No hashtags, no exclamation marks, no \
+superlatives ("breathtaking", "stunning").
+- Caption most photographs, not just the feature: a photograph without words is a \
+deliberate silence, so keep it for the one or two frames per location that need none.
+- A photograph whose caption column already carries the user's own words: keep them \
+exactly; they are printed as written whatever you return.
+
+## Using the page
+
+- The renderer sizes every photograph on a composed page to its real shape, so \
+composed pages no longer waste space or crop heavily. **Favour composed pages**: \
+aim for an average of two to three photographs per page across the book, with \
+`full-bleed-single` reserved for the strongest frames (strength 4-5) — about one in \
+six spreads.
+- `full-bleed-single` crops the photograph to the page shape. Do not use it for a \
+very wide panorama or a group whose people reach the edges of the frame; give those \
+`single-centered` or the feature slot of a composed page.
 
 ## Output
 
@@ -174,7 +203,8 @@ alone, or the title and the year."""
 
 
 def photo_block(photos: list[Photo]) -> str:
-    header = "id | group | pixels | orientation | taken | place | [subject; people; strength] | [focal] | caption"
+    header = ("id | group | pixels | orientation | taken | place | [subject; people; strength] "
+              "| [recognised] | [seen] | [nearby named places] | [focal] | caption (the user's own words, if any)")
     return "\n".join([header, "-" * 60] + [p.prompt_line() for p in photos])
 
 

@@ -120,22 +120,23 @@ class Geometry:
     # --- typographic margins -------------------------------------------
     # Outer margins are wider than gutter margins: the book opens flat, so the
     # gutter needs less relief than the thumb edge. Proportional to page width
-    # so the same templates work at 21x21 and 30x30.
+    # so the same templates work at 21x21 and 30x30. Kept tight: the
+    # photographs are the design, and wide margins read as wasted paper.
     @property
     def margin_outer(self) -> float:
-        return round(self.page_w * 0.071, 2)
+        return round(self.page_w * 0.05, 2)
 
     @property
     def margin_gutter(self) -> float:
-        return round(self.page_w * 0.057, 2)
+        return round(self.page_w * 0.042, 2)
 
     @property
     def margin_top(self) -> float:
-        return round(self.page_h * 0.071, 2)
+        return round(self.page_h * 0.05, 2)
 
     @property
     def margin_bottom(self) -> float:
-        return round(self.page_h * 0.095, 2)
+        return round(self.page_h * 0.06, 2)
 
     def text_column(self, side: str) -> Rect:
         """Inset content area of one page, respecting asymmetric margins."""

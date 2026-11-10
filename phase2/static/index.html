@@ -10,249 +10,446 @@
 :root{
   --bg:#f6f5f3; --panel:#fff; --ink:#1a1a1a; --soft:#6b6b6b; --line:#e2e0dc;
   --accent:#1f5f4a; --accent-soft:#e8f0ec; --warn:#8a5a00; --bad:#9b2c2c;
-  --radius:10px;
+  --radius:10px; --shadow:0 6px 24px rgba(0,0,0,.14);
 }
 @media (prefers-color-scheme:dark){
   :root{--bg:#161614;--panel:#1f1f1d;--ink:#ececea;--soft:#a0a09c;--line:#33332f;
-        --accent:#6fd3ad;--accent-soft:#1d3029;--warn:#d9a441;--bad:#e08585;}
+        --accent:#6fd3ad;--accent-soft:#1d3029;--warn:#d9a441;--bad:#e08585;--shadow:0 6px 24px rgba(0,0,0,.5);}
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
      background:var(--bg);color:var(--ink);height:100vh;display:flex;flex-direction:column}
-header{display:flex;align-items:center;gap:16px;padding:12px 20px;
+header{display:flex;align-items:center;gap:10px;padding:10px 18px;
        background:var(--panel);border-bottom:1px solid var(--line);flex-shrink:0;flex-wrap:wrap}
-h1{font-size:17px;font-weight:600}
+h1{font-size:17px;font-weight:600;cursor:pointer}
+h1:hover{text-decoration:underline dotted}
 .sub{color:var(--soft);font-size:13px}
-.sub.model{font-size:11px;opacity:.7;font-variant-numeric:tabular-nums}
 .grow{flex:1}
-button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);
-       padding:8px 14px;border-radius:var(--radius);cursor:pointer}
-button:hover:not(:disabled){border-color:var(--accent)}
+button,select{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);
+       padding:7px 13px;border-radius:var(--radius);cursor:pointer}
+select{padding:7px 9px}
+button:hover:not(:disabled),select:hover{border-color:var(--accent)}
 button:disabled{opacity:.45;cursor:not-allowed}
 button.primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+@media (prefers-color-scheme:dark){button.primary{color:#0f201a}}
 button.primary:hover:not(:disabled){filter:brightness(1.08)}
-main{flex:1;display:grid;grid-template-columns:1fr 380px;min-height:0}
-@media (max-width:900px){main{grid-template-columns:1fr}#panel{display:none}
-  body.picked #panel{display:flex;position:fixed;inset:0;z-index:20}
-  body.picked #grid{display:none}}
+button.ghost{border-color:transparent;background:transparent}
+button.small{padding:4px 9px;font-size:13px}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:5px 10px;border-radius:999px;
+      background:var(--accent-soft);color:var(--ink);border:1px solid var(--line);cursor:pointer;white-space:nowrap}
+.chip .dot{width:8px;height:8px;border-radius:50%;background:var(--soft)}
+.chip .dot.ok{background:#2f9e6b}.chip .dot.bad{background:var(--bad)}.chip .dot.wait{background:var(--warn)}
+.menu{position:relative}
+.menu .list{display:none;position:absolute;right:0;top:calc(100% + 6px);background:var(--panel);
+  border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);min-width:270px;z-index:40;padding:6px}
+.menu.open .list{display:block}
+.menu .list button{display:block;width:100%;text-align:left;border:0;border-radius:7px;padding:8px 10px}
+.menu .list button:hover{background:var(--accent-soft)}
+.menu .list small{display:block;color:var(--soft);font-size:12px}
 
-#grid{overflow-y:auto;padding:18px}
+nav.tabs{display:flex;gap:4px;padding:0 18px;background:var(--panel);border-bottom:1px solid var(--line);flex-shrink:0}
+nav.tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;padding:9px 12px;background:none;color:var(--soft)}
+nav.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+nav.tabs .grow{flex:1}
+#status{align-self:center;font-size:12px;color:var(--soft)}
+
+main{flex:1;display:grid;grid-template-columns:1fr 360px;min-height:0}
+main.book{grid-template-columns:1fr}
+main.book #panel,main.book #grid{display:none}
+main:not(.book) #book{display:none}
+@media (max-width:900px){main{grid-template-columns:1fr}#panel{display:none}
+  body.picked main:not(.book) #panel{display:flex;position:fixed;inset:0;z-index:20}
+  body.picked main:not(.book) #grid{display:none}}
+
+#grid{overflow-y:auto;padding:16px 18px 80px}
 .group{margin-bottom:26px}
-.group h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;
-          color:var(--soft);margin-bottom:4px}
-.group .where{font-size:13px;color:var(--soft);margin-bottom:10px}
-.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:12px}
-.tile{position:relative;border-radius:var(--radius);overflow:hidden;cursor:pointer;
-      background:var(--panel);border:2px solid transparent;aspect-ratio:1}
+.ghead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.ghead h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--soft)}
+.ghead .where{font-size:13px;color:var(--soft)}
+.ghead .acts{margin-left:auto;display:flex;gap:4px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}
+.tile{position:relative;border-radius:var(--radius);background:var(--panel);
+      border:2px solid transparent;cursor:pointer;outline:none}
+.tile .ph{position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;background:#0001}
 .tile img{width:100%;height:100%;object-fit:cover;display:block}
 .tile.sel{border-color:var(--accent)}
-.tile.off img{filter:grayscale(1);opacity:.32}
-.badges{position:absolute;left:5px;bottom:5px;display:flex;gap:4px;flex-wrap:wrap}
+.tile.multi{border-color:var(--accent);background:var(--accent-soft)}
+.tile:focus-visible{box-shadow:0 0 0 3px var(--accent)}
+.tile.off .ph img{filter:grayscale(1);opacity:.3}
+.tile .cap{font-size:12px;color:var(--soft);padding:5px 4px 2px;line-height:1.35;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.7em}
+.tile .cap.mine{color:var(--ink);font-style:italic}
+.tile .cap.empty{opacity:.55}
+.badges{position:absolute;left:5px;bottom:5px;display:flex;gap:4px;flex-wrap:wrap;pointer-events:none}
 .badge{font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
        background:rgba(0,0,0,.72);color:#fff;padding:2px 6px;border-radius:5px}
-.badge.warn{background:var(--warn)}
 .badge.bad{background:var(--bad)}
+.qa{position:absolute;top:6px;right:6px;display:flex;gap:4px;opacity:0;transition:opacity .12s}
+.tile:hover .qa,.tile:focus-within .qa,.tile.off .qa .eye{opacity:1}
+.tile.off .qa{opacity:1}
+.qa button{width:30px;height:30px;padding:0;border-radius:8px;border:0;background:rgba(0,0,0,.66);
+  color:#fff;font-size:15px;line-height:30px;text-align:center}
+.qa button:hover{background:rgba(0,0,0,.85)}
+.qa button.on{background:var(--accent)}
+@media (hover:none){.qa{opacity:1}}
 
 #panel{background:var(--panel);border-left:1px solid var(--line);
        display:flex;flex-direction:column;overflow-y:auto}
-#panel .pad{padding:18px}
-#preview{width:100%;background:#000;aspect-ratio:1;object-fit:contain;display:block}
-.meta{font-size:13px;color:var(--soft);margin:10px 0 16px;line-height:1.6}
+#panel .pad{padding:16px 18px}
+#preview{width:100%;background:#000;aspect-ratio:4/3;object-fit:contain;display:block}
+.meta{font-size:13px;color:var(--soft);margin:2px 0 12px;line-height:1.6}
+.meta .ai{margin-top:6px;padding:8px 10px;background:var(--bg);border-radius:8px}
 label.fld{display:block;font-size:12px;font-weight:600;text-transform:uppercase;
-          letter-spacing:.07em;color:var(--soft);margin:18px 0 7px}
-textarea{width:100%;min-height:76px;font:inherit;padding:10px;border:1px solid var(--line);
-         border-radius:var(--radius);background:var(--bg);color:var(--ink);resize:vertical}
+          letter-spacing:.07em;color:var(--soft);margin:16px 0 7px}
+textarea,input[type=text]{width:100%;font:inherit;padding:9px 10px;border:1px solid var(--line);
+         border-radius:var(--radius);background:var(--bg);color:var(--ink)}
+textarea{min-height:76px;resize:vertical;font-family:Georgia,"Iowan Old Style",serif;font-style:italic}
 .opts{display:flex;flex-wrap:wrap;gap:7px}
-.opt{padding:7px 12px;border:1px solid var(--line);border-radius:var(--radius);
+.opt{padding:6px 11px;border:1px solid var(--line);border-radius:var(--radius);
      cursor:pointer;font-size:13px;background:var(--bg)}
 .opt[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+@media (prefers-color-scheme:dark){.opt[aria-pressed="true"]{color:#0f201a}}
 .opt.dead{opacity:.38;text-decoration:line-through;cursor:not-allowed}
 .opt.soft{border-style:dashed;border-color:var(--warn)}
-.hint{font-size:12px;color:var(--soft);margin-top:7px;line-height:1.5}
-.empty{padding:40px 20px;text-align:center;color:var(--soft)}
+.hint{font-size:12px;color:var(--soft);margin-top:6px;line-height:1.5}
+.empty{padding:40px 22px;color:var(--soft);line-height:1.7}
+.empty b{color:var(--ink)}
+.navrow{display:flex;gap:6px;margin-top:18px}
 
-#bar{display:none;align-items:center;gap:12px;padding:10px 20px;
+#bulk{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:none;gap:8px;align-items:center;
+  background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);border-radius:14px;padding:8px 10px;z-index:30}
+#bulk.on{display:flex}
+
+#bar{display:none;align-items:center;gap:12px;padding:9px 18px;font-size:14px;
      background:var(--accent-soft);border-bottom:1px solid var(--line);flex-shrink:0}
 #bar.on{display:flex}
+#bar .cost{font-variant-numeric:tabular-nums;color:var(--soft);white-space:nowrap}
 .track{flex:1;height:6px;background:var(--line);border-radius:3px;overflow:hidden}
 .fill{height:100%;background:var(--accent);width:0;transition:width .4s}
-#msg{padding:10px 20px;font-size:13px;flex-shrink:0;display:none}
-#msg.on{display:block}
-#msg.err{background:#fdeaea;color:var(--bad);white-space:pre-wrap;word-break:break-word;max-height:30vh;overflow:auto}
+#msg{padding:10px 18px;font-size:13px;flex-shrink:0;display:none;align-items:flex-start;gap:10px}
+#msg.on{display:flex}
+#msg .t{flex:1;white-space:pre-wrap}
+#msg.err{background:#fdeaea;color:var(--bad);word-break:break-word;max-height:30vh;overflow:auto}
+#msg.ok{background:var(--accent-soft)}
 @media (prefers-color-scheme:dark){#msg.err{background:#3a1f1f}}
-.saved{color:var(--accent);font-size:12px;opacity:0;transition:opacity .25s}
-.saved.on{opacity:1}
+
+#book{overflow-y:auto;padding:18px}
+.bookhead{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.spreads{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:22px}
+.spread{display:flex;background:var(--panel);box-shadow:var(--shadow);cursor:zoom-in}
+.spread img{width:50%;display:block;aspect-ratio:var(--ar,1);object-fit:cover;background:#fff}
+.spread img+img{border-left:1px solid #0002}
+.slabel{font-size:12px;color:var(--soft);margin-top:6px;text-align:center}
+.versions{margin-top:26px}
+.versions h3{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--soft);margin-bottom:8px}
+.vrow{display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px}
+.vrow .what{flex:1}
+.vrow .when{color:var(--soft);white-space:nowrap}
+
+dialog{margin:auto;border:0;border-radius:14px;padding:0;box-shadow:var(--shadow);background:var(--panel);color:var(--ink);
+  width:min(560px,94vw)}
+dialog::backdrop{background:rgba(0,0,0,.4)}
+dialog .pad{padding:20px 22px}
+dialog h3{font-size:17px;margin-bottom:6px}
+dialog .row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.examples{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.examples .opt{font-size:12px}
+table.costs{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
+table.costs td,table.costs th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+table.costs td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+#lightbox{width:min(1300px,96vw)}
+#lightbox .pages{display:flex;background:#888}
+#lightbox img{width:50%;display:block}
+kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:4px;padding:0 4px;background:var(--bg)}
 </style>
 </head>
 <body>
 
 <header>
   <div>
-    <h1 id="title">Album</h1>
+    <h1 id="title" title="Change the title, language and size">Album</h1>
     <div class="sub" id="counts">loading…</div>
-    <div class="sub model" id="model"></div>
   </div>
   <div class="grow"></div>
-  <span class="saved" id="saved">saved</span>
-  <button id="btnProof" disabled>Open preview</button>
+  <span class="chip" id="modelChip" title=""><span class="dot" id="modelDot"></span><span id="modelName">model</span></span>
+  <span class="chip" id="costChip" title="What designing this album has cost">$—</span>
+  <label class="sub" for="fmtSel" style="margin-left:4px">Size</label>
+  <select id="fmtSel" title="Book size"></select>
+  <div class="menu" id="exportMenu">
+    <button id="btnExport" disabled>Export ▾</button>
+    <div class="list" id="exportList"></div>
+  </div>
   <button class="primary" id="btnPlan">Design the album</button>
 </header>
 
-<div id="bar"><span id="step">Working…</span><div class="track"><div class="fill" id="fill"></div></div></div>
-<div id="msg"></div>
+<nav class="tabs">
+  <button role="tab" aria-selected="true" id="tabPhotos">Photos</button>
+  <button role="tab" aria-selected="false" id="tabBook">Book <span id="pageCount" class="sub"></span></button>
+  <div class="grow"></div>
+  <span id="status"></span>
+</nav>
 
-<main>
+<div id="bar"><span id="step">Working…</span><div class="track"><div class="fill" id="fill"></div></div><span class="cost" id="barCost"></span></div>
+<div id="msg"><div class="t" id="msgText"></div><button class="ghost small" id="msgClose" aria-label="Close">✕</button></div>
+
+<main id="main">
   <div id="grid"></div>
   <aside id="panel">
-    <div class="empty" id="noSel">Choose a photograph to describe it or change how it is used.</div>
+    <div class="empty" id="noSel">
+      <b>Click a photograph</b> to write its caption and choose how it is used.<br><br>
+      Faster: hover a photograph and use <b>👁</b> to leave it out or bring it back,
+      <b>✎</b> to write its caption. <kbd>Shift</kbd>/<kbd>Ctrl</kbd>-click to select several.
+      Keys: <kbd>←</kbd><kbd>→</kbd> move, <kbd>X</kbd> leave out / include, <kbd>Enter</kbd> caption.<br><br>
+      Every change is saved at once and the preview updates by itself.
+    </div>
     <div id="editor" style="display:none">
       <img id="preview" alt="">
       <div class="pad">
         <div class="meta" id="meta"></div>
 
-        <label class="fld" for="desc">Description</label>
-        <textarea id="desc" placeholder="What is happening here?"></textarea>
-        <div class="hint">Printed under the photograph when there is room for it.</div>
-
-        <label class="fld">How big</label>
-        <div class="opts" id="sizes"></div>
-        <div class="hint" id="sizeHint">Let the album decide.</div>
-
-        <label class="fld">Edge</label>
-        <div class="opts" id="treats"></div>
-        <div class="hint" id="treatHint">No border.</div>
+        <label class="fld" for="desc">Caption</label>
+        <textarea id="desc" placeholder="Your words — e.g. “Our first steps on the Morteratsch glacier”"></textarea>
+        <div class="hint" id="descHint">Printed with the photograph, as written. Leave empty and the album writes one.</div>
 
         <label class="fld">Use this photograph</label>
         <div class="opts">
-          <div class="opt" id="optIn" role="button" aria-pressed="true">Include</div>
-          <div class="opt" id="optOut" role="button" aria-pressed="false">Leave out</div>
+          <div class="opt" id="optIn" role="button" tabindex="0" aria-pressed="true">Include</div>
+          <div class="opt" id="optOut" role="button" tabindex="0" aria-pressed="false">Leave out</div>
         </div>
-        <div class="hint" id="exHint"></div>
+
+        <label class="fld">How big</label>
+        <div class="opts" id="sizes"></div>
+        <div class="hint" id="sizeHint"></div>
+
+        <label class="fld">Edge</label>
+        <div class="opts" id="treats"></div>
+        <div class="hint" id="treatHint"></div>
+
+        <div class="navrow">
+          <button class="small" id="prevBtn">← Previous</button>
+          <button class="small" id="nextBtn">Next →</button>
+          <div class="grow"></div>
+          <button class="small ghost" id="closeBtn">Close</button>
+        </div>
       </div>
     </div>
   </aside>
+  <section id="book"></section>
 </main>
+
+<div id="bulk"><span id="bulkN"></span>
+  <button class="small" data-bulk="out">Leave out</button>
+  <button class="small" data-bulk="in">Include</button>
+  <select id="bulkSize" class="small"><option value="">Size…</option></select>
+  <button class="small ghost" data-bulk="clear">Clear</button>
+</div>
+
+<dialog id="dlgRevise"><div class="pad">
+  <h3>What should change?</h3>
+  <div class="sub">Say it the way you would to a friend designing it for you. Leave it empty to design from scratch.</div>
+  <textarea id="reviseText" style="margin-top:12px;font-family:inherit;font-style:normal" placeholder="e.g. More photos per page in the glacier part, and put the lake photos earlier"></textarea>
+  <div class="examples" id="examples"></div>
+  <div class="row"><button id="reviseCancel">Cancel</button><button class="primary" id="reviseGo">Design again</button></div>
+</div></dialog>
+
+<dialog id="dlgSettings"><div class="pad">
+  <h3>Album</h3>
+  <label class="fld" for="setTitle">Title</label><input type="text" id="setTitle">
+  <label class="fld" for="setSub">Subtitle</label><input type="text" id="setSub">
+  <label class="fld" for="setLang">Language of the captions</label>
+  <select id="setLang"><option value="de">Deutsch</option><option value="en">English</option>
+    <option value="it">Italiano</option><option value="fr">Français</option><option value="es">Español</option></select>
+  <div class="hint">A new title shows at once. A new language needs “Design again”, because captions are written by the album.</div>
+  <div class="row"><button id="setCancel">Cancel</button><button class="primary" id="setSave">Save</button></div>
+</div></dialog>
+
+<dialog id="dlgCosts"><div class="pad">
+  <h3>What designing this album has cost</h3>
+  <div class="sub" id="costsTotal"></div>
+  <div style="max-height:55vh;overflow:auto"><table class="costs" id="costsTable"></table></div>
+  <div class="row"><button id="costsClose">Close</button></div>
+</div></dialog>
+
+<dialog id="lightbox"><div class="pages" id="lbPages"></div>
+  <div class="pad" style="display:flex;gap:8px;align-items:center;padding:10px 14px">
+    <button class="small" id="lbPrev">←</button><span id="lbLabel" class="sub"></span><button class="small" id="lbNext">→</button>
+    <div class="grow" style="flex:1"></div><button class="small" id="lbClose">Close</button>
+  </div></dialog>
 
 <script>
 const SIZE_LABEL={auto:"Automatic","full-page":"Full page",large:"Large",small:"Small"};
 const SIZE_HINT={auto:"Let the album decide.",
- "full-page":"Gets a page to itself.",
+ "full-page":"Gets a page to itself, edge to edge.",
  large:"Becomes the main photograph wherever it lands.",
  small:"Kept small, never the main photograph on its page."};
 const TREAT_LABEL={none:"None",frame:"White frame",rounded:"Rounded",vignette:"Vignette","soft-edge":"Soft edge"};
 const TREAT_HINT={none:"No border.",frame:"A thin white border with a hairline edge.",
  rounded:"Softly rounded corners.",vignette:"Darkens gently towards the corners.",
- "soft-edge":"Fades out towards the edges.",};
+ "soft-edge":"Fades out towards the edges."};
+const EXAMPLES=["More photos per page","Fewer, bigger photos","Put the strongest photo first",
+ "Captions shorter","Captions more personal","Keep each place together"];
+const EXPORTS=[["proof","Preview PDF","Small and quick, for looking through"],
+ ["print","Print-ready PDF","Inner pages at full resolution, for the lab"],
+ ["cover","Cover PDF","Front, spine and back as one sheet"],
+ ["jpeg:150","Page images · 150 DPI","One JPEG per page, zipped — for sharing"],
+ ["jpeg:300","Page images · 300 DPI","One JPEG per page, zipped — for printing elsewhere"]];
 
-let photos=[], album=null, sel=null, polling=null;
+let photos=[], album=null, sel=null, picked=new Set(), lastClicked=null, polling=null,
+    designed=false, dirty=false, broughtBack=new Set(), rerenderTimer=null, view="photos", pages={count:0};
 const $=id=>document.getElementById(id);
+const usd=v=>v==null?"—":(v<0.01&&v>0?"<$0.01":"$"+v.toFixed(2));
 
 async function get(u){const r=await fetch(u);if(!r.ok)throw new Error(await r.text());return r.json();}
+async function send(method,u,body){const r=await fetch(u,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
+  let data=null; try{data=await r.json();}catch(e){}
+  if(!r.ok)throw new Error(data&&data.detail?(typeof data.detail==="string"?data.detail:JSON.stringify(data.detail)):r.statusText);
+  return data;}
 
-function note(text,isErr){const m=$("msg");m.textContent=isErr?String(text).replace(/^PlanningError: /,""):text;m.className="on"+(isErr?" err":"");
-  if(!isErr)setTimeout(()=>m.className="",6000);}
+function note(text,kind){const m=$("msg");$("msgText").textContent=kind==="err"?String(text).replace(/^PlanningError: /,""):text;
+  m.className="on "+(kind||"ok"); clearTimeout(note.t); if(kind!=="err")note.t=setTimeout(()=>m.className="",9000);}
+$("msgClose").onclick=()=>$("msg").className="";
+function status(t){$("status").textContent=t||"";}
 
 async function load(){
   album=await get("/api/album"); photos=await get("/api/photos");
+  designed=album.versions.length>0;
   $("title").textContent=album.title;
-  const used=photos.filter(p=>!p.exclude).length;
-  setCounts();
-  if(!album.has_key) note("No API key is set, so the album cannot be designed yet. Everything else here works without one.",true);
-  renderGrid();
+  const fs=$("fmtSel"); fs.innerHTML="";
+  Object.entries(album.formats).forEach(([k,v])=>{const o=document.createElement("option");o.value=k;o.textContent=v;fs.appendChild(o);});
+  fs.value=album.format;
+  $("bulkSize").innerHTML='<option value="">Size…</option>'+album.sizes.map(s=>`<option value="${s}">${SIZE_LABEL[s]}</option>`).join("");
+  setHeader();
+  if(!album.has_key) note("No API key is set, so the album cannot be designed yet. Everything else here works without one.","err");
+  renderGrid(); if(sel)select(sel,false);
   checkModel();
-  try{const r=await get("/api/report"); if(r.ready){$("btnProof").disabled=false;
-    $("btnPlan").textContent="Design again";}}catch(e){}
+  await refreshPages();
 }
 
-// The startup model check: shown once, never blocks the Design button (a
-// failure may be brief). While it is still running, look again a few seconds on.
-let modelChecked=false, modelTimer=null;
-function checkModel(){
-  if(modelChecked||!album||!album.has_key)return;
-  const pf=album.preflight||{}, plan=pf.plan;
-  if(!plan)return;
-  if(plan.status==="checking"){
-    clearTimeout(modelTimer);
-    modelTimer=setTimeout(async()=>{
-      try{album.preflight=await get("/api/preflight");}catch(e){return;}
-      checkModel();
-    },4000);
-    return;
-  }
-  modelChecked=true;
-  if(plan.ok===false&&!$("bar").className)
-    note("The model check failed: "+plan.message+"\nYou can still try designing the album — the problem may be temporary.",true);
-}
-
-function setCounts(){
+function setHeader(){
   const used=photos.filter(p=>!p.exclude).length;
-  $("counts").textContent=
-    `${used} of ${photos.length} photographs · ${album.groups.length} groups · ${album.format} cm`;
-  $("model").textContent=album.model||"";
-  if(album.models){
-    $("model").title=Object.entries(album.models).map(([k,v])=>`${k}: ${v}`).join("\n");
-    const split=new Set(Object.values(album.models)).size>1;
-    if(split)$("model").textContent=`${album.models.plan} (+${Object.keys(album.models).length-1} more — hover)`;
-  }
+  $("counts").textContent=`${used} of ${photos.length} photographs · ${album.groups.length} places · ${album.formats[album.format]||album.format}`;
+  $("btnPlan").textContent=designed?"Design again…":"Design the album";
+  $("btnExport").disabled=!designed;
+  const c=album.costs||{}; const last=c.last;
+  $("costChip").textContent=c.sessions?`Last ${usd(last&&last.usd)} · total ${usd(c.total_usd)}${c.estimated?" ≈":""}`:"No cost yet";
+  $("modelName").textContent=(album.model||"").split(" via ")[0]||"no model";
+  $("modelChip").title=album.models?Object.entries(album.models).map(([k,v])=>`${k}: ${v}`).join("\n"):"";
+}
+
+let modelTimer=null;
+function checkModel(){
+  const pf=(album&&album.preflight)||{}, plan=pf.plan, d=$("modelDot");
+  if(!album.has_key){d.className="dot bad";return;}
+  if(!plan){d.className="dot";return;}
+  if(plan.status==="checking"){d.className="dot wait";clearTimeout(modelTimer);
+    modelTimer=setTimeout(async()=>{try{album.preflight=await get("/api/preflight");}catch(e){return;}checkModel();},4000);return;}
+  d.className="dot "+(plan.ok?"ok":"bad");
+  $("modelChip").title+=`\n\ncheck: ${plan.ok?"ok":"FAILED — "+plan.message}`;
+  if(plan.ok===false&&!checkModel.warned){checkModel.warned=1;
+    note("The model check failed: "+plan.message+"\nYou can still try designing the album — the problem may be temporary.","err");}
+}
+
+// --- photos -------------------------------------------------------------
+
+function orderedPhotos(){
+  const byGroup={}; photos.forEach(p=>{(byGroup[p.group||"none"] ||= []).push(p);});
+  return album.groups.map(x=>x.id).concat(["none"]).flatMap(g=>byGroup[g]||[]);
 }
 
 function renderGrid(){
-  const g=$("grid"); g.innerHTML="";
+  const g=$("grid"); const keep=g.scrollTop; g.innerHTML="";
   const byGroup={}; photos.forEach(p=>{(byGroup[p.group||"none"] ||= []).push(p);});
-  const order=album.groups.map(x=>x.id).concat(["none"]);
-  order.forEach(gid=>{
+  album.groups.map(x=>x.id).concat(["none"]).forEach(gid=>{
     const list=byGroup[gid]; if(!list||!list.length)return;
     const info=album.groups.find(x=>x.id===gid);
     const sec=document.createElement("div"); sec.className="group";
-    const h=document.createElement("h2");
-    h.textContent=info?(info.place||"Unknown place"):"Not grouped";
-    const w=document.createElement("div"); w.className="where";
-    w.textContent=info?[info.dates,`${list.length} photographs`].filter(Boolean).join(" · "):"";
+    const head=document.createElement("div"); head.className="ghead";
+    const used=list.filter(p=>!p.exclude).length;
+    head.innerHTML=`<h2></h2><span class="where"></span><span class="acts">
+      <button class="small ghost" data-act="in">Include all</button>
+      <button class="small ghost" data-act="out">Leave out all</button>
+      <button class="small ghost" data-act="sel">Select</button></span>`;
+    head.querySelector("h2").textContent=info?(info.place||"Unknown place"):"Not grouped";
+    head.querySelector(".where").textContent=[info&&info.dates,`${used} of ${list.length} used`].filter(Boolean).join(" · ");
+    head.querySelector('[data-act=in]').onclick=()=>bulk(list.map(p=>p.id),{exclude:false});
+    head.querySelector('[data-act=out]').onclick=()=>bulk(list.map(p=>p.id),{exclude:true});
+    head.querySelector('[data-act=sel]').onclick=()=>{list.forEach(p=>picked.add(p.id));renderGrid();};
     const tiles=document.createElement("div"); tiles.className="tiles";
     list.forEach(p=>tiles.appendChild(tile(p)));
-    sec.append(h,w,tiles); g.appendChild(sec);
+    sec.append(head,tiles); g.appendChild(sec);
   });
+  g.scrollTop=keep; updateBulk();
 }
 
 function tile(p){
   const d=document.createElement("div");
-  d.className="tile"+(p.exclude?" off":"")+(sel===p.id?" sel":"");
-  d.innerHTML=`<img loading="lazy" src="/thumb/${p.id}.jpg" alt="${p.id}">`;
-  const b=document.createElement("div"); b.className="badges";
+  d.className="tile"+(p.exclude?" off":"")+(sel===p.id?" sel":"")+(picked.has(p.id)?" multi":"");
+  d.tabIndex=0; d.dataset.id=p.id;
+  d.innerHTML=`<div class="ph"><img loading="lazy" src="/thumb/${p.id}.jpg" alt="${p.id}"><div class="badges"></div>
+    <div class="qa"><button class="eye ${p.exclude?"":"on"}" title="${p.exclude?"Bring back into the album (X)":"Leave out of the album (X)"}">${p.exclude?"🚫":"👁"}</button>
+    <button class="pen" title="Write the caption (Enter)">✎</button></div></div><div class="cap"></div>`;
+  const b=d.querySelector(".badges");
   if(p.too_small) b.innerHTML+=`<span class="badge bad">too small</span>`;
   if(p.exclude) b.innerHTML+=`<span class="badge">left out</span>`;
   if(p.size!=="auto") b.innerHTML+=`<span class="badge">${SIZE_LABEL[p.size]}</span>`;
   if(p.treatment!=="none") b.innerHTML+=`<span class="badge">${TREAT_LABEL[p.treatment]}</span>`;
-  d.appendChild(b);
-  d.onclick=()=>select(p.id);
+  const cap=d.querySelector(".cap");
+  if(p.description){cap.textContent=p.description;cap.classList.add("mine");}
+  else if(p.caption){cap.textContent=p.caption;cap.classList.add("mine");}
+  else{cap.textContent=p.landmark||p.place||"no caption yet";cap.classList.add("empty");}
+  d.querySelector(".eye").onclick=e=>{e.stopPropagation();patch([p.id],{exclude:!p.exclude});};
+  d.querySelector(".pen").onclick=e=>{e.stopPropagation();select(p.id);setTimeout(()=>$("desc").focus(),30);};
+  d.onclick=e=>{
+    if(e.shiftKey&&lastClicked){const o=orderedPhotos().map(x=>x.id);const a=o.indexOf(lastClicked),z=o.indexOf(p.id);
+      o.slice(Math.min(a,z),Math.max(a,z)+1).forEach(id=>picked.add(id));renderGrid();return;}
+    if(e.ctrlKey||e.metaKey){picked.has(p.id)?picked.delete(p.id):picked.add(p.id);lastClicked=p.id;renderGrid();return;}
+    picked.clear(); lastClicked=p.id; select(p.id);
+  };
   return d;
 }
 
-function select(id){
+function updateBulk(){
+  $("bulk").className=picked.size?"on":"";
+  $("bulkN").textContent=`${picked.size} selected`;
+}
+document.querySelectorAll("[data-bulk]").forEach(b=>b.onclick=()=>{
+  const ids=[...picked];
+  if(b.dataset.bulk==="clear"){picked.clear();renderGrid();return;}
+  bulk(ids,{exclude:b.dataset.bulk==="out"});
+});
+$("bulkSize").onchange=e=>{if(!e.target.value)return;bulk([...picked],{size:e.target.value});e.target.value="";};
+
+function select(id,scroll=true){
   sel=id; document.body.classList.add("picked");
-  const p=photos.find(x=>x.id===id);
+  const p=photos.find(x=>x.id===id); if(!p)return;
   $("noSel").style.display="none"; $("editor").style.display="block";
   $("preview").src=`/thumb/${id}.jpg`;
   const bits=[];
-  if(p.taken_at)bits.push(p.taken_at);
-  if(p.place)bits.push(p.place);
+  if(p.place)bits.push(`<b>${esc(p.place)}</b>`);
+  if(p.taken_at)bits.push(esc(p.taken_at));
   bits.push(`${p.width}×${p.height}`);
   if(p.strength)bits.push(`quality ${p.strength}/5`);
   let m=bits.join(" · ");
-  if(p.annotation)m+=`<br>${p.annotation}`;
+  const ai=[];
+  if(p.landmark)ai.push(`Recognised: <b>${esc(p.landmark)}</b>`);
+  if(p.detail)ai.push(esc(p.detail));
+  if(p.features&&p.features.length)ai.push("Nearby: "+esc(p.features.slice(0,3).join(", ")));
+  if(ai.length)m+=`<div class="ai">${ai.join("<br>")}</div>`;
   if(p.too_small)m+=`<br><strong>Too small to print at any useful size.</strong>`;
   $("meta").innerHTML=m;
-  $("desc").value=p.description||p.caption||"";
-  opts("sizes",album.sizes,SIZE_LABEL,p.size,v=>patch(id,{size:v}),p.can);
-  opts("treats",album.treatments,TREAT_LABEL,p.treatment,v=>patch(id,{treatment:v}));
-  $("sizeHint").textContent=SIZE_HINT[p.size]
-    +(p.can&&p.can["full-page"]==="no"?"  Crossed-out sizes need more pixels than this photograph has.":"");
+  if(document.activeElement!==$("desc")) $("desc").value=p.description||"";
+  $("desc").placeholder=p.caption&&!p.description?p.caption:"Your words — e.g. “Our first steps on the Morteratsch glacier”";
+  opts("sizes",album.sizes,SIZE_LABEL,p.size,v=>patch([id],{size:v}),p.can);
+  opts("treats",album.treatments,TREAT_LABEL,p.treatment,v=>patch([id],{treatment:v}));
+  $("sizeHint").textContent=SIZE_HINT[p.size]+(p.can&&p.can["full-page"]==="no"?"  Crossed-out sizes need more pixels than this photograph has.":"");
   $("treatHint").textContent=TREAT_HINT[p.treatment];
   $("optIn").setAttribute("aria-pressed",String(!p.exclude));
   $("optOut").setAttribute("aria-pressed",String(p.exclude));
-  $("exHint").textContent=p.exclude?"This photograph will not appear in the album.":"";
-  renderGrid();
+  document.querySelectorAll(".tile.sel").forEach(t=>t.classList.remove("sel"));
+  const t=document.querySelector(`.tile[data-id="${id}"]`);
+  if(t){t.classList.add("sel"); if(scroll)t.scrollIntoView({block:"nearest"});}
 }
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 
 function opts(hostId,values,labels,current,onPick,can){
   const host=$(hostId); host.innerHTML="";
@@ -260,12 +457,12 @@ function opts(hostId,values,labels,current,onPick,can){
     const el=document.createElement("div");
     const state=can?can[v]:"ok";
     el.className="opt"+(state==="no"?" dead":"")+(state==="soft"?" soft":"");
-    el.setAttribute("role","button");
+    el.setAttribute("role","button"); el.tabIndex=0;
     el.setAttribute("aria-pressed",String(v===current));
     el.textContent=labels[v]||v;
     if(state==="no"){
       el.title=`Not enough detail — ${can[v+"_dpi"]} DPI at that size`;
-      el.onclick=()=>note(`This photograph is too small to print that big (${can[v+"_dpi"]} DPI). Choose a smaller size.`,true);
+      el.onclick=()=>note(`This photograph is too small to print that big (${can[v+"_dpi"]} DPI). Choose a smaller size.`,"err");
     }else{
       if(state==="soft")el.title=`A little soft at that size — ${can[v+"_dpi"]} DPI`;
       el.onclick=()=>onPick(v);
@@ -274,59 +471,213 @@ function opts(hostId,values,labels,current,onPick,can){
   });
 }
 
-async function patch(id,body){
-  const r=await fetch(`/api/photos/${id}`,{method:"PATCH",
-    headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  if(!r.ok){note(await r.text(),true);return;}
-  photos=await get("/api/photos"); album=await get("/api/album");
-  setCounts();
-  const s=$("saved"); s.className="saved on"; setTimeout(()=>s.className="saved",1100);
-  if(sel)select(sel); else renderGrid();
+async function patch(ids,body){ return bulk(ids,body,true); }
+async function bulk(ids,body,single){
+  if(!ids.length)return;
+  if(body.exclude===false)ids.forEach(id=>broughtBack.add(id));
+  try{
+    if(single&&ids.length===1) await send("PATCH",`/api/photos/${ids[0]}`,body);
+    else{const r=await send("PATCH","/api/photos",{ids,...body}); if(r.errors&&r.errors.length)note(r.errors.join("\n"),"err");}
+  }catch(e){note(e.message,"err");return;}
+  photos=await get("/api/photos");
+  if("exclude" in body&&ids.length>1)picked.clear();
+  setHeader(); renderGrid(); if(sel)select(sel,false);
+  status("Saved"); scheduleRerender();
 }
 
 let typing=null;
-$("desc").addEventListener("input",()=>{clearTimeout(typing);
-  typing=setTimeout(()=>sel&&patch(sel,{description:$("desc").value}),600);});
-$("optIn").onclick=()=>sel&&patch(sel,{exclude:false});
-$("optOut").onclick=()=>sel&&patch(sel,{exclude:true});
-$("btnProof").onclick=()=>window.open("/proof.pdf","_blank");
+$("desc").addEventListener("input",()=>{clearTimeout(typing);status("Typing…");
+  typing=setTimeout(()=>sel&&patch([sel],{description:$("desc").value}),700);});
+$("optIn").onclick=()=>sel&&patch([sel],{exclude:false});
+$("optOut").onclick=()=>sel&&patch([sel],{exclude:true});
+$("closeBtn").onclick=()=>{sel=null;document.body.classList.remove("picked");$("editor").style.display="none";$("noSel").style.display="block";renderGrid();};
+function step(d){const o=orderedPhotos();const i=o.findIndex(p=>p.id===sel);const n=o[Math.max(0,Math.min(o.length-1,i+d))];if(n)select(n.id);}
+$("prevBtn").onclick=()=>step(-1); $("nextBtn").onclick=()=>step(1);
 
-$("btnPlan").onclick=async()=>{
-  const first=$("btnPlan").textContent==="Design the album";
-  let comment=null;
-  if(!first){
-    comment=prompt("What should change?\n\nFor example: “page 4 is too crowded” or “put the harbour photographs earlier”.\n\nLeave empty to start again from scratch.");
-    if(comment===null)return;
-    if(!comment.trim())comment=null;
-  }
-  const r=await fetch("/api/plan",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({comment})});
-  if(!r.ok){note(await r.text(),true);return;}
-  $("btnPlan").disabled=true; $("bar").className="on"; poll();
-};
+document.addEventListener("keydown",e=>{
+  if(view!=="photos"||document.querySelector("dialog[open]"))return;
+  const typingIn=["TEXTAREA","INPUT","SELECT"].includes(document.activeElement.tagName);
+  if(typingIn){if(e.key==="Escape")document.activeElement.blur();return;}
+  if(!sel)return;
+  if(e.key==="ArrowRight"||e.key==="ArrowDown"){step(1);e.preventDefault();}
+  else if(e.key==="ArrowLeft"||e.key==="ArrowUp"){step(-1);e.preventDefault();}
+  else if(e.key==="x"||e.key==="X"){const p=photos.find(x=>x.id===sel);patch([sel],{exclude:!p.exclude});}
+  else if(e.key==="Enter"){$("desc").focus();e.preventDefault();}
+  else if(e.key==="Escape"){$("closeBtn").onclick();}
+});
 
-function poll(){
-  clearInterval(polling);
-  polling=setInterval(async()=>{
-    const j=await get("/api/job");
-    $("step").textContent=j.step; $("fill").style.width=j.progress+"%";
-    if(j.error){clearInterval(polling);$("bar").className="";$("btnPlan").disabled=false;
-      note(j.error,true);return;}
-    if(j.done){clearInterval(polling);
-      setTimeout(()=>{$("bar").className="";},900);
-      $("btnPlan").disabled=false; $("btnProof").disabled=false;
-      $("btnPlan").textContent="Design again";
-      const rep=await get("/api/report");
-      const bad=rep.issues.filter(i=>i.level==="error").length;
-      const warn=rep.issues.filter(i=>i.level==="warning").length;
-      note(bad? `${rep.pages} pages — ${bad} problem(s) to fix before printing.`
-              : `${rep.pages} pages, ${rep.min_dpi} DPI at the smallest${warn?`, ${warn} thing(s) to check`:""}. Open the preview.`);
-      load();
-    }
-  },900);
+// --- the preview follows every change, without a model call ---------------
+
+function scheduleRerender(){
+  if(!designed)return;
+  dirty=true; clearTimeout(rerenderTimer);
+  status("Saved — the preview will update in a moment");
+  rerenderTimer=setTimeout(rerender,2200);
+}
+async function rerender(){
+  if(!dirty)return;
+  try{await send("POST","/api/rerender");}
+  catch(e){ if(/already working/.test(e.message)){rerenderTimer=setTimeout(rerender,3000);return;}
+    note(e.message,"err");return;}
+  dirty=false; status("Updating the preview…"); poll(true);
 }
 
-load();
+// --- jobs -----------------------------------------------------------------
+
+function poll(quiet){
+  clearInterval(polling);
+  if(!quiet){$("bar").className="on";}
+  polling=setInterval(async()=>{
+    let j; try{j=await get("/api/job");}catch(e){return;}
+    const cost=j.cost&&j.cost.usd!=null?`${usd(j.cost.usd)}${j.cost.estimated?" ≈":""} so far · ${j.cost.calls} call(s)`:"";
+    $("step").textContent=j.step; $("fill").style.width=j.progress+"%";
+    $("barCost").textContent=[cost,j.seconds?`${Math.round(j.seconds)}s`:""].filter(Boolean).join(" · ");
+    if(quiet)status(j.step+"…");
+    if(j.error){clearInterval(polling);$("bar").className="";lockButtons(false);status("");
+      const c=j.cost&&j.cost.usd!=null?`\n\nThis session still cost ${usd(j.cost.usd)}.`:"";
+      note(j.error+c,"err");album=await get("/api/album");setHeader();return;}
+    if(j.done){clearInterval(polling);setTimeout(()=>{$("bar").className="";},700);lockButtons(false);
+      await finished(j); }
+  },800);
+}
+function lockButtons(on){$("btnPlan").disabled=on;$("fmtSel").disabled=on;}
+
+async function finished(j){
+  const r=j.result||{};
+  album=await get("/api/album"); photos=await get("/api/photos");
+  designed=album.versions.length>0; setHeader(); renderGrid(); if(sel)select(sel,false);
+  await refreshPages();
+  if(j.kind==="design"||j.kind==="revise"){
+    const rep=await get("/api/report");
+    const bad=rep.issues.filter(i=>i.level==="error").length;
+    const mins=Math.floor(j.seconds/60), secs=Math.round(j.seconds%60);
+    const took=mins?`${mins}m ${secs}s`:`${secs}s`;
+    const cost=r.usd!=null?` · this session cost ${usd(r.usd)}${r.estimated?" (estimated)":""}`:"";
+    note(`${j.kind==="design"?"Designed":"Revised"} in ${took}${cost}. ${rep.pages} pages`
+      +(bad?` — ${bad} problem(s) to fix before printing.`:`, ${rep.min_dpi} DPI at the smallest.`));
+    showView("book");
+  }else if(j.kind==="rerender"){
+    status("Preview up to date");
+    const back=(r.not_placed||[]).filter(id=>broughtBack.has(id));
+    broughtBack.clear();
+    if(back.length)
+      note(`${back.length} photograph(s) you brought back were not in this design (${back.join(", ")}). Use “Design again” to place them.`);
+  }else if(j.kind==="export"&&r.download){
+    status(""); note("Export ready — downloading."); window.location=r.download;
+  }
+}
+
+$("btnPlan").onclick=()=>{
+  if(!designed){startPlan(null);return;}
+  $("reviseText").value=""; $("dlgRevise").showModal(); $("reviseText").focus();
+};
+$("examples").innerHTML=EXAMPLES.map(x=>`<span class="opt" role="button">${x}</span>`).join("");
+$("examples").querySelectorAll(".opt").forEach(o=>o.onclick=()=>{const t=$("reviseText");t.value=(t.value?t.value.replace(/\s*$/,"; "):"")+o.textContent;t.focus();});
+$("reviseCancel").onclick=()=>$("dlgRevise").close();
+$("reviseGo").onclick=()=>{const c=$("reviseText").value.trim();$("dlgRevise").close();startPlan(c||null);};
+
+async function startPlan(comment){
+  clearTimeout(rerenderTimer); dirty=false;
+  try{await send("POST","/api/plan",{comment});}catch(e){note(e.message,"err");return;}
+  lockButtons(true); $("barCost").textContent=""; poll();
+}
+
+// --- settings: size, title, language ------------------------------------
+
+$("fmtSel").onchange=async e=>{
+  try{await send("PUT","/api/settings",{format:e.target.value});}catch(err){note(err.message,"err");e.target.value=album.format;return;}
+  album=await get("/api/album"); photos=await get("/api/photos"); setHeader(); renderGrid();
+  if(designed){dirty=true;rerender();note(`Book size changed to ${album.formats[album.format]}. Updating the preview…`);}
+};
+$("title").onclick=()=>{$("setTitle").value=album.title;$("setSub").value=album.subtitle||"";
+  $("setLang").value=album.language;$("dlgSettings").showModal();};
+$("setCancel").onclick=()=>$("dlgSettings").close();
+$("setSave").onclick=async()=>{
+  let r; try{r=await send("PUT","/api/settings",{title:$("setTitle").value,subtitle:$("setSub").value,language:$("setLang").value});}
+  catch(e){note(e.message,"err");return;}
+  $("dlgSettings").close(); album=await get("/api/album"); $("title").textContent=album.title; setHeader();
+  if(r.needs_design)note("Language changed. Use “Design again” so the captions are written in it.");
+  else if(r.changed.length&&designed){dirty=true;rerender();}
+};
+
+// --- costs ----------------------------------------------------------------
+
+$("costChip").onclick=async()=>{
+  const c=await get("/api/costs");
+  $("costsTotal").textContent=c.sessions.length?`${c.sessions.length} design session(s) · total ${usd(c.total_usd)}${c.estimated?" (some estimated)":""}. Updating captions, sizes or the book size afterwards costs nothing.`
+    :"Nothing designed yet. Each “Design” costs one session; changes you make afterwards are free.";
+  $("costsTable").innerHTML="<tr><th>When</th><th>What</th><th>Calls</th><th>Tokens in / out</th><th>Cost</th></tr>"+
+    c.sessions.map(s=>`<tr><td>${new Date(s.at).toLocaleString()}</td>
+      <td>${s.kind==="design"?"Design":"Design again"}${s.version?` → v${s.version}`:""}${s.ok?"":" <b>(failed)</b>"}
+        ${s.comment?`<br><span class="sub">“${esc(s.comment)}”</span>`:""}<br><span class="sub">${esc((s.models||[]).join(", "))} · ${Math.round(s.seconds)}s</span></td>
+      <td class="n">${s.calls}</td><td class="n">${(s.input_tokens||0).toLocaleString()} / ${(s.output_tokens||0).toLocaleString()}</td>
+      <td class="n"><b>${usd(s.usd)}</b>${s.estimated?" ≈":""}</td></tr>`).join("");
+  $("dlgCosts").showModal();
+};
+$("costsClose").onclick=()=>$("dlgCosts").close();
+
+// --- export ---------------------------------------------------------------
+
+$("exportList").innerHTML=EXPORTS.map(([k,l,h])=>`<button data-k="${k}">${l}<small>${h}</small></button>`).join("");
+$("btnExport").onclick=e=>{e.stopPropagation();$("exportMenu").classList.toggle("open");};
+document.addEventListener("click",()=>$("exportMenu").classList.remove("open"));
+$("exportList").querySelectorAll("button").forEach(b=>b.onclick=async()=>{
+  $("exportMenu").classList.remove("open");
+  const [kind,dpi]=b.dataset.k.split(":");
+  if(kind==="proof"&&!dirty){window.location="/proof.pdf";return;}
+  try{await send("POST","/api/export",{kind,dpi:Number(dpi||300)});}catch(e){note(e.message,"err");return;}
+  poll();
+});
+
+// --- the book view --------------------------------------------------------
+
+function showView(v){
+  view=v; $("main").className=v==="book"?"book":"";
+  $("tabPhotos").setAttribute("aria-selected",String(v==="photos"));
+  $("tabBook").setAttribute("aria-selected",String(v==="book"));
+  if(v==="book")renderBook();
+}
+$("tabPhotos").onclick=()=>showView("photos");
+$("tabBook").onclick=()=>showView("book");
+
+async function refreshPages(){
+  try{pages=await get("/api/pages");}catch(e){pages={count:0};}
+  $("pageCount").textContent=pages.count?`(${pages.count} pages)`:"";
+  if(view==="book")renderBook();
+}
+
+function renderBook(){
+  const b=$("book"); const bust=`?v=${pages.version}`;
+  if(!pages.count){b.innerHTML=`<div class="empty"><b>Nothing to show yet.</b><br>Choose your photographs, then press “Design the album”. The pages appear here.</div>`;return;}
+  const ar=album.formats[album.format]?(()=>{const m=album.formats[album.format].match(/([\d.]+) × ([\d.]+)/);return m?m[1]/m[2]:1;})():1;
+  let h=`<div class="bookhead"><b>Version ${pages.version}</b><span class="sub">${pages.count} pages · ${album.formats[album.format]}. Click a spread to see it large.</span>
+    <div class="grow" style="flex:1"></div><button class="small" onclick="window.open('/proof.pdf','_blank')">Open preview PDF</button></div><div class="spreads">`;
+  for(let i=1;i<=pages.count;i+=2){
+    h+=`<div><div class="spread" data-i="${i}" style="--ar:${ar}"><img loading="lazy" src="/pages/${i}.jpg${bust}">${i+1<=pages.count?`<img loading="lazy" src="/pages/${i+1}.jpg${bust}">`:""}</div>
+      <div class="slabel">pages ${i}–${i+1}</div></div>`;
+  }
+  h+=`</div><div class="versions"><h3>Versions</h3>`+album.versions.slice().reverse().map(v=>`<div class="vrow">
+      <span><b>v${v.version_no}</b></span><span class="what">${esc(v.user_comment||v.change_summary||"")}
+      ${v.cost_usd!=null?`<span class="sub"> · ${usd(v.cost_usd)}</span>`:""}</span>
+      <span class="when">${new Date(v.created_at).toLocaleString()}</span>
+      ${v.version_no===album.versions[album.versions.length-1].version_no?`<span class="sub">current</span>`:`<button class="small" data-rb="${v.version_no}">Go back to this</button>`}</div>`).join("")+`</div>`;
+  b.innerHTML=h;
+  b.querySelectorAll(".spread").forEach(s=>s.onclick=()=>openSpread(Number(s.dataset.i)));
+  b.querySelectorAll("[data-rb]").forEach(x=>x.onclick=async()=>{
+    try{await send("POST","/api/rollback",{to:Number(x.dataset.rb)});}catch(e){note(e.message,"err");return;} poll(true);});
+}
+let lbAt=1;
+function openSpread(i){lbAt=i;const bust=`?v=${pages.version}`;
+  $("lbPages").innerHTML=`<img src="/pages/${i}.jpg${bust}">`+(i+1<=pages.count?`<img src="/pages/${i+1}.jpg${bust}">`:"");
+  $("lbLabel").textContent=`pages ${i}–${Math.min(i+1,pages.count)} of ${pages.count}`;
+  if(!$("lightbox").open)$("lightbox").showModal();}
+$("lbPrev").onclick=()=>lbAt>1&&openSpread(lbAt-2);
+$("lbNext").onclick=()=>lbAt+2<=pages.count&&openSpread(lbAt+2);
+$("lbClose").onclick=()=>$("lightbox").close();
+$("lightbox").addEventListener("keydown",e=>{if(e.key==="ArrowRight")$("lbNext").onclick();if(e.key==="ArrowLeft")$("lbPrev").onclick();});
+
+// resume a job that was running when the page was reloaded
+(async()=>{await load(); const j=await get("/api/job"); if(j.running){lockButtons(true);poll(j.kind==="rerender");}})();
 </script>
 </body>
 </html>

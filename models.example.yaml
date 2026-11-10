@@ -18,6 +18,9 @@ default:
   base_url: openrouter
   model: anthropic/claude-sonnet-5.5
   # api_key: sk-or-...        # better: export OPENROUTER_API_KEY
+  # price_in: 3.0             # USD per million tokens, for the editor's cost line,
+  # price_out: 15.0           # when the model is not in providers.PRICES (OpenRouter
+  #                           # reports the real cost itself; local models are free)
 
 annotate:
   base_url: ollama            # http://localhost:11434/v1 — no key needed

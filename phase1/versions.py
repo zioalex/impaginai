@@ -22,10 +22,18 @@ class Version:
     user_comment: str | None
     change_summary: str | None
     created_at: str
+    # What the design session that produced this version cost, in USD (None for
+    # versions no model was asked for: settings re-applied, rollbacks).
+    cost_usd: float | None = None
+    kind: str | None = None         # "design" | "revise" | "settings" | "rollback"
 
     @property
     def filename(self) -> str:
         return f"v{self.version_no:03d}.json"
+
+    @property
+    def raw_filename(self) -> str:
+        return f"v{self.version_no:03d}.raw.json"
 
 
 class Store:
@@ -41,7 +49,8 @@ class Store:
         return json.loads(self.index_path.read_text())
 
     def versions(self) -> list[Version]:
-        return [Version(**v) for v in self._index()]
+        known = set(Version.__dataclass_fields__)
+        return [Version(**{k: x for k, x in v.items() if k in known}) for v in self._index()]
 
     def latest(self) -> Version | None:
         vs = self.versions()
@@ -61,7 +70,12 @@ class Store:
     def add(
         self, layout: dict, *, parent: int | None,
         user_comment: str | None = None, change_summary: str | None = None,
+        raw: dict | None = None, cost_usd: float | None = None, kind: str | None = None,
     ) -> Version:
+        """`raw` is the layout as the model returned it, before the user's
+        settings were applied. Kept beside the version so the settings can be
+        re-applied later — bringing back a photograph that was left out, say —
+        without asking the model again."""
         vs = self.versions()
         v = Version(
             version_no=(vs[-1].version_no + 1) if vs else 1,
@@ -69,10 +83,15 @@ class Store:
             user_comment=user_comment,
             change_summary=change_summary,
             created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            cost_usd=(round(cost_usd, 4) if cost_usd is not None else None),
+            kind=kind,
         )
         (self.layouts / v.filename).write_text(
             json.dumps(layout, ensure_ascii=False, indent=2)
         )
+        if raw is not None:
+            (self.layouts / v.raw_filename).write_text(
+                json.dumps(raw, ensure_ascii=False, indent=2))
         self.index_path.write_text(
             json.dumps([asdict(x) for x in vs + [v]], ensure_ascii=False, indent=2)
         )
@@ -89,7 +108,17 @@ class Store:
             layout, parent=self.latest().version_no if self.latest() else None,
             user_comment=f"rollback to v{to_version}",
             change_summary=f"restored the layout from version {to_version}",
+            raw=self.raw(to_version), kind="rollback",
         )
+
+    def raw(self, version_no: int | None = None) -> dict | None:
+        """The model's own layout for a version, before the user's settings."""
+        try:
+            v, _ = self.get(version_no)
+        except SystemExit:
+            return None
+        f = self.layouts / v.raw_filename
+        return json.loads(f.read_text()) if f.exists() else None
 
     def history(self) -> str:
         lines = []

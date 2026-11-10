@@ -172,7 +172,7 @@ def overlay_rect(g: Geometry, box, position: str) -> Rect:
     else:
         side = "left" if box.rect.x2 <= g.fold_x + g.bleed else "right"
     s = g.safe(side)
-    h = 9.0
+    h = 11.0   # room for two lines
     y = s.y if position.startswith("top") else s.y2 - h
     return Rect(s.x, y, s.w, h)
 
@@ -198,37 +198,76 @@ def _aspect(path: Path) -> float:
     return _ASPECTS[key]
 
 
+def _owns(g: Geometry, window: Rect, r: Rect) -> bool:
+    """Whether rectangle `r` belongs on the page this window shows.
+
+    A page window includes the bleed, so it overlaps the facing page's inner
+    edge — and a single-page full-bleed photograph deliberately runs one bleed
+    past the fold. Drawing everything that merely intersects the window
+    therefore printed a strip of the facing page's photograph (or its ink) at
+    the gutter. Each element is drawn on its own page only; a photograph that
+    genuinely spans the fold (calibration panoramas) is drawn on both.
+    """
+    if not r.intersects(window):
+        return False
+    if g.spans_fold(r):
+        return True
+    return _side_of(g, r) == _side_of(g, window)
+
+
+def _scrim(r: Rect, page: Rect, depth: float, top: bool = False) -> str:
+    """A soft dark gradient over the edge of a photograph, so white text set on
+    it reads on snow and sky as well as on shadow. Clipped to the trimmed page."""
+    x = max(r.x, page.x - 3)
+    x2 = min(r.x2, page.x2 + 3)
+    if top:
+        y, h = r.y, depth
+        cls = "scrim top"
+    else:
+        y, h = r.y2 - depth, depth
+        cls = "scrim"
+    return f'<div class="{cls} abs" style="{rect_style(Rect(x, y, x2 - x, h))}"></div>'
+
+
 def stamp_html(g: Geometry, window: Rect, photo: Rect | None, text: str) -> str:
     """Place and date for the first page of a location, set on the photograph's
     own page rather than on a divider page of its own.
 
-    Above the photograph, in the top margin, when there is paper there; laid
-    over the top of the photograph in white when it runs to the top edge.
+    Above the photograph, in the top margin, when there is room for it there;
+    otherwise laid over the top of the photograph in white, on a scrim. It never
+    overlaps a photograph in grey type, which is what made it unreadable.
     """
     side = _side_of(g, window)
     safe = g.safe(side)
+    trim = g.trim(side)
     col = g.text_column(side)
-    h = 5.0
-    if photo is not None and photo.y <= safe.y:
-        r = Rect(safe.x + 2, safe.y + 3, safe.w - 4, h)
-        cls = "stamp overlay"
-    else:
-        top = photo.y if photo is not None else col.y
-        x = max(photo.x, safe.x) if photo is not None else col.x
-        r = Rect(x, round(max(safe.y, top - h - 2.5), 2), safe.x2 - x, h)
-        cls = "stamp"
-    return f'<div class="{cls} abs" style="{rect_style(r)}">{esc(text)}</div>'
+    h = 4.2
+    room = (photo.y - safe.y) if photo is not None else col.y - safe.y
+    if photo is not None and room < h + 2.0:
+        r = Rect(max(photo.x, safe.x) + 3, max(photo.y, safe.y) + 3.5,
+                 min(photo.x2, safe.x2) - max(photo.x, safe.x) - 6, h)
+        scrim = _scrim(Rect(photo.x, photo.y, photo.w, photo.h), trim,
+                       min(22.0, photo.h * 0.35), top=True)
+        return scrim + f'<div class="stamp overlay abs" style="{rect_style(r)}">{esc(text)}</div>'
+    top = photo.y if photo is not None else col.y
+    x = max(photo.x, safe.x) if photo is not None else col.x
+    r = Rect(x, round(max(safe.y, top - h - 1.8), 2), safe.x2 - x, h)
+    return f'<div class="stamp abs" style="{rect_style(r)}">{esc(text)}</div>'
 
 
 def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window: Rect) -> str:
     parts: list[str] = []
+    side = _side_of(g, window)
+    page = g.trim(side)
 
     if rendered.chart:
         parts.append(charts.RENDERERS[rendered.chart](g))
 
     first_on_page: Rect | None = None
+    overlays: list[str] = []      # captions and scrims go above every photograph
+    band: list[str] = []          # captions set in the band under the page's photos
     for slot, box in zip(sp.slots, rendered.slots):
-        if not box.rect.intersects(window):
+        if not _owns(g, window, box.rect):
             continue
         src = photo_paths.get(slot.photo_id)
         if src is None:
@@ -236,40 +275,51 @@ def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window:
         fx, fy = slot.focal
         treat = getattr(slot, "treatment", "none")
         cls = "slot abs" + (f" t-{treat}" if treat and treat != "none" else "")
-        # Never cut away more of a photograph than geometry.MIN_CROP_KEEP
-        # allows: past that the slot shrinks to the photograph's own shape.
-        rect = fit_rect(box.rect, _aspect(src))
+        # A bleeding photograph always fills its page — cropped around the
+        # focal point, never shrunk into white. Elsewhere, never cut away more
+        # of a photograph than geometry.MIN_CROP_KEEP allows: past that the
+        # slot shrinks to the photograph's own shape.
+        rect = box.rect if box.bleeds else fit_rect(box.rect, _aspect(src))
         fitted = rect is not box.rect
-        if first_on_page is None:
+        if first_on_page is None or (rect.y, rect.x) < (first_on_page.y, first_on_page.x):
             first_on_page = rect
         parts.append(
             f'<img class="{cls}" src="{src.as_posix()}" '
             f'style="{rect_style(rect)}object-position:{fx * 100:.1f}% {fy * 100:.1f}%;">'
         )
-        if slot.caption and box.caption_style != "none" and slot.caption_position != "none":
-            own = _side_of(g, rect)
-            page = g.trim(own)
-            if box.caption_style == "overlay" and fitted and rect.y2 + 12 <= page.y2:
-                # The photograph no longer reaches the page edge, so a white
-                # overlay caption would land on white paper. Set it beneath.
-                safe = g.safe(own)
+        if not slot.caption or box.caption_style == "none" or slot.caption_position == "none":
+            continue
+        align = box.caption_align
+        extra = f" {align}" if align in ("right", "center") else ""
+        if box.caption_style == "overlay" and not fitted:
+            # On a bleeding photograph: white type at the foot of the safe
+            # area, on a scrim deep enough for two lines.
+            cr = overlay_rect(g, box, slot.caption_position)
+            top = slot.caption_position.startswith("top")
+            vis = Rect(max(rect.x, page.x), rect.y, min(rect.x2, page.x2) - max(rect.x, page.x), rect.h)
+            overlays.append(_scrim(vis, page, 34.0, top=top))
+            overlays.append(f'<div class="caption overlay{extra} abs" style="{rect_style(cr)}">'
+                            f'{esc(slot.caption)}</div>')
+        elif box.caption_style == "inset":
+            # A supporting photograph's own caption, inside its frame.
+            pad = 2.2
+            cr = Rect(rect.x + pad, rect.y2 - 9.0 - pad, rect.w - 2 * pad, 9.0)
+            overlays.append(_scrim(rect, page, min(18.0, rect.h * 0.45)))
+            overlays.append(f'<div class="caption overlay small{extra} abs" '
+                            f'style="{rect_style(cr)}">{esc(slot.caption)}</div>')
+        else:
+            if box.caption_rect is not None and not fitted:
+                cr = box.caption_rect
+            else:
+                safe = g.safe(_side_of(g, rect))
                 x = max(rect.x, safe.x)
                 cr = Rect(x, rect.y2 + 2.5, min(rect.x2, safe.x2) - x, 9)
-                cls = "caption"
-            elif box.caption_style == "overlay":
-                cr = overlay_rect(g, box, slot.caption_position)
-                cls = "caption overlay"
-            else:
-                cr = box.caption_rect or Rect(box.rect.x, box.rect.y2 + 4, box.rect.w, 9)
-                cls = "caption"
-            align = box.caption_align
-            if align in ("right", "center"):
-                cls += f" {align}"
-            if cr.intersects(window):
-                parts.append(f'<div class="{cls} abs" style="{rect_style(cr)}">{esc(slot.caption)}</div>')
+            band.append(f'<div class="caption{extra} abs" style="{rect_style(cr)}">'
+                        f'{esc(slot.caption)}</div>')
 
-    stamp = (sp.options or {}).get("stamps", {}).get(
-        _side_of(g, window))
+    parts += overlays + band
+
+    stamp = (sp.options or {}).get("stamps", {}).get(side)
     if stamp:
         parts.append(stamp_html(g, window, first_on_page, stamp))
 
@@ -278,10 +328,10 @@ def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window:
         value = getattr(text, tb.key, None) if text else None
         if not value:
             continue
-        if not tb.rect.intersects(window):
+        if not _owns(g, window, tb.rect):
             continue
         cls = f"tb {tb.role}"
-        if tb.invert or rendered.background.startswith("ink"):
+        if tb.invert or rendered.background == "ink" or rendered.background == f"ink-{side}":
             cls += " invert"
         style = rect_style(tb.rect) + f"text-align:{tb.align};"
         parts.append(f'<div class="{cls} abs" style="{style}">{esc(value)}</div>')
@@ -427,6 +477,49 @@ def render_pdf(html: str, html_path: Path, pdf_path: Path) -> None:
         browser.close()
 
 
+def render_jpegs(html: str, html_path: Path, out_dir: Path, dpi: int = 150,
+                 thumb_px: int | None = None) -> list[Path]:
+    """One JPEG per page, from the same HTML as the PDF. With `thumb_px`, small
+    page images of that width instead (the editor's page previews)."""
+    from playwright.sync_api import sync_playwright
+
+    html_path.parent.mkdir(parents=True, exist_ok=True)
+    html_path.write_text(html, encoding="utf-8")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for old in out_dir.glob("page-*.jpg"):
+        old.unlink()
+    files: list[Path] = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch(args=["--font-render-hinting=none"])
+        if thumb_px:
+            scale = 1.0
+        else:
+            scale = dpi / 96.0
+        page = browser.new_page(device_scale_factor=scale)
+        page.goto(html_path.resolve().as_uri(), wait_until="load")
+        page.wait_for_function(
+            "Array.from(document.images).every(i => i.complete && i.naturalWidth > 0)"
+        )
+        page.add_style_tag(content="body{margin:0} .sheet{margin:0}")
+        sheets = page.query_selector_all(".sheet")
+        if thumb_px and sheets:
+            w = sheets[0].bounding_box()["width"]
+            browser_scale = thumb_px / w
+            page.close()
+            page = browser.new_page(device_scale_factor=browser_scale)
+            page.goto(html_path.resolve().as_uri(), wait_until="load")
+            page.wait_for_function(
+                "Array.from(document.images).every(i => i.complete && i.naturalWidth > 0)"
+            )
+            sheets = page.query_selector_all(".sheet")
+        for i, el in enumerate(sheets, 1):
+            f = out_dir / f"page-{i:03d}.jpg"
+            el.screenshot(path=str(f), type="jpeg", quality=88 if thumb_px else 92)
+            files.append(f)
+        browser.close()
+    return files
+
+
 def drawn_widths_pt(page) -> list[float]:
     """Horizontal scale of every image placement on a page, in points.
 
@@ -501,7 +594,9 @@ def verify_pdf(
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["check", "proof", "print", "cover"])
+    ap.add_argument("command", choices=["check", "proof", "print", "cover", "jpeg"])
+    ap.add_argument("--dpi", type=int, default=150,
+                    help="jpeg only: resolution of the page images (150 preview, 300 print)")
     ap.add_argument("--layout", type=Path, required=True)
     ap.add_argument("--photos", type=Path, required=True)
     ap.add_argument("--lab", type=Path, default=HERE / "labs" / "saal.yaml")
@@ -535,9 +630,15 @@ def main() -> int:
         return 1
 
     css = (ASSETS / "style.css").read_text()
-    mode = "proof" if args.command == "proof" else "print"
+    mode = "proof" if args.command == "proof" or (args.command == "jpeg" and args.dpi <= 150) else "print"
     print(f"\nbuilding {mode} derivatives...")
     photo_paths = build_derivatives(layout, photos, g, mode, args.out.resolve() / "derivatives")
+
+    if args.command == "jpeg":
+        html, _ = build_inner_html(layout, g, photo_paths, css)
+        files = render_jpegs(html, args.out / "inner-jpeg.html", args.out / "pages", args.dpi)
+        print(f"  {len(files)} page images at {args.dpi} DPI in {args.out / 'pages'}")
+        return 0
 
     if args.command in ("proof", "print"):
         html, bleed_pages = build_inner_html(layout, g, photo_paths, css)

@@ -49,7 +49,12 @@ export ANTHROPIC_API_KEY=sk-ant-...     # Windows: set ANTHROPIC_API_KEY=...
 python phase2/server.py --album ./albums/demo --photos phase1/demo_photos
 ```
 
-Press **Design the album**, wait a minute or two, then **Open preview**.
+Press **Design the album** and wait a minute or two. The pages appear in the
+**Book** tab. Every change you make afterwards (a caption, leaving a photograph
+out, a size, the book size) updates the preview by itself, with no model call
+and no cost. **Export** gives the preview PDF, the print-ready PDF, the cover,
+or one JPEG per page. The chip in the header shows what each design session
+cost; click it for the list.
 
 ## Use your own photographs
 
@@ -67,11 +72,22 @@ Useful extras:
 
 | Flag | What it does |
 |---|---|
-| `--format 30x30` | page size; must exist in `phase0/labs/saal.yaml` |
+| `--format 30x30` | page size; must exist in `phase0/labs/saal.yaml` (also changeable in the editor) |
 | `--gap-hours 4` | a gap longer than this starts a new group |
 | `--radius-m 400` | moving this far starts a new group |
 | `--no-geocode` | skip place names entirely |
+| `--offline-places` | do not look up glacier, lake and peak names on OpenStreetMap |
 | `--host 0.0.0.0 --port 8000` | reachable from other machines on your network |
+
+### Glaciers, lakes and peaks by name
+
+The offline database knows towns, not the Morteratsch glacier. So each place
+(rounded to about a kilometre) is also looked up once on OpenStreetMap's public
+Overpass API, which returns the named glaciers, lakes, peaks, passes, rivers and
+viewpoints nearby. The nearest strong one leads the place ("Morteratschgletscher ·
+Pontresina"), and all of them are given to the model so captions can name them.
+This sends those rounded coordinates to `overpass-api.de`; answers are cached in
+`features_cache.json`. Pass `--offline-places` to keep everything on the machine.
 
 ### Naming places yourself
 
@@ -168,8 +184,12 @@ albums/sardinien/
   places.yaml         your own names for places (you write this)
   annotations.json    cached result of the one pass that looks at photographs
   places_cache.json   cached GPS lookups, so runs are repeatable
+  features_cache.json cached OpenStreetMap names near each place
+  settings.json       book size, title, language chosen in the editor
+  costs.jsonl         one line per design session: models, tokens, USD
   versions.json       version history
   layouts/v001.json   each version of the layout
+  layouts/v001.raw.json  the model's own layout, before your settings
   layout-v001.json    the version handed to the renderer
   renders/            the PDFs
   derivatives/        resized copies of your photographs

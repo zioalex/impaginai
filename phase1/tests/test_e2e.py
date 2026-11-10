@@ -119,6 +119,25 @@ class Editor:
             time.sleep(0.3)
         raise AssertionError(f"{what}\n--- editor log ---\n{self.log.read_text()[-3000:]}")
 
+    def send(self, method: str, path: str, body: dict):
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}",
+                                     data=json.dumps(body).encode(), method=method,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+
+    def job(self, path: str, body: dict | None = None) -> dict:
+        """Start a job (rerender, export) and wait for it."""
+        self.post(path, body or {})
+        result = {}
+
+        def finished():
+            j = self.get("/api/job") or {}
+            result.update(j)
+            return j.get("done") or j.get("error")
+        self.wait(finished, 180, f"{path} did not finish")
+        return result
+
     def build(self, comment: str | None = None) -> dict:
         self.post("/api/plan", {"comment": comment})
         result = {}
@@ -139,6 +158,13 @@ class Editor:
             self.proc.wait(10)
         except subprocess.TimeoutExpired:
             self.proc.kill()
+
+
+def T_pages(sp: dict) -> bool:
+    """Whether a spread is built from page compositions (and so takes aspects)."""
+    import templates_lib
+    spec = templates_lib.REGISTRY.get(sp["template"])
+    return bool(spec and spec.pages) and bool(sp.get("slots"))
 
 
 def main() -> int:
@@ -178,15 +204,70 @@ def main() -> int:
             assert list((tmp / "album" / "logs").glob("plan-*.json")), "failed attempts not logged"
             print("editor plan through 503 + empty json_schema reply + tool-call reply: ok")
 
+            # 2b. what the design session cost, live and logged: every answered
+            #     call (annotate batches and plan attempts; the 503 was not
+            #     answered), at the fake's reported $0.0125 each
+            assert job["kind"] == "design" and job["result"]["ok"], job
+            assert job["cost"]["calls"] >= 3 and abs(job["cost"]["usd"] - 0.0125 * job["cost"]["calls"]) < 1e-6, job["cost"]
+            costs = ed.get("/api/costs")
+            assert len(costs["sessions"]) == 1 and costs["total_usd"] == job["result"]["usd"], costs
+            assert ed.get("/api/album")["versions"][-1]["cost_usd"] == job["result"]["usd"]
+            print(f"session cost {costs['total_usd']} over {job['cost']['calls']} call(s): ok")
+
+            # 2c. leaving photographs out and writing a caption reach the book
+            #     with no model call; bringing one back restores it
+            album_dir = tmp / "album"
+            first = json.loads(sorted((album_dir / "layouts").glob("v001.json"))[0].read_text())
+            placed = [s["photo_id"] for sp in first["spreads"] for s in sp["slots"]]
+            drop, cap = placed[1], placed[0]
+            fake.requests.clear()
+            ed.send("PATCH", "/api/photos", {"ids": [drop], "exclude": True})
+            ed.send("PATCH", f"/api/photos/{cap}", {"description": "Unser Abend am Lej da Staz"})
+            j = ed.job("/api/rerender")
+            assert j.get("done") and not j.get("error"), j
+            assert not fake.requests, "re-applying settings called the model"
+            cur = json.loads(sorted((album_dir / "layouts").glob("v0*[0-9].json"))[-1].read_text())
+            ids = [s["photo_id"] for sp in cur["spreads"] for s in sp["slots"]]
+            assert drop not in ids, "the left-out photograph is still in the book"
+            caps = [s.get("caption") for sp in cur["spreads"] for s in sp["slots"] if s["photo_id"] == cap]
+            assert caps and all(c == "Unser Abend am Lej da Staz" for c in caps), caps
+            assert all(sp.get("options", {}).get("aspects") or not T_pages(sp)
+                       for sp in cur["spreads"]), "composed pages were not laid out for their photographs"
+            assert (ed.get("/api/pages") or {}).get("count") == len(cur["spreads"]) * 2, "no page previews"
+            ed.send("PATCH", "/api/photos", {"ids": [drop], "exclude": False})
+            ed.job("/api/rerender")
+            cur = json.loads(sorted((album_dir / "layouts").glob("v0*[0-9].json"))[-1].read_text())
+            assert drop in [s["photo_id"] for sp in cur["spreads"] for s in sp["slots"]], "could not bring it back"
+            assert len(ed.get("/api/costs")["sessions"]) == 1, "a settings change was counted as a session"
+            print("settings re-applied without the model, photograph left out and brought back: ok")
+
+            # 2d. book size and exports
+            r = ed.send("PUT", "/api/settings", {"format": "30x30"})
+            assert r["changed"] == ["format"], r
+            j = ed.job("/api/export", {"kind": "jpeg", "dpi": 30})
+            assert j.get("done") and not j.get("error"), j
+            import zipfile
+            z = zipfile.ZipFile(album_dir / "exports" / "pages.zip")
+            assert len(z.namelist()) >= 24, z.namelist()
+            j = ed.job("/api/export", {"kind": "print"})
+            assert j.get("done") and not j.get("error"), j
+            from pypdf import PdfReader
+            pg = PdfReader(str(album_dir / "exports" / "inner-print.pdf")).pages[0]
+            assert abs(float(pg.mediabox.width) / 72 * 25.4 - 306) < 0.5, "export ignored the book size"
+            ed.send("PUT", "/api/settings", {"format": "21x21"})
+            ed.job("/api/rerender")
+            print("book size and exports (page images, print PDF at 30x30): ok")
+
             # 3. a revision whose first reply is all reasoning and no content
             fake.requests.clear()
             fake.set_faults(["length"])
+            before = ed.versions()
             job = ed.build("page 4 is too crowded")
             assert job.get("done") and not job.get("error"), job
             rev = fake.of_kind("revise")
             assert len(rev) == 2 and rev[1]["max_tokens"] == 32000, rev
             assert rev[1]["reasoning"] in ("low", {"effort": "low"}), rev
-            assert ed.versions() == 2
+            assert ed.versions() == before + 1
             print("editor revise through an exhausted reasoning budget: ok")
 
             # 4. a refusal: readable error, nothing lost, no pointless retries
@@ -196,7 +277,7 @@ def main() -> int:
             assert job.get("error") and "refused" in job["error"], job
             assert not job["error"].startswith("PlanningError"), job["error"]
             assert len(fake.of_kind("revise")) == 1, "a refusal was retried"
-            assert ed.versions() == 2, "a failed revision changed the album"
+            assert ed.versions() == before + 1, "a failed revision changed the album"
             print("editor refusal reported, previous version kept: ok")
         finally:
             ed.stop()

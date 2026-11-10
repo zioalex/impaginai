@@ -56,7 +56,10 @@ def setup(args):
     if not ph:
         raise SystemExit(f"no photos found in {args.photos}")
     # Place names before clustering: the group label carries the location.
-    named = geocode.apply(ph, args.album, offline_db=not getattr(args, "no_geocode", False))
+    no_geo = getattr(args, "no_geocode", False)
+    named = geocode.apply(ph, args.album, offline_db=not no_geo,
+                          online=not (no_geo or getattr(args, "offline_places", False)),
+                          language=getattr(args, "language", None))
     ov = OV.Overrides.load(args.album)
     ph = OV.apply_to_photos(ph, ov)
     groups = cluster.assign(ph, args.gap_hours, args.radius_m)
@@ -159,8 +162,10 @@ def do_plan(args) -> int:
         target_spreads=args.spreads, thumb_dir=thumb_dir, groups=groups,
         log_dir=args.album / "logs",
     )
-    data = finish(res.layout.model_dump(mode="json", exclude_none=False), ov, groups, ph, lab)
-    v = store.add(data, parent=None, change_summary="initial plan")
+    raw = res.layout.model_dump(mode="json", exclude_none=False)
+    data = finish(json.loads(json.dumps(raw)), ov, groups, ph, lab)
+    v = store.add(data, parent=None, change_summary="initial plan", raw=raw,
+                  cost_usd=res.usage.cost_usd, kind="design")
     print(f"  {res.usage.line(priced=prov.name == 'anthropic' and not prov.base_url)}")
     print(f"  wrote v{v.version_no:03d} — {len(res.layout.spreads)} spreads / {res.layout.page_count} pages")
     return report(res.layout, args, g, lab, groups)
@@ -179,9 +184,11 @@ def do_revise(args) -> int:
         language=args.language, complete=providers.make_completer(prov),
         fallback=providers.make_fallback_completer(prov), groups=groups, log_dir=args.album / "logs",
     )
-    data = finish(res.layout.model_dump(mode="json", exclude_none=False), ov, groups, ph, lab)
+    raw = res.layout.model_dump(mode="json", exclude_none=False)
+    data = finish(json.loads(json.dumps(raw)), ov, groups, ph, lab)
     v = store.add(data, parent=parent.version_no, user_comment=args.comment,
-                  change_summary=res.layout.change_summary)
+                  change_summary=res.layout.change_summary, raw=raw,
+                  cost_usd=res.usage.cost_usd, kind="revise")
     print(f"  {res.usage.line(priced=prov.name == 'anthropic' and not prov.base_url)}")
     print(f"  wrote v{v.version_no:03d}: {res.layout.change_summary or '(no summary returned)'}")
     return report(res.layout, args, g, lab, groups)
@@ -219,6 +226,9 @@ def finish(data: dict, ov, groups, photos, lab=None) -> dict:
     notes = OV.apply_to_layout(data, ov)
     refocused = PG.apply_focal(data, {p.id: p for p in photos})
     notes += PG.repack(data, groups, lab)
+    import templates_lib
+    templates_lib.attach_aspects(data.get("spreads", []),
+                                 {p.id: (p.width, p.height) for p in photos})
     for n in notes:
         print(f"  {n}")
     if refocused:
@@ -289,6 +299,9 @@ def main() -> int:
                        help="GPS distance that starts a new place group")
         p.add_argument("--no-geocode", action="store_true",
                        help="skip place-name lookup entirely")
+        p.add_argument("--offline-places", action="store_true",
+                       help="do not look up glacier, lake and peak names on OpenStreetMap "
+                            "(that lookup sends photo coordinates to overpass-api.de)")
         p.add_argument("--format", default=None)
         p.add_argument("--language", default="de")
         providers.add_arguments(p)
