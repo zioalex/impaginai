@@ -73,8 +73,8 @@ class TemplateSpec:
 # Nothing crosses the fold. That is structural here, not a rule to remember:
 # a composition is built inside one page's content area and cannot reach past it.
 
-def _page_slots(g: Geometry, side: Side, comp_name: str, aspects=None) -> list[SlotBox]:
-    rects, feature, cap = compose.build_page(g, side, comp_name, aspects)
+def _page_slots(g: Geometry, side: Side, comp_name: str, aspects=None, pixels=None) -> list[SlotBox]:
+    rects, feature, cap = compose.build_page(g, side, comp_name, aspects, pixels)
     out: list[SlotBox] = []
     for i, r in enumerate(rects):
         is_feature = (i == feature)
@@ -109,8 +109,11 @@ def _pair(left: str, right: str):
         nb = compose.COMPOSITIONS[b].slots
         if len(asp) != na + nb:
             asp = []
-        slots = (_page_slots(g, "left", a, asp[:na] or None)
-                 + _page_slots(g, "right", b, asp[na:] or None))
+        px = list(o.get("pixels") or [])
+        if len(px) != len(asp):
+            px = []
+        slots = (_page_slots(g, "left", a, asp[:na] or None, px[:na] or None)
+                 + _page_slots(g, "right", b, asp[na:] or None, px[na:] or None))
         texts = []
         for page_side, name in (("left", a), ("right", b)):
             if name == "text":
@@ -318,6 +321,7 @@ def attach_aspects(spreads, dims: dict) -> int:
         if not ids or any(i not in dims for i in ids):
             continue
         asp = [round(dims[i][0] / dims[i][1], 4) for i in ids]
+        pix = [int(dims[i][0]) for i in ids]
         opts = get("options")
         if opts is None:
             opts = {}
@@ -326,5 +330,6 @@ def attach_aspects(spreads, dims: dict) -> int:
             else:
                 sp.options = opts
         opts["aspects"] = asp
+        opts["pixels"] = pix
         n += 1
     return n

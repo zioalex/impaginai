@@ -84,6 +84,7 @@ main:not(.book) #book{display:none}
 .badge{font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
        background:rgba(0,0,0,.72);color:#fff;padding:2px 6px;border-radius:5px}
 .badge.bad{background:var(--bad)}
+.badge.front{background:#b8860b}
 .qa{position:absolute;top:6px;right:6px;display:flex;gap:4px;opacity:0;transition:opacity .12s}
 .tile:hover .qa,.tile:focus-within .qa,.tile.off .qa .eye{opacity:1}
 .tile.off .qa{opacity:1}
@@ -216,6 +217,12 @@ kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:
           <div class="opt" id="optIn" role="button" tabindex="0" aria-pressed="true">Include</div>
           <div class="opt" id="optOut" role="button" tabindex="0" aria-pressed="false">Leave out</div>
         </div>
+
+        <label class="fld">Front page</label>
+        <div class="opts">
+          <div class="opt" id="optFront" role="button" tabindex="0" aria-pressed="false">★ Use as front page</div>
+        </div>
+        <div class="hint" id="frontHint">Opens the book and goes on the cover, with the album title. <a href="#" id="frontTitle">Change the title</a></div>
 
         <label class="fld">How big</label>
         <div class="opts" id="sizes"></div>
@@ -389,6 +396,7 @@ function tile(p){
     <div class="qa"><button class="eye ${p.exclude?"":"on"}" title="${p.exclude?"Bring back into the album (X)":"Leave out of the album (X)"}">${p.exclude?"🚫":"👁"}</button>
     <button class="pen" title="Write the caption (Enter)">✎</button></div></div><div class="cap"></div>`;
   const b=d.querySelector(".badges");
+  if(album.front_photo===p.id) b.innerHTML+=`<span class="badge front">★ front page</span>`;
   if(p.too_small) b.innerHTML+=`<span class="badge bad">too small</span>`;
   if(p.exclude) b.innerHTML+=`<span class="badge">left out</span>`;
   if(p.size!=="auto") b.innerHTML+=`<span class="badge">${SIZE_LABEL[p.size]}</span>`;
@@ -445,6 +453,12 @@ function select(id,scroll=true){
   $("treatHint").textContent=TREAT_HINT[p.treatment];
   $("optIn").setAttribute("aria-pressed",String(!p.exclude));
   $("optOut").setAttribute("aria-pressed",String(p.exclude));
+  const isFront=album.front_photo===p.id;
+  $("optFront").setAttribute("aria-pressed",String(isFront));
+  $("optFront").textContent=isFront?"★ Front page — click to undo":"★ Use as front page";
+  $("frontHint").firstChild.textContent=isFront
+    ?`This photograph opens the book and is on the cover, titled “${album.title}”. `
+    :(album.front_photo?"Another photograph is the front page now. ":"No front page chosen: the album picks its strongest photograph. ");
   document.querySelectorAll(".tile.sel").forEach(t=>t.classList.remove("sel"));
   const t=document.querySelector(`.tile[data-id="${id}"]`);
   if(t){t.classList.add("sel"); if(scroll)t.scrollIntoView({block:"nearest"});}
@@ -490,6 +504,15 @@ $("desc").addEventListener("input",()=>{clearTimeout(typing);status("Typing…")
   typing=setTimeout(()=>sel&&patch([sel],{description:$("desc").value}),700);});
 $("optIn").onclick=()=>sel&&patch([sel],{exclude:false});
 $("optOut").onclick=()=>sel&&patch([sel],{exclude:true});
+$("optFront").onclick=async()=>{
+  if(!sel)return;
+  const front=album.front_photo===sel?"":sel;
+  try{await send("PUT","/api/settings",{front_photo:front});}catch(e){note(e.message,"err");return;}
+  album=await get("/api/album"); photos=await get("/api/photos");
+  setHeader(); renderGrid(); select(sel,false);
+  status(front?"Front page set":"Front page cleared"); scheduleRerender();
+};
+$("frontTitle").onclick=e=>{e.preventDefault();$("title").onclick();};
 $("closeBtn").onclick=()=>{sel=null;document.body.classList.remove("picked");$("editor").style.display="none";$("noSel").style.display="block";renderGrid();};
 function step(d){const o=orderedPhotos();const i=o.findIndex(p=>p.id===sel);const n=o[Math.max(0,Math.min(o.length-1,i+d))];if(n)select(n.id);}
 $("prevBtn").onclick=()=>step(-1); $("nextBtn").onclick=()=>step(1);

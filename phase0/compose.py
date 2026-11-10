@@ -129,7 +129,7 @@ COMPOSITIONS: dict[str, Composition] = {
 }
 
 
-def build_page(g: Geometry, side: Side, name: str, aspects=None):
+def build_page(g: Geometry, side: Side, name: str, aspects=None, pixels=None):
     """Return (rects, feature_index, caption_rect) for one page composition.
 
     With `aspects` (width/height of each photograph, in slot order) the page is
@@ -142,7 +142,7 @@ def build_page(g: Geometry, side: Side, name: str, aspects=None):
     if comp.bleed:
         return [g.full_bleed(side)], 0, None
     if aspects and len(aspects) == comp.slots and all(a and a > 0 for a in aspects):
-        rects, cap = adaptive(g, side, list(aspects))
+        rects, cap = adaptive(g, side, list(aspects), pixels)
         return rects, 0, cap
     rects = [grid_rect(g, side, c) for c in comp.cells]
     feature = next((i for i, c in enumerate(comp.cells) if c.feature), 0)
@@ -160,6 +160,10 @@ def build_page(g: Geometry, side: Side, name: str, aspects=None):
 # feature stays the largest image.
 
 ADAPT_KEEP = 0.86     # never cut more than 14% of a photograph to fill space
+# A photograph alone on its page may lose a little more: a 2:1 phone panorama
+# on a 4:3 page otherwise floats in a band of white half the page high.
+ADAPT_KEEP_SINGLE = 0.75
+MIN_DPI = 200.0       # no photograph is enlarged past this to fill its page
 
 
 def _partitions(n: int):
@@ -172,7 +176,7 @@ def _partitions(n: int):
             yield [k] + rest
 
 
-def _lines(W: float, H: float, aspects: list[float], parts: list[int]):
+def _lines(W: float, H: float, aspects: list[float], parts: list[int], keep: float = ADAPT_KEEP):
     """Lay `aspects` out in rows of `parts` sizes inside W x H, top-left origin.
     Returns [(x, y, w, h)] in slot order, and the block's (w, h)."""
     G = GUTTER
@@ -187,9 +191,9 @@ def _lines(W: float, H: float, aspects: list[float], parts: list[int]):
     if sum(nat) > avail_h:                          # too tall: shrink, then widen
         s = avail_h / sum(nat)
         hs = [h * s for h in nat]
-        stretch_x = 1.0 / ADAPT_KEEP                # widen rows back towards W
+        stretch_x = 1.0 / keep                      # widen rows back towards W
     else:                                           # too short: heighten rows
-        f = min(avail_h / sum(nat), 1.0 / ADAPT_KEEP)
+        f = min(avail_h / sum(nat), 1.0 / keep)
         hs = [h * f for h in nat]
     out, y, block_w = [], 0.0, 0.0
     for r, h in zip(rows, hs):
@@ -208,22 +212,28 @@ def _lines(W: float, H: float, aspects: list[float], parts: list[int]):
     return out, block_w, y - G
 
 
-def adaptive(g: Geometry, side: Side, aspects: list[float]):
-    """Rectangles for photographs of the given aspect ratios on one page."""
+def adaptive(g: Geometry, side: Side, aspects: list[float], pixels=None,
+             min_dpi: float = MIN_DPI):
+    """Rectangles for photographs of the given aspect ratios on one page.
+
+    `pixels`, when known, is each photograph's pixel width: the whole block is
+    then scaled down (centred) until none prints below `min_dpi`, rather than
+    enlarging a small photograph into a soft one to fill the page."""
     c = g.text_column(side)
     W, H = c.w, c.h - CAPTION_BAND
     n = len(aspects)
+    keep = ADAPT_KEEP if n > 1 else ADAPT_KEEP_SINGLE
     best = None
     for parts in _partitions(n):
         for transpose in (False, True):
             if transpose and len(parts) == n and n == 1:
                 continue
             if transpose:
-                cells, bw, bh = _lines(H, W, [1 / a for a in aspects], parts)
+                cells, bw, bh = _lines(H, W, [1 / a for a in aspects], parts, keep)
                 cells = [(y, x, h, w) for (x, y, w, h) in cells]
                 bw, bh = bh, bw
             else:
-                cells, bw, bh = _lines(W, H, aspects, parts)
+                cells, bw, bh = _lines(W, H, aspects, parts, keep)
             areas = [w * h for (_, _, w, h) in cells]
             score = sum(areas) / (W * H)
             if n > 1:
@@ -234,6 +244,18 @@ def adaptive(g: Geometry, side: Side, aspects: list[float]):
             if best is None or score > best[0] + 1e-9:
                 best = (score, cells, bw, bh)
     _, cells, bw, bh = best
+    if pixels and len(pixels) == n:
+        # Cover-fit: the drawn width is the wider of the cell and the
+        # photograph scaled to the cell's height.
+        f = 1.0
+        for (x, y, w, h), a, px in zip(cells, aspects, pixels):
+            drawn = max(w, h * a)
+            limit = px / min_dpi * 25.4
+            if px and drawn > limit:
+                f = min(f, limit / drawn)
+        if f < 1.0:
+            cells = [(x * f, y * f, w * f, h * f) for (x, y, w, h) in cells]
+            bw, bh = bw * f, bh * f
     ox = c.x + (W - bw) / 2
     oy = c.y + (H - bh) / 2
     rects = [Rect(round(ox + x, 2), round(oy + y, 2), round(w, 2), round(h, 2))

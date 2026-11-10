@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -175,8 +176,15 @@ class Geocoder:
 # once and the answer cached in `features_cache.json`. This is the only
 # network call in the place pipeline; `online=False` (--offline-places) skips it.
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# The public instances are busy; one answers when the other is overloaded.
+OVERPASS_URLS = ("https://overpass-api.de/api/interpreter",
+                 "https://overpass.kumi.systems/api/interpreter")
 FEATURE_RADIUS_M = 2500
+TIMEOUT_S = 12.0
+# After a failure, stop asking for this long. Every reload of the editor used
+# to try again (and wait out the timeout again), printing the same line each time.
+COOLDOWN_S = 15 * 60
+_DOWN_UNTIL = 0.0
 
 # kind of feature -> how strongly it names a place (lower wins at equal distance)
 _KINDS = {
@@ -185,7 +193,7 @@ _KINDS = {
     "viewpoint": 3, "attraction": 3, "castle": 3, "monument": 4,
 }
 
-_QUERY = """[out:json][timeout:25];
+_QUERY = """[out:json][timeout:15];
 (
   nwr(around:{r},{lat},{lon})["natural"~"^(glacier|water|peak|valley|bay|beach)$"]["name"];
   nwr(around:{r},{lat},{lon})["waterway"~"^(river|waterfall)$"]["name"];
@@ -212,16 +220,24 @@ def _kind(tags: dict) -> str:
     return "place"
 
 
-def _overpass(lat: float, lon: float, language: str | None, timeout: float = 30.0) -> list[dict]:
+def _overpass(lat: float, lon: float, language: str | None, timeout: float = TIMEOUT_S) -> list[dict]:
     import urllib.parse
     import urllib.request
 
     q = _QUERY.format(r=FEATURE_RADIUS_M, lat=f"{lat:.4f}", lon=f"{lon:.4f}")
-    req = urllib.request.Request(
-        OVERPASS_URL, data=urllib.parse.urlencode({"data": q}).encode(),
-        headers={"User-Agent": "photo-album-maker (self-hosted)"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        data = json.loads(r.read().decode("utf-8"))
+    data, last = None, None
+    for url in OVERPASS_URLS:
+        req = urllib.request.Request(
+            url, data=urllib.parse.urlencode({"data": q}).encode(),
+            headers={"User-Agent": "photo-album-maker (self-hosted)"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            break
+        except Exception as exc:
+            last = exc
+    if data is None:
+        raise last or RuntimeError("no Overpass instance answered")
     out = []
     for el in data.get("elements", []):
         tags = el.get("tags") or {}
@@ -251,15 +267,20 @@ class Features:
         self.failed = False
 
     def near(self, gps: tuple[float, float]) -> list[dict]:
+        global _DOWN_UNTIL
         k = _feature_key(gps)
         if k not in self.cache:
-            if not self.online or self.failed:
+            if not self.online or self.failed or time.monotonic() < _DOWN_UNTIL:
                 return []
             try:
+                # An empty answer is cached too: "nothing named here" is an
+                # answer, and asking again would only cost another wait.
                 self.cache[k] = self.fetch(round(gps[0], 2), round(gps[1], 2), self.language)
             except Exception as exc:  # no network, rate limited: carry on without
-                print(f"  place lookup unavailable ({str(exc)[:80]}); using town names only")
+                print(f"  place lookup unavailable ({str(exc)[:80]}); using town names only, "
+                      f"trying again in {COOLDOWN_S // 60} minutes")
                 self.failed = True
+                _DOWN_UNTIL = time.monotonic() + COOLDOWN_S
                 return []
             self._save()
         found = []
@@ -280,6 +301,21 @@ class Features:
             self.path.write_text(json.dumps(self.cache, ensure_ascii=False, indent=1))
         except Exception:
             pass
+
+
+def prefetch(photos, album_dir: Path, language: str | None = None, fetch=None) -> int:
+    """Look up the named places for every photograph's cell that is not cached
+    yet. Returns how many cells were asked. Safe to call often: cached cells and
+    the cooldown after a failure make it cheap."""
+    feats = Features(album_dir, online=True, language=language, fetch=fetch)
+    asked = 0
+    for p in photos:
+        if p.gps is None:
+            continue
+        if _feature_key(p.gps) not in feats.cache and not feats.failed:
+            asked += 1
+        feats.near(p.gps)
+    return asked
 
 
 def _short_town(label: str) -> str:

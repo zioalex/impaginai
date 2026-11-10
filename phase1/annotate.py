@@ -83,7 +83,9 @@ ridge above the tongue of the glacier')>"}]
 
 Be specific in `subject` too: "milky turquoise meltwater lake", not "lake".
 
-`focal` is the normalised point that must survive a crop — a face, the eyes of \
+`focal` is given as FRACTIONS of the width and height, each between 0 and 1 \
+(e.g. [0.5, 0.35] is the centre, a third of the way down) — never pixels. It is \
+the point that must survive a crop — a face, the eyes of \
 the main subject, or the centre of interest. `strength` is a craft judgement: 5 is \
 a photograph that can open a chapter, 1 is a record shot that belongs in a grid.
 
@@ -235,14 +237,14 @@ def run(
             pid = str(item.get("id", ""))
             if pid not in {p.id for p in batch}:
                 continue
-            focal = item.get("focal") or [0.5, 0.5]
+            focal = normalise_focal(item.get("focal"), _image_size(thumb_dir / f"{pid}.jpg"))
             store.by_id[pid] = Annotation(
                 id=pid,
                 subject=str(item.get("subject", ""))[:80],
                 people=int(item.get("people", 0) or 0),
                 who=str(item.get("who", ""))[:40],
                 scene=str(item.get("scene", ""))[:20],
-                focal=(float(focal[0]), float(focal[1])),
+                focal=focal,
                 strength=max(1, min(5, int(item.get("strength", 3) or 3))),
                 landmark=str(item.get("landmark", "") or "")[:60],
                 detail=str(item.get("detail", "") or "")[:120],
@@ -285,12 +287,54 @@ def extract_json_array(text: str) -> list[dict]:
     return json.loads(t[start : end + 1])
 
 
+def _image_size(path: Path) -> tuple[int, int] | None:
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            return im.size
+    except Exception:
+        return None
+
+
+def normalise_focal(raw, size: tuple[int, int] | None) -> tuple[float, float]:
+    """A focal point as fractions of the frame, whatever the model sent.
+
+    Vision models are asked for 0..1 and some answer in pixels of the image
+    they were shown ([180, 140] on a 512px copy). That crashed a whole build:
+    the value reached the layout after the planner had validated it. Pixels
+    are divided by `size` (the image the model saw) when known; anything left
+    outside the frame is clamped; garbage becomes the centre.
+    """
+    try:
+        x, y = float(raw[0]), float(raw[1])
+    except (TypeError, ValueError, IndexError, KeyError):
+        return (0.5, 0.5)
+    if x != x or y != y:                      # NaN
+        return (0.5, 0.5)
+    if (x > 1 or y > 1) and size and size[0] > 0 and size[1] > 0:
+        x, y = x / size[0], y / size[1]
+    elif x > 1 or y > 1:
+        # No size to go by: a percentage is the other common reading.
+        if x <= 100 and y <= 100:
+            x, y = x / 100, y / 100
+    return (round(min(1.0, max(0.0, x)), 4), round(min(1.0, max(0.0, y)), 4))
+
+
+def vision_size(width: int, height: int, px: int = VISION_PX) -> tuple[int, int]:
+    """The size of the vision copy made from a photograph of this size."""
+    s = min(1.0, px / max(width, height))
+    return (max(1, round(width * s)), max(1, round(height * s)))
+
+
 def apply(photos: list[Photo], anns: Annotations) -> None:
     for p in photos:
         a = anns.by_id.get(p.id)
         if a:
             p.annotation = a.line()
             p.strength = a.strength
-            p.suggested_focal = a.focal
+            # Annotations cached before focal points were checked may hold
+            # pixels; repair them here rather than pay to look again.
+            p.suggested_focal = normalise_focal(a.focal, vision_size(p.width, p.height))
             p.landmark = a.landmark
             p.detail = a.detail

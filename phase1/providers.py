@@ -628,6 +628,48 @@ def _require_all(node, keep_optional: set[str]) -> None:
             _require_all(v, keep_optional)
 
 
+def _drop_optional_nulls(node) -> None:
+    """For properties that are not required, `anyOf: [X, null]` becomes `X`."""
+    if isinstance(node, list):
+        for x in node:
+            _drop_optional_nulls(x)
+        return
+    if not isinstance(node, dict):
+        return
+    props = node.get("properties")
+    if isinstance(props, dict):
+        required = set(node.get("required", []))
+        for name, sub in props.items():
+            if name in required or not isinstance(sub, dict):
+                continue
+            alts = sub.get("anyOf")
+            if isinstance(alts, list):
+                rest = [a for a in alts if not (isinstance(a, dict) and a.get("type") == "null")]
+                if len(rest) == 1 and len(rest) < len(alts):
+                    keep = {k: v for k, v in sub.items() if k != "anyOf"}
+                    keep.update(rest[0])
+                    props[name] = keep
+            elif isinstance(sub.get("type"), list) and "null" in sub["type"]:
+                t = [x for x in sub["type"] if x != "null"]
+                sub["type"] = t[0] if len(t) == 1 else t
+    for v in node.values():
+        _drop_optional_nulls(v)
+
+
+def union_count(schema) -> int:
+    """How many parameters a schema types as a union (anyOf or a type array)."""
+    n = 0
+    if isinstance(schema, dict):
+        if "anyOf" in schema or isinstance(schema.get("type"), list):
+            n += 1
+        for v in schema.values():
+            n += union_count(v)
+    elif isinstance(schema, list):
+        for v in schema:
+            n += union_count(v)
+    return n
+
+
 def _layout_schema():
     """The layout JSON schema, for endpoints that constrain decoding to it.
 
@@ -656,6 +698,10 @@ def _layout_schema():
         _require_all(schema, keep_optional={
             "change_summary", "slots", "text", "options", "side", "caption",
             "caption_position", "treatment", "eyebrow", "title", "subtitle", "body"})
+        # Anthropic also refuses more than 16 union-typed parameters (every
+        # nullable field is one); the model has 17. An optional field can be
+        # left out instead of set to null, so it need not be nullable.
+        _drop_optional_nulls(schema)
         _SCHEMA_CACHE["v"] = schema
     except Exception:
         _SCHEMA_CACHE["v"] = None

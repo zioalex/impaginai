@@ -224,8 +224,15 @@ def finish(data: dict, ov, groups, photos, lab=None) -> dict:
     measured focal points, closing up empty pages, and the location stamps.
     Re-run on every version so an override set once holds."""
     notes = OV.apply_to_layout(data, ov)
+    placed = {s["photo_id"] for sp in data.get("spreads", []) for s in sp.get("slots") or []}
+    chrono = sorted(photos, key=lambda p: (p.taken_at is None,
+                                           p.taken_at.timestamp() if p.taken_at else 0.0,
+                                           p.upload_order))
+    notes += PG.repack(data, groups, lab,
+                       spare=[p.id for p in chrono if p.id not in placed and not p.unusable],
+                       taken={p.id: p.taken_at.isoformat() for p in photos if p.taken_at},
+                       strength={p.id: p.strength for p in photos})
     refocused = PG.apply_focal(data, {p.id: p for p in photos})
-    notes += PG.repack(data, groups, lab)
     import templates_lib
     templates_lib.attach_aspects(data.get("spreads", []),
                                  {p.id: (p.width, p.height) for p in photos})
