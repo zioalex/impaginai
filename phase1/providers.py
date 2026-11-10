@@ -1209,3 +1209,86 @@ def from_args(args) -> Provider:
         max_tokens=getattr(args, "max_tokens", None),
         reasoning=getattr(args, "reasoning", None),
     )
+
+
+# --- what an endpoint offers ---------------------------------------------
+
+_LIST_CACHE: dict[tuple, tuple[float, list[dict]]] = {}
+LIST_TTL_S = 600
+
+
+def list_models(p: Provider, need_vision: bool = False, timeout: float = 8.0) -> list[dict]:
+    """The models an endpoint offers, for the editor's suggestions:
+    [{"id", "name", "vision", "price_in", "price_out"}]. Raises RuntimeError
+    with a sentence when the endpoint cannot be asked. Cached for ten minutes.
+
+    The key goes only to the endpoint it belongs to, exactly as for a model
+    call. OpenRouter and Ollama answer without one."""
+    import httpx
+
+    base = (p.base_url or ("https://api.anthropic.com/v1" if p.name == "anthropic"
+                           else ALIASES["openai"])).rstrip("/")
+    key = (base, bool(p.api_key))
+    hit = _LIST_CACHE.get(key)
+    if hit and time.time() - hit[0] < LIST_TTL_S:
+        rows = hit[1]
+    else:
+        headers = {}
+        if p.name == "anthropic" and "anthropic.com" in base:
+            if not p.api_key:
+                raise RuntimeError("Anthropic lists its models only with an API key.")
+            headers = {"x-api-key": p.api_key, "anthropic-version": "2023-06-01"}
+            url = base + "/models?limit=100"
+        elif "localhost:11434" in base or "127.0.0.1:11434" in base:
+            url = base.rsplit("/v1", 1)[0] + "/api/tags"
+        else:
+            url = base + "/models"
+            if p.api_key and "openrouter" not in base:
+                headers["Authorization"] = f"Bearer {p.api_key}"
+        try:
+            r = httpx.get(url, headers=headers, timeout=timeout)
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            raise RuntimeError(f"{_short(base)} did not answer ({type(exc).__name__}).") from None
+        if r.status_code in (401, 403):
+            raise RuntimeError(f"{_short(base)} refused the key ({r.status_code}).")
+        if r.status_code >= 400:
+            raise RuntimeError(f"{_short(base)} answered {r.status_code}.")
+        try:
+            data = r.json()
+        except ValueError:
+            raise RuntimeError(f"{_short(base)} did not answer with a model list.") from None
+        rows = []
+        if "models" in data and isinstance(data["models"], list):            # Ollama
+            for m in data["models"]:
+                name = m.get("name") or m.get("model")
+                if name:
+                    fam = " ".join((m.get("details") or {}).get("families") or [])
+                    rows.append({"id": name, "name": name, "price_in": 0.0, "price_out": 0.0,
+                                 "vision": any(t in (name + " " + fam).lower()
+                                               for t in ("vl", "vision", "llava", "clip", "gemma3"))})
+        for m in data.get("data") or []:                                       # OpenAI-style
+            mid = m.get("id")
+            if not mid:
+                continue
+            arch = m.get("architecture") or {}
+            mods = arch.get("input_modalities") or []
+            pr = m.get("pricing") or {}
+
+            def per_m(v):
+                try:
+                    return round(float(v) * 1e6, 4)
+                except (TypeError, ValueError):
+                    return None
+            vision = ("image" in mods) if mods else (p.name == "anthropic" or None)
+            rows.append({"id": mid, "name": m.get("display_name") or m.get("name") or mid,
+                         "vision": vision, "price_in": per_m(pr.get("prompt")),
+                         "price_out": per_m(pr.get("completion"))})
+        rows.sort(key=lambda x: x["id"])
+        _LIST_CACHE[key] = (time.time(), rows)
+    if need_vision:
+        rows = [x for x in rows if x.get("vision") is not False]
+    return rows
+
+
+def _short(url: str) -> str:
+    return url.split("//", 1)[-1].split("/", 1)[0]

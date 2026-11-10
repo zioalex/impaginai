@@ -400,6 +400,12 @@ def main() -> int:
             saved = json.loads((tmp / "album2" / "settings.json").read_text())
             assert saved["models"]["plan"]["reasoning"] == "high" and saved["preset"] is None, saved
             assert ed2.get("/api/estimate")["high"] is True
+            lst = ed2.get("/api/models/list?role=plan")
+            assert isinstance(lst["models"], list) and ("error" in lst), lst
+            with urllib.request.urlopen(f"http://127.0.0.1:{ed2.port}/api/models/export", timeout=10) as r:
+                y = r.read().decode()
+                assert "attachment" in r.headers.get("Content-Disposition", "")
+            assert "fake/model" in y and "reasoning: high" in y and SECRET not in y and KEY not in y, y
         finally:
             ed2.stop()
         print("models chosen in the editor: preset, model, High for the planner only: ok")
@@ -451,6 +457,15 @@ def main() -> int:
             assert ed3.post("/api/albums", {"album": first["album"]})["photo_count"] == 5
             saved = json.loads((Path(first["album"]) / "settings.json").read_text())
             assert saved["photos_dir"] == str(trip.resolve()), saved
+            lib2 = home / "Elsewhere"
+            lib2.mkdir()
+            try:
+                ed3.send("PUT", "/api/library", {"path": str(tmp)})
+                raise AssertionError("a library outside the browse root was accepted")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 403
+            # ALBUM_LIBRARY in the environment still decides, and says so
+            assert ed3.send("PUT", "/api/library", {"path": str(lib2)})["library"] == str(home / "Albums")
         finally:
             ed3.stop()
         ed4 = Editor(Path(first["album"]), None, tmp / "editor4.log", env_extra=lib_env, photos=None)

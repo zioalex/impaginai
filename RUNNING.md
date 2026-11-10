@@ -39,8 +39,9 @@ welcome screen:
    that). Your photographs stay where they are.
 2. **Drop photos** — drag them onto the card, or click to choose them; they are
    copied into a new album's own `photos` folder.
-3. Name the album. New albums live in `~/PhotoAlbums/<name>` (`ALBUM_LIBRARY`
-   changes that); recent albums are listed for reopening.
+3. Name the album. New albums live in `~/PhotoAlbums/<name>` (change it in
+   **Settings → Album**, or with `ALBUM_LIBRARY`, which wins); recent albums are
+   listed for reopening.
 4. If no API key is set yet, the **Settings** tab opens: pick a model preset,
    paste a key (or choose *Fully local*), *Test models*, then **Design the album**.
 
