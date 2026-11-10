@@ -247,6 +247,35 @@ def engadin_run_fixes(groups):
     assert order == ["a", "b", "c", "d"], order
     print("pages of one place in the order taken: ok")
 
+    # a photograph the vision pass saw lying on its side is stood up: the turn
+    # goes into rotations.yaml, its shape and focal point turn with it, and a
+    # photograph the user turned by hand is left alone
+    import imaging
+    import annotate
+    import photos as PH
+    from PIL import Image
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        pdir, adir = td / "photos", td / "album"
+        pdir.mkdir()
+        Image.new("RGB", (400, 300), "red").save(pdir / "side.jpg")
+        Image.new("RGB", (400, 300), "blue").save(pdir / "mine.jpg")
+        imaging.set_rotation(pdir, "mine", 180)
+        anns = annotate.Annotations({
+            "side": annotate.Annotation(id="side", focal=(0.2, 0.3), turn=90, v=annotate.ANNOTATION_VERSION),
+            "mine": annotate.Annotation(id="mine", turn=90, v=annotate.ANNOTATION_VERSION)})
+        ph = PH.read_dir(pdir)
+        turned = annotate.apply_turns(ph, anns, adir / "annotations.json", pdir, adir)
+        assert turned == ["side"], turned
+        assert imaging.rotations(pdir) == {"side": 90, "mine": 180}, imaging.rotations(pdir)
+        again = annotate.Annotations.load(adir / "annotations.json")
+        assert again.by_id["side"].turn == 0 and tuple(again.by_id["side"].focal) == (0.7, 0.2)
+        side = next(p for p in PH.read_dir(pdir) if p.id == "side")
+        assert (side.width, side.height) == (300, 400), (side.width, side.height)
+        with Image.open(pdir / "side.jpg") as im:
+            assert R.to_srgb(im).size == (300, 400)
+    print("sideways photographs stood up from the vision pass: ok")
+
 
 def adaptive_pages():
     """A composed page is laid out for its photographs' real shapes: nothing

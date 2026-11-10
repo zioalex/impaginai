@@ -139,7 +139,7 @@ class FakeModel:
             ids = re.findall(r"^id: (\S+)$", "\n".join(users), re.M)
             return 200, self._reply(json.dumps([
                 {"id": i, "subject": "placeholder", "people": 0, "who": "", "scene": "test",
-                 "focal": [0.5, 0.5], "strength": 3} for i in ids]))
+                 "focal": [0.5, 0.5], "strength": 3, "turn": 0} for i in ids]))
 
         layout = dict(self.layout)
         if kind == "revise":
