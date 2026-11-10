@@ -254,6 +254,43 @@ def main() -> int:
             except urllib.error.HTTPError as exc:
                 assert exc.code == 400
             ed.send("PATCH", f"/api/photos/{turn['id']}", {"compose": False})
+
+            # 2d. the Settings tab: options, locks, live group preview, and a
+            #     change that re-applies to the book without a model call
+            cfg = ed.get("/api/config")
+            keys = {o["key"]: o for o in cfg["options"]}
+            assert {"lab", "length", "density", "selection", "captions", "gap_hours",
+                    "radius_m", "vision_px", "auto_rotate", "geocode", "online_places"} <= set(keys)
+            assert keys["geocode"]["locked"], "--no-geocode should lock place names"
+            try:
+                ed.send("PUT", "/api/config", {"geocode": True})
+                raise AssertionError("a locked setting was changed")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 409
+            try:
+                ed.send("PUT", "/api/config", {"density": "enormous"})
+                raise AssertionError("an invalid value was accepted")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 400
+            prev = ed.get("/api/groups/preview?gap_hours=1&radius_m=100")
+            assert prev["count"] >= cfg["group_count"], (prev, cfg["group_count"])
+            r = ed.send("PUT", "/api/config", {"gap_hours": 8})
+            assert r["changed"] == ["gap_hours"] and r["needs"] == ["rerender"], r
+            assert ed.get("/api/config")["options"][[o["key"] for o in cfg["options"]].index("gap_hours")]["value"] == 8
+            saved = json.loads((album_dir / "settings.json").read_text())
+            assert saved["options"]["gap_hours"] == 8 and "geocode" not in saved["options"], saved
+            fake.requests.clear()
+            r = ed.send("PUT", "/api/config", {"captions": "none"})
+            assert r["needs"] == ["rerender", "redesign"], r
+            j = ed.job("/api/rerender")
+            assert j.get("done") and not j.get("error"), j
+            assert not fake.requests, "a settings change called the model"
+            cur = json.loads(sorted((album_dir / "layouts").glob("v0*[0-9].json"))[-1].read_text())
+            caps = {s.get("caption") for sp in cur["spreads"] for s in sp["slots"]} - {None}
+            mine = {x["description"] or x["caption"] for x in ed.get("/api/photos")} - {None}
+            assert caps and caps <= mine, caps - mine
+            ed.send("PUT", "/api/config", {"captions": "personal", "gap_hours": 4})
+            print("settings tab: options, locks, preview, re-applied without the model: ok")
             ed.send("PATCH", "/api/photos", {"ids": [drop], "exclude": False})
             ed.job("/api/rerender")
             cur = json.loads(sorted((album_dir / "layouts").glob("v0*[0-9].json"))[-1].read_text())

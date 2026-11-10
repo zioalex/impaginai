@@ -244,7 +244,9 @@ def apply_focal(layout: dict, photos_by_id: dict) -> int:
 def repack(layout: dict, groups, lab: dict | None = None, spare=None,
            taken: dict | None = None, front: str | None = None,
            strength: dict | None = None, together: set[str] | None = None,
-           alone: set[str] | None = None, no_bleed: set[str] | None = None) -> list[str]:
+           alone: set[str] | None = None, no_bleed: set[str] | None = None,
+           density: str = "balanced", use_all: bool = False, place_names: bool = True,
+           split_short: bool = True) -> list[str]:
     """Rebuild the spreads with no empty pages. Returns a log.
 
     `spare` lists photo ids the layout left out that may still be used, in
@@ -269,7 +271,13 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
     in `alone` (marked full-page) are never composed with them.
 
     A front photograph in `no_bleed` (too few pixels to fill a page) is set
-    inside the margins with the title beneath it instead of to the edges."""
+    inside the margins with the title beneath it instead of to the edges.
+
+    The editor's settings: `density` "airy" never folds single photographs
+    together, "dense" also folds a single into a neighbouring pair of the same
+    moment; `use_all` brings every photograph the design left out into the
+    book; `place_names` False prints no place names; `split_short` False keeps the
+    compositions and pads a short book with blank pages instead."""
     spreads = layout.get("spreads", [])
     if not spreads:
         return []
@@ -396,6 +404,11 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
         elif p.stamp and by_photo:
             # A divider title that does not open a new location adds nothing.
             p.stamp = None
+    if not place_names:
+        for p in pages:
+            p.stamp = None
+        if opening and opening.get("text"):
+            opening["text"] = {**opening["text"], "eyebrow": None}
 
     # Never below the lab minimum, and a whole number of increments. The
     # front page is one page: the first ordinary page faces it.
@@ -425,8 +438,8 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
     # A photograph the user wants composed is in the book, whatever the
     # design decided.
     on_pages = {s["photo_id"] for p in pages for s in p.slots}
-    brought = [pid for pid in (spare or []) if pid in together and pid not in on_pages
-               and pid != pick]
+    brought = [pid for pid in (spare or []) if (use_all or pid in together)
+               and pid not in on_pages and pid != pick]
     for pid in brought:
         insert_solo(pid)
 
@@ -435,7 +448,7 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
     # small picture in a field of white on every page. Full-bleed pages are
     # left alone — those are meant to be big.
     i = 0
-    while i + 1 < len(pages):
+    while density != "airy" and i + 1 < len(pages):
         a, b = pages[i], pages[i + 1]
         ga = by_photo.get(a.slots[0]["photo_id"]) if a.slots else None
         gb = by_photo.get(b.slots[0]["photo_id"]) if b.slots else None
@@ -445,9 +458,24 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
                                    a.stamp, a.note)]
         i += 1
 
+    # Dense: a single photograph next to a pair of the same moment joins it.
+    i = 0
+    while density == "dense" and i + 1 < len(pages):
+        a, b = pages[i], pages[i + 1]
+        ga = by_photo.get(a.slots[0]["photo_id"]) if a.slots else None
+        gb = by_photo.get(b.slots[0]["photo_id"]) if b.slots else None
+        pair = {"duo-stack", "duo-offset"}
+        if (ga is gb and ga is not None and not b.stamp
+                and total(len(pages) - 1) >= min_pages
+                and ((a.comp in pair and b.comp in SINGLES)
+                     or (a.comp in SINGLES and b.comp in pair))):
+            pages[i:i + 2] = [Page("trio-feature", a.slots + b.slots, a.section_id,
+                                   a.stamp, a.note)]
+        i += 1
+
     composed = _compose_flagged(pages, together, by_photo, set(alone or ()) - together)
 
-    while (total(len(pages)) < min_pages or total(len(pages)) % inc
+    while ((split_short and total(len(pages)) < min_pages) or total(len(pages)) % inc
            or odd(len(pages))) and _split_one(pages, together):
         pass
 
@@ -527,7 +555,7 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
     log = [f"repacked {before_pages} pages into {len(out) * 2}"
            + (f", {lone} page(s) left empty" if lone else ", no empty pages")]
     if brought:
-        log.append(f"brought in to be composed (your choice): {', '.join(brought)}")
+        log.append(f"brought into the book (your choice): {', '.join(brought)}")
     if composed:
         log.append(f"composed with other photographs (your choice): {', '.join(composed)}")
     if added:

@@ -216,9 +216,61 @@ def groups_block(groups) -> str:
     )
 
 
+DENSITY = {
+    "airy": "AIRY — about 1 to 2 photographs per page. Give strong frames a page of their "
+            "own (`single-centered`, `full-bleed-single`, `two-up-equal`); compose only "
+            "photographs that clearly belong together. More pages, bigger pictures.",
+    "balanced": "BALANCED — about 2 to 3 photographs per page, a mix of single photographs "
+                "and composed pages.",
+    "dense": "DENSE — about 3 to 4 photographs per page. Put the photographs of one moment "
+             "on composed pages (`hero-and-trio`, `trio-page`, `grid-four`, "
+             "`column-and-solo`); keep single photographs for the strongest frames only. "
+             "Fewer pages, smaller pictures.",
+}
+SELECTION = {
+    "all": "EVERY PHOTOGRAPH — place every photograph in the list exactly once, except "
+           "those marked TOO SMALL TO PRINT. Do not leave any out, even weak or similar "
+           "frames: put those in the small slots of composed pages.",
+    "best": "BEST OF — leave out weak frames (strength 1-2 that add nothing) and "
+            "near-duplicates, the way a picture editor would. Keep every place and every "
+            "person who matters represented.",
+    "strongest": "ONLY THE STRONGEST — a short, tight book. For each place keep only its "
+                 "best frames (strength 4-5, or the best one or two if none is that strong), "
+                 "and drop near-duplicates ruthlessly.",
+}
+CAPTIONS = {
+    "personal": "PERSONAL — first person plural, as the people who made the trip, as "
+                "described under Captions.",
+    "descriptive": "DESCRIPTIVE — say plainly what is in the photograph, with its proper name "
+                   "where one is known. No first person, no feelings, 4 to 10 words.",
+    "place": "NONE — set every `caption` to null. The place and date are printed "
+             "automatically.",
+    "none": "NONE — set every `caption` to null.",
+}
+
+
+def preferences_block(prefs: dict | None) -> str:
+    """The user's choices from the editor's Settings, as instructions that
+    override the defaults in the brief."""
+    if not prefs:
+        return ""
+    lines = []
+    if prefs.get("density") in DENSITY:
+        lines.append(f"- Density: {DENSITY[prefs['density']]}")
+    if prefs.get("selection") in SELECTION:
+        lines.append(f"- Selection: {SELECTION[prefs['selection']]}")
+    if prefs.get("captions") in CAPTIONS:
+        lines.append(f"- Captions: {CAPTIONS[prefs['captions']]} The user's own words in "
+                     "the caption column are always kept as written.")
+    if not lines:
+        return ""
+    return ("\n\nTHE USER'S PREFERENCES (these override the general guidance in the brief "
+            "where they differ):\n" + "\n".join(lines))
+
+
 def plan_user_content(
     title: str, subtitle: str | None, fmt: str, language: str,
-    photos: list[Photo], target_spreads: int | None, groups=None
+    photos: list[Photo], target_spreads: int | None, groups=None, prefs: dict | None = None
 ) -> str:
     ask = (
         f"Lay out {len(photos)} photographs as an album."
@@ -234,19 +286,21 @@ def plan_user_content(
     ask += (
         "\n\nThe photographs are listed in the order the user arranged them. That order is "
         "a hint about their intent, not an instruction; resequence where the book is better for it."
+        f"{preferences_block(prefs)}"
         f"{groups_block(groups)}"
         f"\n\n{photo_block(photos)}"
     )
     return ask
 
 
-def revise_user_content(current: dict, photos: list[Photo], comment: str, groups=None) -> str:
+def revise_user_content(current: dict, photos: list[Photo], comment: str, groups=None,
+                        prefs: dict | None = None) -> str:
     return (
         "Here is the current album layout, the photo list, and a comment from the user.\n\n"
         "Return the COMPLETE revised layout JSON — not a patch, not a diff. Change what the "
         "comment asks for and what follows from it; leave everything else alone. Set "
         "`change_summary` to one line describing what you changed.\n\n"
-        f"USER COMMENT:\n{comment}\n\n"
+        f"USER COMMENT:\n{comment}{preferences_block(prefs)}\n\n"
         f"CURRENT LAYOUT:\n{json.dumps(current, ensure_ascii=False, indent=1)}\n\n"
         f"PHOTOS:{groups_block(groups)}\n{photo_block(photos)}"
     )
