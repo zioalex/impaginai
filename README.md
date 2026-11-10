@@ -36,11 +36,19 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
 
+python phase2/server.py
+```
+
+Open the address it prints. A welcome screen asks for your photographs (choose
+a folder, or drop them in) and a name; the **Settings** tab then offers a model
+preset and a place for your API key. To try it first with the 22 synthetic
+photographs (real EXIF) the repository ships:
+
+```bash
 python phase2/server.py --album ./albums/demo --photos phase1/demo_photos
 ```
 
-Open the address it prints. The repository ships 22 synthetic photographs with
-real EXIF, so this works before you supply any of your own. Designing an album
+That works before you supply any of your own. Designing an album
 needs a model; everything else — grouping, descriptions, sizes, preview
 rendering — runs locally without one.
 

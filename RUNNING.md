@@ -25,6 +25,32 @@ happen mid-album:
 python -c "import reverse_geocoder as rg; rg.search([(47.4, 8.6)])"
 ```
 
+## The shortest way in
+
+```bash
+python phase2/server.py
+```
+
+Open `http://127.0.0.1:8000`. With no album given, the editor starts on a
+welcome screen:
+
+1. **Use a folder of photos** — *Choose folder…* opens a folder browser (it
+   starts in your home folder and cannot leave it; `--browse-root` changes
+   that). Your photographs stay where they are.
+2. **Drop photos** — drag them onto the card, or click to choose them; they are
+   copied into a new album's own `photos` folder.
+3. Name the album. New albums live in `~/PhotoAlbums/<name>` (`ALBUM_LIBRARY`
+   changes that); recent albums are listed for reopening.
+4. If no API key is set yet, the **Settings** tab opens: pick a model preset,
+   paste a key (or choose *Fully local*), *Test models*, then **Design the album**.
+
+Later, **＋ Add photos** (or dropping files anywhere on the window) adds
+photographs to the open album, and **Settings → Album** changes its photo folder
+or opens another album without restarting. An album remembers its photo folder,
+so `python phase2/server.py --album ~/PhotoAlbums/engadin-2026` reopens it.
+On a non-local `--host`, folders, uploads and keys are refused over the network
+unless `--allow-remote-settings` is given.
+
 ## Try it with the demo photographs
 
 The repository ships 22 synthetic photographs with real EXIF — four locations

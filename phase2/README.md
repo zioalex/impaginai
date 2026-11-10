@@ -48,6 +48,14 @@ Then one button: **Design the album**. After the first run it becomes *Design
 again…*, which opens a dialog asking what should change in plain language (with
 examples to click) and sends that as a revision.
 
+**Albums**: started without `--album`, the editor opens on a welcome screen —
+use a folder of photos (a folder browser that stays inside `--browse-root`,
+default your home folder) or drop photos into a new album, and reopen recent
+albums. **＋ Add photos** and dropping files anywhere add photographs to the open
+album (copied into its photo folder; a file is never replaced; only images are
+accepted). **Settings → Album** shows where the photographs and the album's work
+live, changes the photo folder, and opens or makes another album — no restart.
+
 **Settings tab**: the choices that used to be command-line flags, each marked
 with what a change costs (*applies now · free*, *regroups now · free*, *next
 design*, *vision looks again*), and saved with the album in `settings.json`:
