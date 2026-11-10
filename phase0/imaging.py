@@ -171,3 +171,13 @@ def turn_point(f, degrees: int):
     """A normalised point on a photograph, after turning it `degrees` clockwise."""
     x, y = float(f[0]), float(f[1])
     return {90: (1 - y, x), 180: (1 - x, 1 - y), 270: (y, 1 - x)}.get(int(degrees) % 360, (x, y))
+
+
+def turn_box(box, degrees: int):
+    """A normalised box [x0, y0, x1, y1] after turning the photograph clockwise."""
+    if not box:
+        return box
+    a = turn_point((box[0], box[1]), degrees)
+    b = turn_point((box[2], box[3]), degrees)
+    return [round(min(a[0], b[0]), 4), round(min(a[1], b[1]), 4),
+            round(max(a[0], b[0]), 4), round(max(a[1], b[1]), 4)]
