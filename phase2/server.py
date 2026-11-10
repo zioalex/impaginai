@@ -73,7 +73,7 @@ from versions import Store
 app = FastAPI(title="Album editor")
 
 # Endpoints that work before any album is open: the welcome screen uses them.
-NO_ALBUM_OK = {"/api/album", "/api/albums", "/api/fs", "/api/job"}
+NO_ALBUM_OK = {"/api/album", "/api/albums", "/api/fs", "/api/job", "/api/library"}
 
 
 @app.middleware("http")
@@ -1122,6 +1122,67 @@ def api_keys_delete(slot: str):
     keystore.delete_key(slot)
     apply_models()
     return keystore.status(slot)
+
+
+@app.get("/api/models/list")
+def api_models_list(role: str = "plan", base_url: str | None = None):
+    """What the role's endpoint offers, for the model field's suggestions.
+    `base_url` asks another endpoint (the one just picked in the editor)."""
+    if role not in providers.ROLES:
+        raise HTTPException(400, f"unknown role {role!r}")
+    p = STATE["providers"][role]
+    if base_url and providers.ALIASES.get(base_url, base_url) != p.base_url:
+        if base_url == "anthropic":
+            p = providers.resolve(provider="anthropic", model=p.model)
+        else:
+            p = providers.resolve(provider="openai", base_url=base_url, model=p.model)
+    try:
+        rows = providers.list_models(p, need_vision=(role == "annotate"))
+    except RuntimeError as exc:
+        return {"models": [], "error": keystore.redact(str(exc))}
+    return {"models": rows[:400], "error": None, "count": len(rows)}
+
+
+@app.get("/api/models/export")
+def api_models_export():
+    """The model choice as a models.yaml for the command line (no keys)."""
+    import yaml
+
+    cfg = copy.deepcopy(STATE.get("model_cfg") or {})
+    if not cfg:
+        cfg = {}
+        for r, p in STATE["providers"].items():
+            block = {"model": p.model}
+            if p.base_url:
+                block["base_url"] = _alias(p.base_url)
+            if p.reasoning:
+                block["reasoning"] = p.reasoning
+            cfg[r] = block
+    for block in cfg.values():
+        if isinstance(block, dict):
+            block.pop("api_key", None)
+    head = ("# Exported from the album editor. Use it with:\n"
+            "#   python phase2/server.py --models models.yaml   (or album.py ... --models)\n"
+            "# Keys are not included: set them in the environment or in the editor.\n")
+    body = head + yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True)
+    return Response(body, media_type="application/x-yaml",
+                    headers={"Content-Disposition": 'attachment; filename="models.yaml"'})
+
+
+class LibraryIn(BaseModel):
+    path: str
+
+
+@app.put("/api/library")
+def api_library(body: LibraryIn):
+    """Where new albums are made."""
+    p = _browse_ok(Path(body.path))
+    if not p.is_dir():
+        raise HTTPException(404, "no such folder")
+    uc = user_config()
+    uc["library"] = str(p)
+    save_user_config(uc)
+    return {"ok": True, "library": str(library_dir())}
 
 
 @app.get("/api/estimate")
