@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -28,6 +29,8 @@ from planner import Completer, Usage, extract_json
 from photos import Photo
 
 BATCH = 8
+ANNOTATE_TRANSIENT = 3   # tries per batch on a network/server failure
+_sleep = time.sleep      # module-level so tests can replace it
 
 # How large a photograph is sent to the vision model.
 #
@@ -183,9 +186,23 @@ def run(
     if not todo:
         return store, usage
 
+    failed = answered = 0
     for i in range(0, len(todo), BATCH):
         batch = todo[i : i + BATCH]
-        text, u = complete(SYSTEM, [{"role": "user", "content": _batch_message(batch, thumb_dir)}])
+        try:
+            text, u = _ask(complete, batch, thumb_dir)
+        except Exception as exc:  # annotation is optional; never lose the build over it
+            failed += 1
+            print(f"  batch {i // BATCH + 1} failed ({str(exc)[:160]}); "
+                  f"those photos stay unannotated")
+            if failed >= 2 and not answered:
+                # Nothing has worked yet and the endpoint keeps failing: stop
+                # paying for (and waiting on) the remaining batches. The next
+                # build retries whatever is still missing.
+                print("  annotation endpoint is not answering; continuing without it")
+                break
+            continue
+        answered += 1
         usage.add(u)
         try:
             raw = extract_json_array(text)
@@ -209,6 +226,27 @@ def run(
         store.save(cache)
         print(f"  annotated {min(i + BATCH, len(todo))}/{len(todo)}")
     return store, usage
+
+
+def _ask(complete: Completer, batch: list[Photo], thumb_dir: Path):
+    """One batch, resending on a transient endpoint failure (429, 5xx, timeouts).
+
+    The planner has its own retry loop; this pass used to have none, so a single
+    dropped connection while looking at the photographs failed the whole build
+    before planning had even started.
+    """
+    from planner import TransientError, _backoff
+
+    msgs = [{"role": "user", "content": _batch_message(batch, thumb_dir)}]
+    for n in range(1, ANNOTATE_TRANSIENT + 1):
+        try:
+            return complete(SYSTEM, msgs)
+        except TransientError as exc:
+            if n == ANNOTATE_TRANSIENT:
+                raise
+            delay = _backoff(n, exc.retry_after)
+            print(f"  endpoint error ({str(exc)[:120]}); resending in {delay:g}s")
+            _sleep(delay)
 
 
 def extract_json_array(text: str) -> list[dict]:

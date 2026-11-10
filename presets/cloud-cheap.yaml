@@ -33,6 +33,24 @@ plan:
   #   python phase1/tools/bench_model.py --photos ~/Pictures/x \
   #          --base-url openrouter --compare anthropic/claude-haiku-5.5 \
   #                 deepseek/deepseek-v4.1-flash z-ai/glm-5.3-flash
+  # Reasoning models can think until the output budget is gone and then
+  # write nothing; `low` keeps that in check and the larger budget leaves room
+  # for a full layout either way.
+  reasoning: low
+  max_tokens: 32000
+  # Used only after the primary has clearly failed (endpoint down, unknown
+  # model, still empty after a retry) — never to second-guess an answer. A
+  # different vendor, because an outage rarely hits two at once.
+  fallback_model: openai/gpt-6-luna
 
 revise:
   model: anthropic/claude-haiku-5.5
+  # Reasoning models can think until the output budget is gone and then
+  # write nothing; `low` keeps that in check and the larger budget leaves room
+  # for a full layout either way.
+  reasoning: low
+  max_tokens: 32000
+  # Used only after the primary has clearly failed (endpoint down, unknown
+  # model, still empty after a retry) — never to second-guess an answer. A
+  # different vendor, because an outage rarely hits two at once.
+  fallback_model: openai/gpt-6-luna

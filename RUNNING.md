@@ -265,6 +265,9 @@ export ALBUM_MODEL=anthropic/claude-sonnet-4.5
 export ALBUM_API_KEY=sk-or-...
 export ALBUM_VISION=1          # 0 if the model cannot see images
 export ALBUM_JSON_MODE=0       # 1 to ask the endpoint to guarantee JSON
+export ALBUM_MAX_TOKENS=16000  # output budget per call
+export ALBUM_REASONING=default # default | low | off, see "When planning fails"
+export ALBUM_FALLBACK_MODEL=   # second model, used only after the first fails
 ```
 
 ### What the model has to be able to do
@@ -375,6 +378,12 @@ plan:
 # revise inherits the default
 ```
 
+Besides `model`, `base_url`, `json_mode`, `vision` and `api_key`, a block can
+set `max_tokens` (the output budget, default 16000), `reasoning` (`default`,
+`low` or `off`), `fallback_model` and `fallback_base_url`. The presets set the
+first three for `plan` and `revise`; the last two are explained under
+[When planning fails](#when-planning-fails).
+
 ```bash
 python phase2/server.py --album ./albums/sardinien --photos ~/Pictures/x \
        --models models.yaml
@@ -390,8 +399,10 @@ Both the CLI and the editor print the resolved routing at startup:
 
 Everything is overridable without a file. Precedence, strongest first:
 
-1. a role flag — `--plan-model`, `--annotate-base-url`
-2. a role environment variable — `ALBUM_PLAN_MODEL`, `ALBUM_ANNOTATE_BASE_URL`
+1. a role flag — `--plan-model`, `--annotate-base-url`, `--plan-max-tokens`,
+   `--plan-reasoning`, `--plan-fallback-model`
+2. a role environment variable — `ALBUM_PLAN_MODEL`, `ALBUM_ANNOTATE_BASE_URL`,
+   `ALBUM_PLAN_MAX_TOKENS`
 3. the role's block in `models.yaml`
 4. the generic flag or `ALBUM_MODEL` / `ALBUM_BASE_URL`
 5. the built-in default
@@ -639,6 +650,62 @@ If Playwright still reports a missing browser, point `PLAYWRIGHT_BROWSERS_PATH`
 at wherever you unpacked it.
 
 ## If something goes wrong
+
+### When planning fails
+
+The planner prints one line per rejected attempt, and says what kind of
+failure it was:
+
+- **endpoint error** — the provider answered with an error, or did not answer
+  (busy, rate-limited, unreachable). Busy and unreachable are retried with a
+  pause and usually recover. A `401`/`403` means the key is wrong, a `404`
+  usually means the model name is a typo or the endpoint does not host it;
+  retrying will not help those.
+- **empty reply, `finish=length`** — a reasoning model spent its whole output
+  budget thinking and wrote nothing. The planner retries once with less
+  reasoning and more room. To avoid the wasted call, set `reasoning: low` and a
+  larger `max_tokens` for the role (the presets do).
+- **the model refused** — the provider's safety filter declined the request.
+  Retrying the same model rarely changes that; use another model.
+- **bad JSON / schema** — the model wrote something, but not a valid layout.
+  The validation error is fed back and it tries again, up to three times.
+
+Each rejected attempt is saved with the raw reply under `<album>/logs/`, so you
+can see what the model actually said.
+
+The settings that matter, in `models.yaml` (per role, or in `default`), as a
+flag, or as an environment variable:
+
+| `models.yaml` | Flag | Environment | |
+|---|---|---|---|
+| `max_tokens` | `--max-tokens`, `--plan-max-tokens` | `ALBUM_MAX_TOKENS`, `ALBUM_PLAN_MAX_TOKENS` | output budget, default 16000 |
+| `reasoning` | `--reasoning`, `--plan-reasoning` | `ALBUM_REASONING`, `ALBUM_PLAN_REASONING` | `default` sends nothing, `low` limits thinking, `off` disables it where the endpoint allows (OpenRouter, Ollama) |
+| `fallback_model` | `--plan-fallback-model` | `ALBUM_FALLBACK_MODEL`, `ALBUM_PLAN_FALLBACK_MODEL` | second model for the role |
+| `fallback_base_url` | | `ALBUM_FALLBACK_BASE_URL` | only if the fallback lives on another endpoint |
+
+On Ollama, thinking together with forced JSON returns empty content, so the
+local preset sets `reasoning: off`.
+
+The **fallback model** is used once, and only after the first model has clearly
+failed: the endpoint stayed down through the retries, the model name was
+rejected, or the reply was still empty after the recovery attempt. It is not
+used to second-guess an answer, and a refusal does not trigger it. Choose a
+different vendor, since an outage rarely hits two at once. The presets name one
+for the cloud setups; `local.yaml` has none.
+
+**Startup check.** The editor sends one tiny request to the plan model (and the
+revise model, if it is a different one) when it starts, and shows the result
+instead of letting you find out after a minute of planning. A failure says
+why: no key, a rejected key, an unknown model, an endpoint that is unreachable
+or busy (that one may recover), a refusal, or an empty reply caused by
+reasoning. It never blocks the Design button. Skip it with `--no-preflight`, or
+run it on its own:
+
+```bash
+python phase1/album.py check --models models.yaml
+```
+
+It exits with status 1 if the plan model fails.
 
 **`can't open file 'album.py'`** — the CLI lives in `phase1/`; `cd phase1` first.
 

@@ -29,6 +29,11 @@ environment, then a sensible default.
     ALBUM_API_KEY    key; falls back to ANTHROPIC_API_KEY / OPENAI_API_KEY /
                      OPENROUTER_API_KEY depending on the provider
     ALBUM_VISION     "0" to declare the model cannot see images
+    ALBUM_MAX_TOKENS     output budget per call (default 16000)
+    ALBUM_REASONING      default | low | off — how much a reasoning model may think
+    ALBUM_FALLBACK_MODEL second model for the same role, tried only after the
+                         first has clearly failed (ALBUM_FALLBACK_BASE_URL if it
+                         lives on another endpoint)
 """
 
 from __future__ import annotations
@@ -36,6 +41,8 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
+import time
 from dataclasses import dataclass, field
 
 DEFAULT_MODELS = {
@@ -69,6 +76,15 @@ class Provider:
     json_mode: bool = False          # ask the endpoint to guarantee JSON
     max_tokens: int = 16000
     extra_headers: dict = field(default_factory=dict)
+    # None sends nothing and lets the model decide; "low" / "off" turn thinking
+    # down. Reasoning models can spend the whole output budget thinking and
+    # return an empty reply, so this is a setting rather than a hard-coded retry.
+    reasoning: str | None = None
+    # A second model for the same role. The planner switches to it only after
+    # the primary has clearly failed, never to save money or to second-guess an
+    # answer. Another vendor is the point: an outage rarely hits two at once.
+    fallback_model: str | None = None
+    fallback_base_url: str | None = None   # default: the primary's endpoint
 
     @property
     def is_local(self) -> bool:
@@ -87,11 +103,43 @@ class Provider:
             bits.append("no vision")
         if not self.usable:
             bits.append("NO API KEY")
+        if self.reasoning:
+            bits.append(f"reasoning {self.reasoning}")
+        if self.fallback_model:
+            bits.append(f"fallback {self.fallback_model}")
         return " · ".join(bits)
 
 
+def _reasoning(v) -> str | None:
+    """Normalise a reasoning level. "default" and empty both mean "send nothing"."""
+    if v is None or v is True:
+        return None
+    if v is False:
+        # YAML 1.1 reads an unquoted `off` as the boolean False.
+        return "off"
+    level = str(v).strip().lower()
+    if level in ("", "default"):
+        return None
+    if level not in ("low", "off"):
+        raise SystemExit(f"unknown reasoning level {v!r}; use 'default', 'low' or 'off'")
+    return level
+
+
+def _max_tokens(v) -> int | None:
+    if v is None or v == "":
+        return None
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        raise SystemExit(f"max_tokens must be a whole number, got {v!r}")
+    if n <= 0:
+        raise SystemExit(f"max_tokens must be positive, got {n}")
+    return n
+
+
 def resolve(provider=None, model=None, base_url=None, api_key=None,
-            vision=None, json_mode=None) -> Provider:
+            vision=None, json_mode=None, max_tokens=None, reasoning=None,
+            fallback_model=None, fallback_base_url=None) -> Provider:
     name = (provider or os.environ.get("ALBUM_PROVIDER") or "anthropic").lower()
     if name not in ("anthropic", "openai"):
         raise SystemExit(f"unknown provider {name!r}; use 'anthropic' or 'openai'")
@@ -127,7 +175,44 @@ def resolve(provider=None, model=None, base_url=None, api_key=None,
         # OpenRouter attributes traffic by these; harmless elsewhere.
         headers = {"HTTP-Referer": "https://github.com/zioalex/photo_album_maker",
                    "X-Title": "photo_album_maker"}
-    return Provider(name, mdl, url, key, see, jm, extra_headers=headers)
+    mt = _max_tokens(max_tokens if max_tokens is not None
+                     else os.environ.get("ALBUM_MAX_TOKENS"))
+    rs = _reasoning(reasoning if reasoning is not None
+                    else os.environ.get("ALBUM_REASONING"))
+    fb = fallback_model or os.environ.get("ALBUM_FALLBACK_MODEL") or None
+    fb_url = fallback_base_url or os.environ.get("ALBUM_FALLBACK_BASE_URL") or None
+    return Provider(name, mdl, url, key, see, jm, max_tokens=mt or 16000,
+                    extra_headers=headers, reasoning=rs,
+                    fallback_model=fb, fallback_base_url=fb_url)
+
+
+def fallback_provider(p: Provider) -> Provider | None:
+    """The provider to switch to when `p` has clearly failed, or None.
+
+    Same model-and-endpoint resolution as the primary, so a short alias works
+    and the protocol is inferred the same way. The key is looked up for the
+    *new* endpoint: reusing the primary's would send an OpenRouter key to
+    Ollama, or the reverse. Only when the endpoint is unchanged is it shared.
+    """
+    if not p.fallback_model:
+        return None
+    url = p.fallback_base_url
+    if url:
+        url = ALIASES.get(url.lower(), url).rstrip("/")
+    same_endpoint = not url or url == p.base_url
+    q = resolve(
+        # Keep the protocol unless the endpoint moved, where it is re-inferred.
+        provider=p.name if same_endpoint else None,
+        model=p.fallback_model,
+        base_url=(p.base_url if same_endpoint else url),
+        api_key=(p.api_key if same_endpoint else None),
+        vision=p.vision,
+        json_mode=p.json_mode,
+        max_tokens=p.max_tokens,
+        reasoning=p.reasoning or "default",
+    )
+    q.fallback_model = q.fallback_base_url = None
+    return q
 
 
 # --- message translation -------------------------------------------------
@@ -190,7 +275,106 @@ def make_completer(p: Provider):
             + ("ANTHROPIC_API_KEY" if p.name == "anthropic" else "OPENAI_API_KEY / OPENROUTER_API_KEY")
             + ", or point --base-url at a local endpoint that needs none."
         )
-    return _anthropic(p) if p.name == "anthropic" else _openai(p)
+    inner = _anthropic(p) if p.name == "anthropic" else _openai(p)
+
+    def complete(system: str, messages: list[dict], **opts):
+        # The provider's settings are the defaults; the planner's per-call opts
+        # (it lowers reasoning and raises the budget to recover an empty reply)
+        # win. "default" means "send nothing", the same as unset.
+        if opts.get("reasoning") is None:
+            opts["reasoning"] = p.reasoning
+        elif opts["reasoning"] == "default":
+            opts["reasoning"] = None
+        if not opts.get("max_tokens"):
+            opts["max_tokens"] = p.max_tokens
+        return inner(system, messages, **opts)
+
+    return complete
+
+
+def make_fallback_completer(p: Provider):
+    """A Completer for the role's fallback model, or None if it has none."""
+    q = fallback_provider(p)
+    return make_completer(q) if q is not None else None
+
+
+@dataclass
+class Preflight:
+    ok: bool
+    message: str
+    seconds: float
+    finish: str | None = None
+
+
+def preflight(p: Provider, timeout: float = 60.0) -> Preflight:
+    """One tiny request, to learn at startup that the model cannot answer.
+
+    Finding out after a minute of planning that the key is wrong, the model
+    name is a typo or the thinking budget swallows every reply is the worst
+    moment to learn it. This costs one call of about a thousand tokens, does not
+    use the layout schema (it only has to prove the endpoint answers), and
+    never raises: the verdict is a one-line sentence naming the likely cause.
+    A transient failure is reported but not treated as final, because the
+    endpoint may simply be busy.
+    """
+    t0 = time.monotonic()
+
+    def done(ok, message, finish=None):
+        return Preflight(ok, " ".join(str(message).split())[:300],
+                         round(time.monotonic() - t0, 2), finish)
+
+    try:
+        complete = make_completer(p)
+    except (Exception, SystemExit) as e:
+        text = str(e) or type(e).__name__
+        if text.startswith("no API key"):
+            text = f"no API key for {p.model} — set the key, or point at a local endpoint"
+        return done(False, text)
+
+    try:
+        from planner import TransientError
+    except ImportError:          # pragma: no cover - planner is always importable
+        TransientError = ()
+
+    try:
+        reply = complete("Reply with JSON only.", [{"role": "user",
+                         "content": 'Return exactly {"ok": true}'}],
+                         max_tokens=1024, plain=True, timeout=timeout)
+    except TransientError as e:
+        return done(False, f"{p.model}: endpoint unreachable or busy ({str(e)[:140]}) "
+                           f"— it may recover; try again in a moment")
+    except Exception as e:
+        status = getattr(e, "status_code", None)
+        if not isinstance(status, int):
+            m = re.match(r"\s*(\d{3}) from", str(e))
+            status = int(m.group(1)) if m else None
+        detail = _error_text(str(e))[:160]
+        if status in (401, 403):
+            return done(False, f"{status}: the API key was rejected for {p.model} "
+                               f"— check it was exported in this shell")
+        if status == 404 or re.search(r"model.{0,40}(not found|does not exist|unknown)",
+                                      str(e), re.I):
+            return done(False, f"unknown model {p.model!r} or wrong endpoint (404) — "
+                               f"check the name: {detail}")
+        return done(False, f"{p.model}: {type(e).__name__}: {detail}")
+
+    text = getattr(reply, "text", None)
+    if text is None and isinstance(reply, tuple):
+        text = reply[0]
+    finish = getattr(reply, "finish", None)
+    refusal = getattr(reply, "refusal", None)
+    if finish == "refusal" or refusal:
+        return done(False, f"{p.model} refused even a trivial request"
+                           + (f": {refusal[:120]}" if refusal else ""), finish)
+    if isinstance(text, str) and "{" in text:
+        return done(True, f"{p.model} answered", finish)
+    if finish == "length":
+        return done(False, f"{p.model} spent its whole output budget thinking and "
+                           f"wrote nothing — set reasoning: low in models.yaml", finish)
+    if not (text or "").strip():
+        return done(False, f"{p.model} returned an empty reply (finish={finish}) "
+                           f"— try reasoning: low, or another model", finish)
+    return done(False, f"{p.model} answered, but not with JSON: {text.strip()[:80]!r}", finish)
 
 
 def _usage(inp: int, out: int, imgs: int):
@@ -238,7 +422,8 @@ def _anthropic(p: Provider):
         try:
             resp = client.messages.create(
                 model=p.model, max_tokens=opts.get("max_tokens") or p.max_tokens,
-                system=system, messages=msgs)
+                system=system, messages=msgs,
+                **({"timeout": opts["timeout"]} if opts.get("timeout") else {}))
         except Exception as e:
             # Overload (529) is not a subclass of anything we can name portably,
             # so it is recognised by status as well as by type.
@@ -455,13 +640,13 @@ def _openai(p: Provider):
     if p.api_key:
         headers["Authorization"] = f"Bearer {p.api_key}"
 
-    def post(body: dict):
+    def post(body: dict, timeout: float = 600.0):
         """One POST. Network-level failures are worth resending, so they are
         reported as such rather than as a crash."""
         from planner import TransientError
 
         try:
-            return httpx.post(url, headers=headers, json=body, timeout=600.0)
+            return httpx.post(url, headers=headers, json=body, timeout=timeout)
         except (httpx.TimeoutException, httpx.TransportError) as e:
             raise TransientError(f"{type(e).__name__} talking to {url}: {e}") from e
 
@@ -469,6 +654,7 @@ def _openai(p: Provider):
         from planner import Reply, TransientError
 
         msgs = messages if p.vision else _strip_images(messages)
+        timeout = opts.get("timeout") or 600.0
         body = {
             "model": p.model,
             "messages": _to_openai(system, msgs),
@@ -490,7 +676,9 @@ def _openai(p: Provider):
 
         # The annotate pass returns a bare array, which the layout schema does
         # not describe; detect it and leave json_mode off for that call.
-        skip_schema = system.startswith("You are a picture editor")
+        # `plain` is the startup check: it must not touch the layout schema or
+        # the remembered structured-output mode of the real calls.
+        skip_schema = system.startswith("You are a picture editor") or bool(opts.get("plain"))
         mode_key = (p.base_url, p.model)
         known = _MODE_CACHE.get(mode_key)
         if opts.get("json_fallback") and p.json_mode and not skip_schema:
@@ -520,7 +708,7 @@ def _openai(p: Provider):
                 body["response_format"] = {"type": "json_object"}
         # Generous timeout: a local model on CPU is slow, and a planning call
         # is one request per album, not a hot path.
-        r = post(body)
+        r = post(body, timeout)
 
         def rejected(resp) -> bool:
             # 408 and 429 are 4xx but say nothing about the request's content.
@@ -533,7 +721,7 @@ def _openai(p: Provider):
         if hint_keys and rejected(r):
             for k in hint_keys:
                 body.pop(k)
-            r = post(body)
+            r = post(body, timeout)
 
         # Structured output is the least portable part of the OpenAI contract.
         # Providers reject it for reasons that name their own internals rather
@@ -546,10 +734,10 @@ def _openai(p: Provider):
             first = _error_text(r.text)
             if body["response_format"].get("type") == "json_schema":
                 body["response_format"] = {"type": "json_object"}
-                r = post(body)
+                r = post(body, timeout)
             if rejected(r):
                 body.pop("response_format", None)
-                r = post(body)
+                r = post(body, timeout)
             _MODE_CACHE[mode_key] = (
                 body.get("response_format", {}).get("type") or "none")
             if r.status_code < 400 and not _WARNED.get(p.model):
@@ -688,7 +876,8 @@ def load_model_config(path) -> dict:
           model: anthropic/claude-opus-5.5
 
     Keys match the flag names with underscores: provider, model, base_url,
-    api_key, vision, json_mode. A role inherits anything it does not set.
+    api_key, vision, json_mode, max_tokens, reasoning (default | low | off),
+    fallback_model, fallback_base_url. A role inherits anything it does not set.
     """
     import yaml
 
@@ -736,6 +925,14 @@ def resolve_role(role: str, args=None, config: dict | None = None) -> Provider:
     if isinstance(jm, str):
         jm = jm in ("1", "true", "yes")
 
+    # Same chain as model/base_url, with the generic flag (--max-tokens,
+    # --reasoning) as the last stop before the environment default.
+    def pick_generic(field):
+        v = pick(field)
+        if v is None and args is not None:
+            v = getattr(args, field, None)
+        return v
+
     p = resolve(
         provider=pick("provider"),
         model=pick("model"),
@@ -743,6 +940,10 @@ def resolve_role(role: str, args=None, config: dict | None = None) -> Provider:
         api_key=pick("api_key"),
         vision=vision,
         json_mode=jm,
+        max_tokens=pick_generic("max_tokens"),
+        reasoning=pick_generic("reasoning"),
+        fallback_model=pick("fallback_model"),
+        fallback_base_url=pick("fallback_base_url"),
     )
     # A generic flag should still win over a models.yaml default, so fall back
     # to the plain resolution for anything the role did not pin.
@@ -768,11 +969,15 @@ def describe_roles(by_role: dict[str, Provider]) -> str:
         # worth reporting there.
         rows.append(f"  {r:9s} {p.describe(mention_vision=(r == 'annotate'))}")
     # Collapse the common case: one model doing everything.
-    if len({(p.name, p.model, p.base_url) for p in by_role.values()}) == 1:
+    if len({(p.name, p.model, p.base_url, p.reasoning, p.max_tokens, p.fallback_model)
+            for p in by_role.values()}) == 1:
         # Report the annotate provider: it is the only role that needs vision,
         # so its description carries the warning that matters.
         return "  model     " + by_role["annotate"].describe()
     return "\n".join(rows)
+
+
+REASONING_LEVELS = ["default", "low", "off"]
 
 
 def add_arguments(ap) -> None:
@@ -788,6 +993,11 @@ def add_arguments(ap) -> None:
                    help="the model cannot see images; skip the annotate pass")
     g.add_argument("--json-mode", action="store_true",
                    help="ask the endpoint to guarantee valid JSON (OpenAI-compatible only)")
+    g.add_argument("--max-tokens", type=int, default=None,
+                   help="output budget per call (default 16000)")
+    g.add_argument("--reasoning", choices=REASONING_LEVELS, default=None,
+                   help="'low' or 'off' turns a reasoning model's thinking down; "
+                        "'default' sends nothing")
     g.add_argument("--models", default=None, metavar="FILE",
                    help="models.yaml giving a different model per role "
                         "(annotate / plan / revise); see RUNNING.md")
@@ -797,6 +1007,12 @@ def add_arguments(ap) -> None:
                        help=f"override the model for {role}")
         r.add_argument(f"--{role}-base-url", default=None,
                        help=f"override the endpoint for {role}")
+        r.add_argument(f"--{role}-max-tokens", type=int, default=None,
+                       help=f"output budget for {role} (default 16000)")
+        r.add_argument(f"--{role}-reasoning", choices=REASONING_LEVELS, default=None,
+                       help=f"how much a reasoning model may think for {role}")
+        r.add_argument(f"--{role}-fallback-model", default=None,
+                       help=f"model to switch to for {role} if the first one fails")
 
 
 def from_args(args) -> Provider:
@@ -807,4 +1023,6 @@ def from_args(args) -> Provider:
         api_key=getattr(args, "api_key", None),
         vision=(False if getattr(args, "no_vision", False) else None),
         json_mode=(True if getattr(args, "json_mode", False) else None),
+        max_tokens=getattr(args, "max_tokens", None),
+        reasoning=getattr(args, "reasoning", None),
     )
