@@ -53,6 +53,15 @@ plan:
   # between them. If Opus and Sonnet produce the same album on your
   # photographs — quite likely — use Sonnet.
   json_mode: true
+  # Reasoning models can think until the output budget is gone and then
+  # write nothing; `low` keeps that in check and the larger budget leaves room
+  # for a full layout either way.
+  reasoning: low
+  max_tokens: 32000
+  # Used only after the primary has clearly failed (endpoint down, unknown
+  # model, still empty after a retry) — never to second-guess an answer. A
+  # different vendor, because an outage rarely hits two at once.
+  fallback_model: google/gemini-4-argon
 
 revise:
   model: anthropic/claude-sonnet-5.5     # targeted edits; Opus is overkill
@@ -63,3 +72,12 @@ revise:
   #   anthropic/claude-opus-5.5    $4/$20   if revisions keep missing the point
   #   anthropic/claude-haiku-5.5   $0.10/$0.50
   json_mode: true
+  # Reasoning models can think until the output budget is gone and then
+  # write nothing; `low` keeps that in check and the larger budget leaves room
+  # for a full layout either way.
+  reasoning: low
+  max_tokens: 32000
+  # Used only after the primary has clearly failed (endpoint down, unknown
+  # model, still empty after a retry) — never to second-guess an answer. A
+  # different vendor, because an outage rarely hits two at once.
+  fallback_model: google/gemini-4-argon

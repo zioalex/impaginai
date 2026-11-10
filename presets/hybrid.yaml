@@ -37,6 +37,15 @@ annotate:
 
 plan:
   model: anthropic/claude-sonnet-5.5
+  # Reasoning models can think until the output budget is gone and then
+  # write nothing; `low` keeps that in check and the larger budget leaves room
+  # for a full layout either way.
+  reasoning: low
+  max_tokens: 32000
+  # Used only after the primary has clearly failed (endpoint down, unknown
+  # model, still empty after a retry) — never to second-guess an answer. A
+  # different vendor, because an outage rarely hits two at once.
+  fallback_model: google/gemini-4-argon
 
 revise:
   model: anthropic/claude-sonnet-5.5
@@ -49,3 +58,12 @@ revise:
   # weak one can quietly disturb spreads you did not ask about. Version history
   # and rollback make that recoverable, and `change_summary` tells you what it
   # thinks it did. Try it, read one summary, and keep it if it behaves.
+  # Reasoning models can think until the output budget is gone and then
+  # write nothing; `low` keeps that in check and the larger budget leaves room
+  # for a full layout either way.
+  reasoning: low
+  max_tokens: 32000
+  # Used only after the primary has clearly failed (endpoint down, unknown
+  # model, still empty after a retry) — never to second-guess an answer. A
+  # different vendor, because an outage rarely hits two at once.
+  fallback_model: google/gemini-4-argon

@@ -26,6 +26,14 @@ annotate:
 plan:
   model: anthropic/claude-opus-5.5
   json_mode: true             # OpenAI-compatible endpoints only
+  # Optional, per role or in `default`:
+  # max_tokens: 32000         # output budget per call (default 16000)
+  # reasoning: low            # default | low | off. Reasoning models can think
+  #                           # until the budget is gone and return nothing;
+  #                           # `off` is for Ollama (thinking + JSON = empty).
+  # fallback_model: google/gemini-4-argon   # tried once, only after the
+  #                           # primary has clearly failed; pick another vendor
+  # fallback_base_url: openrouter           # only if it lives elsewhere
 
 # revise: inherits default
 

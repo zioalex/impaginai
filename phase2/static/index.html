@@ -78,7 +78,7 @@ textarea{width:100%;min-height:76px;font:inherit;padding:10px;border:1px solid v
 .fill{height:100%;background:var(--accent);width:0;transition:width .4s}
 #msg{padding:10px 20px;font-size:13px;flex-shrink:0;display:none}
 #msg.on{display:block}
-#msg.err{background:#fdeaea;color:var(--bad)}
+#msg.err{background:#fdeaea;color:var(--bad);white-space:pre-wrap;word-break:break-word;max-height:30vh;overflow:auto}
 @media (prefers-color-scheme:dark){#msg.err{background:#3a1f1f}}
 .saved{color:var(--accent);font-size:12px;opacity:0;transition:opacity .25s}
 .saved.on{opacity:1}
@@ -149,7 +149,7 @@ const $=id=>document.getElementById(id);
 
 async function get(u){const r=await fetch(u);if(!r.ok)throw new Error(await r.text());return r.json();}
 
-function note(text,isErr){const m=$("msg");m.textContent=text;m.className="on"+(isErr?" err":"");
+function note(text,isErr){const m=$("msg");m.textContent=isErr?String(text).replace(/^PlanningError: /,""):text;m.className="on"+(isErr?" err":"");
   if(!isErr)setTimeout(()=>m.className="",6000);}
 
 async function load(){
@@ -159,8 +159,29 @@ async function load(){
   setCounts();
   if(!album.has_key) note("No API key is set, so the album cannot be designed yet. Everything else here works without one.",true);
   renderGrid();
+  checkModel();
   try{const r=await get("/api/report"); if(r.ready){$("btnProof").disabled=false;
     $("btnPlan").textContent="Design again";}}catch(e){}
+}
+
+// The startup model check: shown once, never blocks the Design button (a
+// failure may be brief). While it is still running, look again a few seconds on.
+let modelChecked=false, modelTimer=null;
+function checkModel(){
+  if(modelChecked||!album||!album.has_key)return;
+  const pf=album.preflight||{}, plan=pf.plan;
+  if(!plan)return;
+  if(plan.status==="checking"){
+    clearTimeout(modelTimer);
+    modelTimer=setTimeout(async()=>{
+      try{album.preflight=await get("/api/preflight");}catch(e){return;}
+      checkModel();
+    },4000);
+    return;
+  }
+  modelChecked=true;
+  if(plan.ok===false&&!$("bar").className)
+    note("The model check failed: "+plan.message+"\nYou can still try designing the album — the problem may be temporary.",true);
 }
 
 function setCounts(){
