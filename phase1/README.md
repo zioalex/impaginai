@@ -57,6 +57,7 @@ Run the offline test after any change to the prompt, schema or templates:
 
 ```bash
 python tests/test_loop.py     # no API key, no network
+python tests/test_e2e.py      # the CLI and the editor against a fake model endpoint
 ```
 
 It scripts a fake model whose first answer breaks the slot-count contract, and

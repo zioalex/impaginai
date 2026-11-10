@@ -91,6 +91,7 @@ python album.py revise   --album ../albums/sardinien --photos ./demo_photos --co
 
 python album.py plan --album ../albums/x --photos ./demo_photos --dry-run   # no key needed
 python tests/test_loop.py                                                    # no key, no network
+python tests/test_e2e.py                                                     # CLI + editor vs a fake model
 ```
 
 ## The three ideas worth knowing
