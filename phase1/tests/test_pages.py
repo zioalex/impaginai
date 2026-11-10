@@ -371,6 +371,60 @@ def engadin_run_fixes(groups):
     assert known and rate == (2.0, 10.0), rate
     print("keys: stored 0600, environment wins, masked, redacted; effort high; prices: ok")
 
+    # model lists from the endpoints: OpenRouter (prices, vision), Ollama,
+    # Anthropic (key in its own header), and failures as sentences
+    import httpx
+    real_get = httpx.get
+    seen = []
+
+    class Resp:
+        def __init__(self, code, data):
+            self.status_code, self._d = code, data
+
+        def json(self):
+            return self._d
+
+    def fake_get(url, headers=None, timeout=None):
+        seen.append((url, dict(headers or {})))
+        if "openrouter" in url:
+            return Resp(200, {"data": [
+                {"id": "anthropic/claude-sonnet-5.5", "name": "Claude Sonnet 5.5",
+                 "architecture": {"input_modalities": ["text", "image"]},
+                 "pricing": {"prompt": "0.000002", "completion": "0.00001"}},
+                {"id": "z/text-only", "architecture": {"input_modalities": ["text"]}}]})
+        if "11434" in url:
+            return Resp(200, {"models": [{"name": "qwen3-vl:32b"}, {"name": "llama3:8b"}]})
+        if "anthropic.com" in url:
+            return Resp(200, {"data": [{"id": "claude-opus-5-5", "display_name": "Claude Opus 5.5"}]})
+        if "refuses" in url:
+            return Resp(401, {})
+        raise httpx.ConnectError("down")
+    httpx.get = fake_get
+    providers._LIST_CACHE.clear()
+    try:
+        orr = providers.list_models(providers.Provider("openai", "x", "https://openrouter.ai/api/v1", None))
+        assert [m["id"] for m in orr] == ["anthropic/claude-sonnet-5.5", "z/text-only"], orr
+        assert orr[0]["price_in"] == 2.0 and orr[0]["price_out"] == 10.0 and orr[0]["vision"], orr[0]
+        vis = providers.list_models(providers.Provider("openai", "x", "https://openrouter.ai/api/v1", None),
+                                    need_vision=True)
+        assert [m["id"] for m in vis] == ["anthropic/claude-sonnet-5.5"], vis
+        oll = providers.list_models(providers.Provider("openai", "x", "http://localhost:11434/v1", None),
+                                    need_vision=True)
+        assert [m["id"] for m in oll] == ["qwen3-vl:32b"], oll
+        ant = providers.list_models(providers.Provider("anthropic", "x", None, "sk-ant-test-key-123"))
+        assert ant[0]["id"] == "claude-opus-5-5" and seen[-1][1].get("x-api-key") == "sk-ant-test-key-123"
+        assert not any("Authorization" in h for u, h in seen if "openrouter" in u), "OpenRouter got a key"
+        for url, word in (("https://refuses.example/v1", "refused"), ("https://down.example/v1", "did not answer")):
+            try:
+                providers.list_models(providers.Provider("openai", "x", url, "k"))
+                raise AssertionError(url)
+            except RuntimeError as exc:
+                assert word in str(exc), exc
+    finally:
+        httpx.get = real_get
+        providers._LIST_CACHE.clear()
+    print("model lists from OpenRouter, Ollama and Anthropic, failures as sentences: ok")
+
 
 def adaptive_pages():
     """A composed page is laid out for its photographs' real shapes: nothing

@@ -913,12 +913,15 @@ async function afterOpen(){
   if(album.open&&!album.has_key){showView("settings");
     note("Pick a preset under AI models and add a key (or choose Fully local), then press “Design the album”.");}
 }
-let folderCb=null, folderCur=null;
-async function chooseFolder(cb){folderCb=cb; await browse(""); if(!$("dlgFolder").open)$("dlgFolder").showModal();}
+let folderCb=null, folderCur=null, folderOpts={};
+async function chooseFolder(cb,opts){folderCb=cb; folderOpts=opts||{};
+  $("dlgFolder").querySelector("h3").textContent=folderOpts.title||"Choose the photo folder";
+  await browse(folderOpts.start||""); if(!$("dlgFolder").open)$("dlgFolder").showModal();}
 async function browse(path){
   let r; try{r=await get("/api/fs?path="+encodeURIComponent(path));}catch(e){note(e.message,"err");return;}
   folderCur=r; $("fPath").textContent=r.path; $("fUp").disabled=!r.parent;
-  $("fUse").textContent=`Use this folder (${r.photos} photo${r.photos===1?"":"s"})`; $("fUse").disabled=!r.photos;
+  $("fUse").textContent=folderOpts.allowEmpty?"Use this folder":`Use this folder (${r.photos} photo${r.photos===1?"":"s"})`;
+  $("fUse").disabled=!r.photos&&!folderOpts.allowEmpty;
   $("fList").innerHTML=r.dirs.length?r.dirs.map(d=>`<div class="d" data-p="${esc(d.path)}">📁 ${esc(d.name)}<span class="n">${d.photos?d.photos+" photos":""}</span></div>`).join("")
     :`<div class="d" style="cursor:default;color:var(--soft)">No folders inside.</div>`;
   $("fList").querySelectorAll("[data-p]").forEach(el=>el.onclick=()=>browse(el.dataset.p));
@@ -959,7 +962,9 @@ function albumSection(){
       <div class="navrow"><button class="small" id="chPhotos">Change photo folder…</button>
       <button class="small" id="addPh2">＋ Add photos</button>
       <div class="grow"></div><button class="small" id="otherAlbum">Open or make another album…</button></div>
-      <div class="hint">Photos you add are copied into the photo folder. Changing the folder keeps the album's design and settings; photographs that are no longer there drop out of the book.</div></div></div>`;
+      <div class="hint">Photos you add are copied into the photo folder. Changing the folder keeps the album's design and settings; photographs that are no longer there drop out of the book.</div></div>
+    <div class="setrow"><div class="albumrow">New albums are made in <code id="libPath">…</code></div>
+      <div class="navrow"><button class="small" id="chLibrary">Change…</button></div></div></div>`;
 }
 function wireAlbum(host){
   const c=$("chPhotos"); if(c)c.onclick=()=>chooseFolder(async p=>{
@@ -967,6 +972,11 @@ function wireAlbum(host){
     await load(); scheduleRerender(); renderSettings();});
   const a2=$("addPh2"); if(a2)a2.onclick=()=>$("fileAdd").click();
   const o=$("otherAlbum"); if(o)o.onclick=()=>showWelcome(true);
+  get("/api/albums").then(a=>{const l=$("libPath"); if(l)l.textContent=a.library;}).catch(()=>{});
+  const cl=$("chLibrary"); if(cl)cl.onclick=()=>chooseFolder(async p=>{
+    try{const r=await send("PUT","/api/library",{path:p.path}); $("libPath").textContent=r.library;
+      note(r.library===p.path?`New albums will be made in ${r.library}`:`Saved, but ALBUM_LIBRARY in the environment still decides: ${r.library}`);}
+    catch(e){note(e.message,"err");}},{allowEmpty:true,title:"Where should new albums be made?"});
 }
 
 let mdl=null;
@@ -1051,11 +1061,11 @@ function modelsSection(){
     h+=`<div class="role${lock?" lock":""}" data-role="${r}"><b>${r[0].toUpperCase()+r.slice(1)} <span class="dot ${dot}" title="${esc(pf?pf.message||pf.status:(v.usable?"not checked":"no API key"))}"></span></b>
       <div class="fields">
         <select data-f="base_url" title="Endpoint">${m.endpoints.map(e=>`<option ${e===v.base_url?"selected":""}>${esc(e)}</option>`).join("")}${m.endpoints.includes(v.base_url)?"":`<option selected>${esc(v.base_url)}</option>`}</select>
-        <input class="model" data-f="model" value="${esc(v.model)}" title="Model, as the endpoint names it" spellcheck="false">
+        <input class="model" data-f="model" list="ml-${r}" value="${esc(v.model)}" title="Model, as the endpoint names it — start typing for the endpoint's list" spellcheck="false"><datalist id="ml-${r}"></datalist>
         <label class="sub">Effort <select data-f="reasoning">${v.effort.map(e=>`<option value="${e}" ${e===v.reasoning?"selected":""}>${EFFORT_LABEL[e]}</option>`).join("")}</select></label>
         ${r==="plan"?`<button class="infobtn" data-k="effort" aria-expanded="false" title="What does High mean?">i</button>`:""}
       </div>
-      <div class="why">${esc(ROLE_LABEL[r])} — ${esc(v.needs)}</div>
+      <div class="why">${esc(ROLE_LABEL[r])} — ${esc(v.needs)} <span id="mlh-${r}"></span></div>
       ${r==="plan"?`<div class="infobox" id="info-effort" style="grid-column:2">High — the model thinks longer before it lays out the book. It helps most on large albums with many places and people.
 It is slower (about one to three minutes instead of under one) and the thinking is billed as output, so a design costs more — see the estimate below.
 The output budget is raised to at least 32,000 tokens so the thinking cannot crowd out the layout. Models without a reasoning setting ignore it.
@@ -1083,10 +1093,29 @@ Low and Off make reasoning models answer faster and cheaper; Default lets the mo
     (e.annotate_photos?` (looking at ${e.annotate_photos} photograph${e.annotate_photos>1?"s":""}: ${usdEst(e.annotate_usd)}, designing: ${usdEst(e.plan_usd)})`:` (designing)`)+
     (e.high?`, with High effort.`:`; High effort adds about ${usdEst(e.high_extra_usd)}.`)+
     (e.guessed?` <span class="sub">Some prices are guessed — the model is not in the price list.</span>`:"")+`</div>`;
-  h+=`<div class="navrow"><button class="small" id="testModels">Test models</button><span class="sub" id="testMsg"></span></div>`;
+  h+=`<div class="navrow"><button class="small" id="testModels">Test models</button><span class="sub" id="testMsg"></span>
+    <div class="grow"></div><button class="small ghost" id="exportModels" title="The model choice as a file for the command line (keys are not included)">Save as models.yaml</button></div>`;
   return h+`</div>`;
 }
+const modelLists={};
+async function loadModelList(role){
+  const row=document.querySelector(`.role[data-role="${role}"]`); if(!row)return;
+  const base=row.querySelector('[data-f="base_url"]').value, key=role+"|"+base;
+  const hint=$("mlh-"+role);
+  if(!modelLists[key]){
+    if(hint)hint.textContent="· asking the endpoint for its models…";
+    try{modelLists[key]=await get(`/api/models/list?role=${role}&base_url=${encodeURIComponent(base)}`);}
+    catch(e){modelLists[key]={models:[],error:e.message};}
+  }
+  const r=modelLists[key];
+  const price=m=>m.price_in!=null&&m.price_out!=null?` · $${m.price_in}/$${m.price_out} per M`:"";
+  $("ml-"+role).innerHTML=r.models.map(m=>`<option value="${esc(m.id)}">${esc(m.name!==m.id?m.name:"")}${price(m)}</option>`).join("");
+  if(hint)hint.textContent=r.error?`· model list unavailable: ${r.error}`
+    :`· ${r.count??r.models.length} models offered${role==="annotate"?" that can see images":""}`;
+}
 function wireModels(host){
+  host.querySelectorAll('.role input[data-f="model"]').forEach(el=>el.addEventListener("focus",()=>loadModelList(el.closest(".role").dataset.role),{once:true}));
+  const ex=$("exportModels"); if(ex)ex.onclick=()=>{window.location.href="/api/models/export";};
   host.querySelectorAll("[data-preset]").forEach(el=>el.onclick=()=>putModels({preset:el.dataset.preset}));
   host.querySelectorAll(".role [data-f]").forEach(el=>{
     el.onchange=()=>{const r=el.closest(".role").dataset.role;
