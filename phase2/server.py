@@ -82,7 +82,9 @@ def reload_photos():
     ph = PH.load(STATE["photos"], STATE["captions"], STATE["g"],
                  STATE["lab"]["resolution"]["warn_below_dpi"],
                  STATE["lab"]["resolution"]["block_below_dpi"])
-    geocode.apply(ph, a, offline_db=STATE["geocode"], online=STATE.get("online_places", False),
+    # Cache only: editing must never wait on the network. The named-places
+    # lookup runs in prefetch_places(), at startup and before each design.
+    geocode.apply(ph, a, offline_db=STATE["geocode"], online=False,
                   language=STATE["language"])
     ov = OV.Overrides.load(a)
     # Keep excluded photographs visible in the UI — the user has to be able to
@@ -105,6 +107,20 @@ def reload_photos():
     STATE["all"] = ph
     STATE["ov"] = ov
     return ph
+
+
+def prefetch_places(photos=None) -> None:
+    """Fill the named-places cache (glaciers, lakes, peaks) from OpenStreetMap.
+    Bounded: cached cells are not asked again, and a failure pauses lookups."""
+    if not STATE.get("online_places"):
+        return
+    try:
+        asked = geocode.prefetch(photos if photos is not None else STATE["all"], STATE["album"],
+                                 language=STATE["language"])
+        if asked:
+            reload_photos()
+    except Exception as exc:  # never let the place lookup break the editor
+        print(f"  place lookup failed: {exc}")
 
 
 def thumb_dir() -> Path:
@@ -243,7 +259,7 @@ def settings_path() -> Path:
 
 def save_settings() -> None:
     settings_path().write_text(json.dumps(
-        {k: STATE[k] for k in ("fmt", "title", "subtitle", "language")},
+        {k: STATE.get(k) for k in ("fmt", "title", "subtitle", "language", "front_photo")},
         ensure_ascii=False, indent=2))
 
 
@@ -276,8 +292,28 @@ def finish_layout(raw: dict, usable) -> dict:
         if old_title and t.get("title") == old_title:
             t["title"] = STATE["title"]
     OV.apply_to_layout(data, STATE["ov"])
-    PG.apply_focal(data, {p.id: p for p in usable})
-    PG.repack(data, STATE["groups"], STATE["lab"])
+    by_id = {p.id: p for p in usable}
+    placed = {sl["photo_id"] for sp in data.get("spreads", []) for sl in sp.get("slots") or []}
+    chrono = sorted(usable, key=lambda p: (p.taken_at is None,
+                                           p.taken_at.timestamp() if p.taken_at else 0.0,
+                                           p.upload_order))
+    spare = [p.id for p in chrono if p.id not in placed and not p.unusable]
+    front = STATE.get("front_photo")
+    if front not in by_id:
+        front = None
+    PG.repack(data, STATE["groups"], STATE["lab"], spare=spare,
+              taken={p.id: p.taken_at.isoformat() for p in usable if p.taken_at},
+              front=front, strength={p.id: p.strength for p in usable})
+    PG.apply_focal(data, by_id)
+    # The cover shows the front page's photograph and the album's own title.
+    opening = (data.get("spreads") or [{}])[0]
+    cover = data.get("cover") or {}
+    if opening.get("slots"):
+        cover["front_photo_id"] = opening["slots"][0]["photo_id"]
+    cover["title"] = STATE["title"]
+    cover["subtitle"] = STATE["subtitle"]
+    cover.setdefault("spine_title", STATE["title"])
+    data["cover"] = cover
     templates_lib.attach_aspects(data.get("spreads", []),
                                  {p.id: (p.width, p.height) for p in usable})
     return data
@@ -326,6 +362,7 @@ def api_album():
         "language": STATE["language"],
         "groups": groups,
         "versions": versions,
+        "front_photo": STATE.get("front_photo"),
         "has_annotations": bool(annotate.Annotations.load(STATE["album"] / "annotations.json").by_id),
         "has_key": STATE["has_key"],
         "model": STATE["providers"]["plan"].describe(mention_vision=False),
@@ -355,6 +392,7 @@ def api_costs():
 
 
 class SettingsIn(BaseModel):
+    front_photo: str | None = None      # "" clears it
     format: str | None = None
     title: str | None = None
     subtitle: str | None = None
@@ -375,6 +413,15 @@ def api_settings(body: SettingsIn):
     if body.subtitle is not None and (body.subtitle.strip() or None) != STATE["subtitle"]:
         STATE["subtitle"] = body.subtitle.strip() or None
         changed.append("subtitle")
+    if body.front_photo is not None and (body.front_photo or None) != STATE.get("front_photo"):
+        if body.front_photo and not any(p.id == body.front_photo for p in STATE["all"]):
+            raise HTTPException(404, "no such photo")
+        STATE["front_photo"] = body.front_photo or None
+        if STATE["front_photo"]:
+            # The front page photograph must be in the book.
+            STATE["ov"].set(STATE["front_photo"], exclude=False)
+            STATE["ov"].save()
+        changed.append("front_photo")
     if body.language and body.language.strip() != STATE["language"]:
         STATE["language"] = body.language.strip()
         changed.append("language")
@@ -517,6 +564,9 @@ def _build(do_plan: bool, comment: str | None):
 
         set_job("Preparing photographs", 5)
         ensure_thumbs(usable)
+        prefetch_places(ph)
+        ph = STATE["all"]
+        usable = [p for p in ph if not STATE["ov"].get(p.id).exclude]
 
         roles = STATE["providers"]
         anns = annotate.Annotations.load(a / "annotations.json")
@@ -851,6 +901,7 @@ def main():
         geocode=not args.no_geocode,
         online_places=not (args.no_geocode or args.offline_places),
         vision_px=args.vision_px,
+        front_photo=saved.get("front_photo"),
     )
     roles = providers.resolve_all(args, args.models)
     STATE["providers"] = roles
@@ -863,6 +914,7 @@ def main():
         raise SystemExit(problem)
     ph = reload_photos()
     ensure_thumbs(ph)
+    threading.Thread(target=prefetch_places, daemon=True).start()
     print(f"\n  {len(ph)} photographs · {len(STATE['groups'])} groups · {fmt}")
     print(providers.describe_roles(roles))
     if not STATE["has_key"]:

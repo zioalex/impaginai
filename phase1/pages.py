@@ -124,6 +124,29 @@ def _split_one(pages: list[Page]) -> bool:
     return True
 
 
+# One photograph fewer on a composed page.
+LIGHTER = {"quad": "trio-feature", "trio-feature": "duo-stack", "trio-column": "duo-stack",
+           "duo-stack": "solo", "duo-offset": "solo"}
+
+
+def _take_out(pages: list[Page], pid: str) -> None:
+    """Remove a photograph from every page, lightening or dropping the page."""
+    for i in range(len(pages) - 1, -1, -1):
+        p = pages[i]
+        if not any(s["photo_id"] == pid for s in p.slots):
+            continue
+        rest = [s for s in p.slots if s["photo_id"] != pid]
+        comp = p.comp
+        while rest and compose.COMPOSITIONS[comp].slots > len(rest) and comp in LIGHTER:
+            comp = LIGHTER[comp]
+        if not rest or compose.COMPOSITIONS[comp].slots != len(rest):
+            if p.stamp and i + 1 < len(pages) and not pages[i + 1].stamp:
+                pages[i + 1].stamp = p.stamp
+            pages.pop(i)
+        else:
+            p.comp, p.slots = comp, rest
+
+
 def apply_focal(layout: dict, photos_by_id: dict) -> int:
     """Use the focal point the vision pass measured, not the planner's guess.
 
@@ -131,23 +154,46 @@ def apply_focal(layout: dict, photos_by_id: dict) -> int:
     seen the photograph; the annotation pass looked at it. Where the two
     disagree, the one that looked wins.
     """
+    def valid(f) -> bool:
+        try:
+            return len(f) == 2 and all(0.0 <= float(c) <= 1.0 for c in f)
+        except (TypeError, ValueError):
+            return False
+
     n = 0
     for sp in layout.get("spreads", []):
         for s in sp.get("slots") or []:
             ph = photos_by_id.get(s["photo_id"])
             f = getattr(ph, "suggested_focal", None) if ph is not None else None
-            if f and tuple(s.get("focal") or ()) != tuple(f):
+            # Only a focal point inside the frame replaces the planner's: a
+            # bad annotation must never break a layout that validated.
+            if f and valid(f) and tuple(s.get("focal") or ()) != tuple(f):
                 s["focal"] = [float(f[0]), float(f[1])]
                 n += 1
     cov = layout.get("cover") or {}
     ph = photos_by_id.get(cov.get("front_photo_id"))
-    if ph is not None and getattr(ph, "suggested_focal", None):
-        cov["front_focal"] = list(ph.suggested_focal)
+    f = getattr(ph, "suggested_focal", None) if ph is not None else None
+    if f and valid(f):
+        cov["front_focal"] = [float(f[0]), float(f[1])]
     return n
 
 
-def repack(layout: dict, groups, lab: dict | None = None) -> list[str]:
-    """Rebuild the spreads with no empty pages. Returns a log."""
+def repack(layout: dict, groups, lab: dict | None = None, spare=None,
+           taken: dict | None = None, front: str | None = None,
+           strength: dict | None = None) -> list[str]:
+    """Rebuild the spreads with no empty pages. Returns a log.
+
+    `spare` lists photo ids the layout left out that may still be used, in
+    chronological order. They are only brought in when the book would
+    otherwise fall below the lab minimum and be padded with blank paper.
+    `taken` maps photo id to a sortable time; with it, the photographs of one
+    place on one page are put in the order they were taken (the feature stays
+    first).
+
+    The opening is always a front page that carries a photograph: `front` is
+    the one the user chose; without it, the opening's own photograph, else the
+    strongest one in the book (`strength` maps id to 1-5). The photograph is
+    taken out of wherever else it was placed, so it is not printed twice."""
     spreads = layout.get("spreads", [])
     if not spreads:
         return []
@@ -163,6 +209,41 @@ def repack(layout: dict, groups, lab: dict | None = None) -> list[str]:
     for sp in rest:
         pages.extend(_pages_of(sp))
 
+    # The front page. An opening without a photograph prints a title alone on
+    # black or white paper — the empty first spread users kept seeing.
+    meta = layout.get("meta") or {}
+    own = [s["photo_id"] for s in (opening or {}).get("slots") or []]
+    placed = [s["photo_id"] for p in pages for s in p.slots]
+    candidates = placed + [x for x in (spare or []) if x not in placed]
+    pick = None
+    if front and (front in own or front in candidates):
+        pick = front
+    elif own:
+        pick = own[0]
+    elif candidates:
+        pick = max(candidates, key=lambda x: ((strength or {}).get(x) or 0, -candidates.index(x)))
+    if pick is not None:
+        old_text = dict((opening or {}).get("text") or {})
+        _take_out(pages, pick)
+        # Keep the slot as it was (focal point, the user's caption, edge).
+        slot = next((dict(s) for sp in spreads for s in sp.get("slots") or []
+                     if s["photo_id"] == pick), None) or {
+            "photo_id": pick, "focal": [0.5, 0.5], "caption": None,
+            "caption_position": "bottom-left"}
+        opening = {
+            "index": 0, "section_id": (opening or {}).get("section_id"),
+            # Title in white on black facing the photograph to the edges: no
+            # page of the opening spread is blank paper.
+            "template": "section-divider",
+            "slots": [slot],
+            "text": {"eyebrow": old_text.get("eyebrow"),
+                     "title": meta.get("title") or old_text.get("title"),
+                     "subtitle": None,
+                     "body": meta.get("subtitle") or old_text.get("body")},
+            "options": {"side": "left"},
+            "note": "front page",
+        }
+
     # Location stamps: the first page carrying each group's first photograph.
     by_photo = {pid: g for g in (groups or []) for pid in g.photo_ids}
     seen: set[str] = set()
@@ -177,6 +258,12 @@ def repack(layout: dict, groups, lab: dict | None = None) -> list[str]:
             g0 = by_photo.get(s["photo_id"])
         if g0 is None and pages:
             g0 = by_photo.get(pages[0].slots[0]["photo_id"])
+        # The title page always carries the book's title, even when the
+        # model left the text block empty.
+        t = dict(opening.get("text") or {})
+        if not t.get("title") and (layout.get("meta") or {}).get("title"):
+            t["title"] = layout["meta"]["title"]
+            opening["text"] = t
         if g0 is not None:
             line = " · ".join(x for x in (g0.place, g0.date_label) if x)
             if line:
@@ -220,6 +307,33 @@ def repack(layout: dict, groups, lab: dict | None = None) -> list[str]:
            or len(pages) % 2) and _split_one(pages):
         pass
 
+    # Still short: rather than pad with blank paper, bring in the photographs
+    # the planner left out, each on its own page right after its place's run.
+    added = []
+    pool = [pid for pid in (spare or [])
+            if pid != pick and pid not in {s["photo_id"] for p in pages for s in p.slots}]
+    while pool and total(len(pages)) < min_pages:
+        pid = pool.pop(0)
+        g = by_photo.get(pid)
+        at = len(pages)
+        if g is not None:
+            same = [i for i, p in enumerate(pages)
+                    if any(by_photo.get(s["photo_id"]) is g for s in p.slots)]
+            if same:
+                at = same[-1] + 1
+        sec = pages[at - 1].section_id if at > 0 and pages else None
+        pages.insert(at, Page("solo", [{"photo_id": pid, "focal": [0.5, 0.5], "caption": None,
+                                        "caption_position": "below"}], sec))
+        added.append(pid)
+    while (total(len(pages)) % inc or len(pages) % 2) and _split_one(pages):
+        pass
+
+    if taken:
+        for p in pages:
+            if len(p.slots) > 2:
+                rest = sorted(p.slots[1:], key=lambda s: taken.get(s["photo_id"]) or "")
+                p.slots[1:] = rest
+
     out: list[dict] = [opening] if opening else []
     for i in range(0, len(pages), 2):
         pair = pages[i:i + 2]
@@ -261,5 +375,9 @@ def repack(layout: dict, groups, lab: dict | None = None) -> list[str]:
     layout.setdefault("meta", {})["spread_count"] = len(out)
     lone = sum(1 for sp in out if T.REGISTRY[sp["template"]].pages
                and "blank" in T.REGISTRY[sp["template"]].pages)
-    return [f"repacked {before_pages} pages into {len(out) * 2}"
-            + (f", {lone} page(s) left empty" if lone else ", no empty pages")]
+    log = [f"repacked {before_pages} pages into {len(out) * 2}"
+           + (f", {lone} page(s) left empty" if lone else ", no empty pages")]
+    if added:
+        log.append(f"{len(added)} photograph(s) the design left out brought in to reach "
+                   f"{min_pages} pages: {', '.join(added)}")
+    return log

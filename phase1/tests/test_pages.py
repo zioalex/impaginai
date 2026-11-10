@@ -58,7 +58,9 @@ def main() -> int:
     Layout.model_validate(lay)
     placed_after = sorted(s["photo_id"] for sp in lay["spreads"] for s in sp["slots"])
     assert placed_before == placed_after, "a photograph was lost or duplicated"
-    assert lay["spreads"][0]["template"] == "title-page", "the opening spread was not kept"
+    assert lay["spreads"][0]["template"] == "section-divider", "the opening is not a front page"
+    assert lay["spreads"][0]["slots"][0]["photo_id"] == "p001", "the opening's own photograph was not kept"
+    assert lay["spreads"][0]["text"]["title"] == lay["meta"]["title"]
     assert lay["spreads"][0]["text"]["eyebrow"] == "Cala Gonone · 3. Mai"
     later = [sp["template"] for sp in lay["spreads"][1:]]
     assert not set(later) & set(PG.OPENING), f"text-only page after the opening: {later}"
@@ -85,7 +87,77 @@ def main() -> int:
     adaptive_pages()
     gutter_and_bleed()
     costs_and_places()
+    engadin_run_fixes(groups)
     return 0
+
+
+def engadin_run_fixes(groups):
+    """What broke on the first real album: pixel focal points from the vision
+    model, a schema over Anthropic's union limit, the place lookup retried on
+    every reload, a short book padded with blank paper while photographs sat
+    unused, and an empty front page."""
+    import annotate
+    import geocode
+    import providers
+
+    # focal points in pixels are turned into fractions, and never reach a layout
+    assert annotate.normalise_focal([180, 140], (512, 341)) == (round(180 / 512, 4), round(140 / 341, 4))
+    assert annotate.normalise_focal([0.4, 0.6], (512, 341)) == (0.4, 0.6)
+    assert annotate.normalise_focal("x", None) == (0.5, 0.5)
+    ph = NS(id="p1", width=4000, height=3000, annotation="", strength=0, suggested_focal=None,
+            landmark="", detail="")
+    anns = annotate.Annotations({"p1": annotate.Annotation(id="p1", focal=(260.0, 140.0))})
+    annotate.apply([ph], anns)
+    fx, fy = ph.suggested_focal
+    assert 0 <= fx <= 1 and 0 <= fy <= 1, ph.suggested_focal
+    lay = {"spreads": [{"slots": [{"photo_id": "p1", "focal": [0.3, 0.3]}]}]}
+    PG.apply_focal(lay, {"p1": NS(suggested_focal=(260.0, 140.0))})
+    assert lay["spreads"][0]["slots"][0]["focal"] == [0.3, 0.3], "an out-of-range focal replaced a good one"
+    print("focal points normalised: ok")
+
+    # Anthropic refuses more than 16 union-typed parameters
+    n = providers.union_count(providers._layout_schema())
+    assert n <= 16, f"{n} union-typed parameters in the layout schema"
+    print(f"layout schema: {n} union-typed parameters (limit 16): ok")
+
+    # the place lookup fails once and then stays quiet for the cooldown
+    import tempfile
+    calls = []
+
+    def down(lat, lon, lang):
+        calls.append(1)
+        raise TimeoutError("The read operation timed out")
+
+    geocode._DOWN_UNTIL = 0.0
+    with tempfile.TemporaryDirectory() as td:
+        pts = [NS(id=str(i), gps=(46.4 + i * 0.05, 9.9), place=None, features=[]) for i in range(4)]
+        geocode.apply(pts, Path(td), offline_db=False, online=True, fetch=down)
+        geocode.apply(pts, Path(td), offline_db=False, online=True, fetch=down)
+        assert len(calls) == 1, f"the lookup was retried {len(calls)} times during its cooldown"
+    geocode._DOWN_UNTIL = 0.0
+    print("place lookup cooldown: ok")
+
+    # a short book takes the photographs the design left out before blank paper,
+    # and opens on the chosen front page photograph
+    lay = good_layout()
+    lay["spreads"] = lay["spreads"][:3]           # 3 spreads: far below 24 pages
+    for i, sp in enumerate(lay["spreads"], 1):
+        sp["index"] = i
+    lay["meta"]["spread_count"] = 3
+    placed = {s["photo_id"] for sp in lay["spreads"] for s in sp["slots"]}
+    every = [pid for g in groups for pid in g.photo_ids]
+    spare = [pid for pid in every if pid not in placed]
+    log = PG.repack(lay, groups, LAB, spare=spare, front="p006")
+    Layout.model_validate(lay)
+    opening = lay["spreads"][0]
+    assert opening["template"] == "section-divider" and opening["slots"][0]["photo_id"] == "p006", opening
+    assert opening["text"]["title"] == lay["meta"]["title"]
+    ids = [s["photo_id"] for sp in lay["spreads"] for s in sp["slots"]]
+    assert ids.count("p006") == 1, "the front page photograph is printed twice"
+    brought = [x for x in spare if x in ids]
+    assert brought, f"no spare photograph was used: {log}"
+    print(f"short book: {len(brought)} spare photograph(s) used before blank paper, "
+          f"front page p006: ok")
 
 
 def adaptive_pages():
@@ -104,7 +176,8 @@ def adaptive_pages():
             for r, a in zip(rects, asp):
                 assert r.x >= col.x - 0.05 and r.x2 <= col.x2 + 0.05, (asp, r, col)
                 assert r.y >= col.y - 0.05 and r.y2 <= col.y2 + 0.05, (asp, r, col)
-                assert crop_keep(r, a) >= compose.ADAPT_KEEP - 0.01, (asp, r, a)
+                keep = compose.ADAPT_KEEP if len(asp) > 1 else compose.ADAPT_KEEP_SINGLE
+                assert crop_keep(r, a) >= keep - 0.01, (asp, r, a)
             for i, a in enumerate(rects):
                 for b in rects[i + 1:]:
                     ov_w = min(a.x2, b.x2) - max(a.x, b.x)
@@ -115,6 +188,10 @@ def adaptive_pages():
                 pass
             used = sum(area) / (col.w * (col.h - compose.CAPTION_BAND))
             assert used > 0.5, f"{asp}: only {used:.0%} of the page used"
+    # a small photograph is not enlarged into a soft one to fill the page
+    from geometry import effective_dpi
+    rects, _ = compose.adaptive(g, "right", [2.0], [1600])
+    assert effective_dpi(1600, 800, rects[0]) >= compose.MIN_DPI - 0.5, rects
     # the template path: options.aspects reach the composition
     r = T.build("trio-page", g, {"aspects": [1.5, 0.67, 0.67]})
     fixed = T.build("trio-page", g, {})
