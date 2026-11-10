@@ -711,8 +711,13 @@ def _openai(p: Provider):
         r = post(body, timeout)
 
         def rejected(resp) -> bool:
-            # 408 and 429 are 4xx but say nothing about the request's content.
-            return 400 <= resp.status_code < 500 and resp.status_code not in (408, 429)
+            # Only a complaint about the request's *content* is worth answering
+            # with a weaker request. A bad key (401/403), no credit (402), an
+            # unknown model (404) or a rate limit (408/429) fails the same way
+            # whatever the body says; retrying it with less structure would cost
+            # two more calls and wrongly record that the model cannot do JSON.
+            return (400 <= resp.status_code < 500
+                    and resp.status_code not in (401, 402, 403, 404, 408, 429))
 
         # A reasoning field the endpoint does not know is rejected like any
         # other unknown parameter. Drop it and ask again, once; the answer is
@@ -738,8 +743,11 @@ def _openai(p: Provider):
             if rejected(r):
                 body.pop("response_format", None)
                 r = post(body, timeout)
-            _MODE_CACHE[mode_key] = (
-                body.get("response_format", {}).get("type") or "none")
+            if r.status_code < 400:
+                # Remember the weaker mode only once it is known to work; a
+                # request that still failed proves nothing about structure.
+                _MODE_CACHE[mode_key] = (
+                    body.get("response_format", {}).get("type") or "none")
             if r.status_code < 400 and not _WARNED.get(p.model):
                 _WARNED[p.model] = True
                 print(f"  note: {p.model} rejected structured output, continuing "

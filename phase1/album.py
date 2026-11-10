@@ -333,7 +333,13 @@ def main() -> int:
     args = ap.parse_args()
     if args.album is not None:
         args.album.mkdir(parents=True, exist_ok=True)
-    return args.fn(args)
+    try:
+        return args.fn(args)
+    except planner.PlanningError as exc:
+        # An expected outcome with a message written for people; a traceback
+        # would bury it. Nothing was written to the album.
+        print(f"\nplanning failed: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

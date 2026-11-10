@@ -35,6 +35,8 @@ jobs:
         run: python phase1/tests/test_loop.py
       - name: Page repacker and crop guard
         run: python phase1/tests/test_pages.py
+      - name: End to end against a fake model (mocked key, no network)
+        run: python phase1/tests/test_e2e.py
       - name: Calibration book renders to spec
         run: |
           cd phase0
