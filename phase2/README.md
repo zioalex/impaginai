@@ -24,22 +24,42 @@ python phase2/server.py --album ./albums/demo --photos phase1/demo_photos
 
 ## What the user can do
 
-Four controls per photograph, and nothing else:
+Four controls per photograph:
 
 | Control | Effect |
 |---|---|
-| **Description** | printed under the photograph; saved as you type |
+| **Caption** | printed with the photograph exactly as written; saved as you type |
 | **How big** | Automatic · Full page · Large · Small |
 | **Edge** | None · White frame · Rounded · Vignette · Soft edge |
 | **Use this photograph** | include or leave out |
 
-Then one button: **Design the album**. After the first run it becomes *Design
-again*, which asks what should change in plain language and sends that as a
-revision.
+The common ones are on the photograph itself: hover a tile and use 👁 to leave it
+out or bring it back, or ✎ to write its caption. Shift/Ctrl-click selects several,
+and a bar appears to leave them out, include them or size them together. Each
+place has *Include all* / *Leave out all*. Keys: arrows move, `X` leaves out or
+includes, `Enter` edits the caption.
 
-That is the whole interface. The premise of the project is that nobody
-positions a box, so there is no canvas, no grid, no drag-and-drop. Four
-controls can be learnt in a sitting; a layout editor cannot.
+Then one button: **Design the album**. After the first run it becomes *Design
+again…*, which opens a dialog asking what should change in plain language (with
+examples to click) and sends that as a revision.
+
+Around it:
+
+- **Book tab**: the pages as spreads, a larger view on click, and every version
+  with *Go back to this*.
+- **The preview follows every change.** A caption, a size or a photograph left out
+  is applied to the current design and the pages are reprinted in a few seconds.
+  The model is not asked, so this costs nothing.
+- **Size**: the book format (21×21, 30×30, 28×21 cm…), from the lab config.
+- **Export**: preview PDF, print-ready PDF, cover PDF, or page JPEGs at 150 or 300 DPI.
+- **Cost**: what the last design session cost and the album's total. Click it for
+  every session with its models, calls and tokens. The cost is the endpoint's own
+  figure where it reports one (OpenRouter); otherwise it is the model's list price
+  (`providers.PRICES`, or `price_in`/`price_out` in `models.yaml`). Local models
+  cost nothing. Failed sessions are listed too, because they were paid for.
+
+The premise of the project is still that nobody positions a box: there is no
+canvas and no drag-and-drop.
 
 ## Decisions worth keeping
 
@@ -72,6 +92,5 @@ designed. It does not pretend, and it does not hide the button.
 
 - Upload photographs from the browser. Today the directory is passed on the
   command line, which is fine for a homelab but not for a gift.
-- Spread-by-spread preview inside the page. Right now the proof opens as a PDF
-  in a new tab, which is honest but not elegant.
-- Version history and rollback are in the API and the CLI but not yet in the UI.
+- Bringing back a photograph the current design never placed needs *Design again*;
+  re-applying settings cannot invent a place for it.

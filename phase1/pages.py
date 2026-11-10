@@ -49,6 +49,9 @@ SPLITS = {
 }
 
 
+SINGLES = ("solo", "solo-air")
+
+
 @dataclass
 class Page:
     comp: str
@@ -197,6 +200,21 @@ def repack(layout: dict, groups, lab: dict | None = None) -> list[str]:
     # Never below the lab minimum, and a whole number of increments.
     def total(n_pages: int) -> int:
         return (2 if opening else 0) + 2 * ((n_pages + 1) // 2)
+
+    # Two framed single photographs of the same moment, one after the other,
+    # make one composed page: the book uses its paper instead of setting one
+    # small picture in a field of white on every page. Full-bleed pages are
+    # left alone — those are meant to be big.
+    i = 0
+    while i + 1 < len(pages):
+        a, b = pages[i], pages[i + 1]
+        ga = by_photo.get(a.slots[0]["photo_id"]) if a.slots else None
+        gb = by_photo.get(b.slots[0]["photo_id"]) if b.slots else None
+        if (a.comp in SINGLES and b.comp in SINGLES and not b.stamp
+                and (ga is gb) and total(len(pages) - 1) >= min_pages):
+            pages[i:i + 2] = [Page("duo-stack", a.slots + b.slots, a.section_id,
+                                   a.stamp, a.note)]
+        i += 1
 
     while (total(len(pages)) < min_pages or total(len(pages)) % inc
            or len(pages) % 2) and _split_one(pages):

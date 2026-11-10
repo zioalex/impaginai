@@ -25,7 +25,7 @@ Side = Literal["left", "right"]
 class SlotBox:
     rect: Rect
     aspect: Aspect = "any"
-    caption_style: Literal["below", "overlay", "none"] = "below"
+    caption_style: Literal["below", "overlay", "inset", "none"] = "below"
     caption_rect: Rect | None = None
     caption_align: Literal["left", "right", "center"] = "left"
     bleeds: bool = False
@@ -73,8 +73,8 @@ class TemplateSpec:
 # Nothing crosses the fold. That is structural here, not a rule to remember:
 # a composition is built inside one page's content area and cannot reach past it.
 
-def _page_slots(g: Geometry, side: Side, comp_name: str, aspect_hint=None) -> list[SlotBox]:
-    rects, feature, cap = compose.build_page(g, side, comp_name)
+def _page_slots(g: Geometry, side: Side, comp_name: str, aspects=None) -> list[SlotBox]:
+    rects, feature, cap = compose.build_page(g, side, comp_name, aspects)
     out: list[SlotBox] = []
     for i, r in enumerate(rects):
         is_feature = (i == feature)
@@ -83,9 +83,11 @@ def _page_slots(g: Geometry, side: Side, comp_name: str, aspect_hint=None) -> li
             SlotBox(
                 rect=r,
                 aspect="any",
-                # Only the feature image is captioned. Captioning every photo in
-                # a composed page turns it into a catalogue entry.
-                caption_style=("overlay" if bleeds else ("below" if is_feature else "none")),
+                # The feature's caption sits in the band beneath the page's
+                # photographs; any other photograph that has one (the user
+                # wrote it, so it is printed) carries it inset at its own foot,
+                # on a scrim so it stays readable.
+                caption_style=("overlay" if bleeds else ("below" if is_feature else "inset")),
                 caption_rect=(None if bleeds else cap),
                 caption_align="left",
                 bleeds=bleeds,
@@ -100,7 +102,15 @@ def _pair(left: str, right: str):
         # `side` flips which page gets which composition, so one template serves
         # both handednesses and the planner can vary the rhythm.
         a, b = (left, right) if o.get("side", "left") != "right" else (right, left)
-        slots = _page_slots(g, "left", a) + _page_slots(g, "right", b)
+        # `aspects`, when the layout carries it, is each photograph's own
+        # width/height in slot order; pages are then laid out to fit them.
+        asp = list(o.get("aspects") or [])
+        na = compose.COMPOSITIONS[a].slots
+        nb = compose.COMPOSITIONS[b].slots
+        if len(asp) != na + nb:
+            asp = []
+        slots = (_page_slots(g, "left", a, asp[:na] or None)
+                 + _page_slots(g, "right", b, asp[na:] or None))
         texts = []
         for page_side, name in (("left", a), ("right", b)):
             if name == "text":
@@ -290,3 +300,31 @@ def catalogue_for_prompt(allow_fold_crossing: bool = False) -> list[dict]:
         for s in REGISTRY.values()
         if s.planner_visible and (allow_fold_crossing or not s.spans_fold)
     ]
+
+
+def attach_aspects(spreads, dims: dict) -> int:
+    """Record each photograph's width/height on its spread (options.aspects),
+    so composed pages are laid out for the photographs they carry. `spreads`
+    are dicts or Spread models; `dims` maps photo id to (width, height).
+    Returns how many spreads were given aspects."""
+    n = 0
+    for sp in spreads:
+        get = (lambda k, sp=sp: sp.get(k)) if isinstance(sp, dict) else (lambda k, sp=sp: getattr(sp, k))
+        spec = REGISTRY.get(get("template"))
+        if spec is None or not getattr(spec.build, "pages", None):
+            continue
+        slots = get("slots") or []
+        ids = [s["photo_id"] if isinstance(s, dict) else s.photo_id for s in slots]
+        if not ids or any(i not in dims for i in ids):
+            continue
+        asp = [round(dims[i][0] / dims[i][1], 4) for i in ids]
+        opts = get("options")
+        if opts is None:
+            opts = {}
+            if isinstance(sp, dict):
+                sp["options"] = opts
+            else:
+                sp.options = opts
+        opts["aspects"] = asp
+        n += 1
+    return n
