@@ -155,6 +155,7 @@ def do_plan(args) -> int:
         language=args.language, photos=ph, g=g, lab=lab,
         complete=providers.make_completer(prov),
         target_spreads=args.spreads, thumb_dir=thumb_dir, groups=groups,
+        log_dir=args.album / "logs",
     )
     data = finish(res.layout.model_dump(mode="json", exclude_none=False), ov, groups, ph, lab)
     v = store.add(data, parent=None, change_summary="initial plan")
@@ -174,7 +175,7 @@ def do_revise(args) -> int:
     res = planner.revise(
         current=current, comment=args.comment, photos=ph, g=g, lab=lab,
         language=args.language, complete=providers.make_completer(prov),
-        groups=groups,
+        groups=groups, log_dir=args.album / "logs",
     )
     data = finish(res.layout.model_dump(mode="json", exclude_none=False), ov, groups, ph, lab)
     v = store.add(data, parent=parent.version_no, user_comment=args.comment,

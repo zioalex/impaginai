@@ -1,8 +1,9 @@
 """Which model answers, and over which wire protocol.
 
 The planner never knew what it was talking to: its one requirement is a
-`Completer`, a function taking (system prompt, messages) and returning (text,
-usage). What was missing was a second implementation. There is nothing
+`Completer`, a function taking (system prompt, messages, **opts) and returning
+a `planner.Reply` (text, usage, and why it stopped); a bare (text, usage) tuple
+is still accepted by the planner. What was missing was a second implementation. There is nothing
 Anthropic-specific about sequencing a photo album, and binding a self-hosted
 project to one vendor's endpoint is a poor default — especially when the
 machine running it may already have a model on it.
@@ -198,21 +199,74 @@ def _usage(inp: int, out: int, imgs: int):
     return Usage(inp, out, 1, imgs)
 
 
+# Finish reasons, normalised. The planner decides what to do about an empty or
+# cut-off reply from these, so each provider's own vocabulary is mapped onto one.
+_OPENAI_FINISH = {"stop": "stop", "tool_calls": "stop", "function_call": "stop",
+                  "length": "length", "content_filter": "filter", "error": "error"}
+_ANTHROPIC_FINISH = {"end_turn": "stop", "stop_sequence": "stop",
+                     "max_tokens": "length", "refusal": "refusal"}
+
+
 def _anthropic(p: Provider):
     try:
         from anthropic import Anthropic
     except ImportError:
         raise SystemExit("pip install anthropic")
 
+    # Imported one by one: which of these exist varies between SDK versions, and
+    # a missing name must not take the whole provider down.
+    import anthropic as _sdk
+
+    transient_types = tuple(
+        t for t in (getattr(_sdk, n, None) for n in (
+            "RateLimitError", "InternalServerError", "APIConnectionError",
+            "APITimeoutError")) if isinstance(t, type))
+    status_error = getattr(_sdk, "APIStatusError", None)
+
     client = Anthropic(api_key=p.api_key, **({"base_url": p.base_url} if p.base_url else {}))
 
-    def complete(system: str, messages: list[dict]):
+    def retry_after(exc) -> float | None:
+        try:
+            return float(exc.response.headers.get("retry-after"))
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+    def complete(system: str, messages: list[dict], **opts):
+        from planner import Reply, TransientError
+
         msgs = messages if p.vision else _strip_images(messages)
-        resp = client.messages.create(model=p.model, max_tokens=p.max_tokens,
-                                      system=system, messages=msgs)
+        try:
+            resp = client.messages.create(
+                model=p.model, max_tokens=opts.get("max_tokens") or p.max_tokens,
+                system=system, messages=msgs)
+        except Exception as e:
+            # Overload (529) is not a subclass of anything we can name portably,
+            # so it is recognised by status as well as by type.
+            status = getattr(e, "status_code", None)
+            if (isinstance(e, transient_types)
+                    or (status_error is not None and isinstance(e, status_error)
+                        and isinstance(status, int) and (status >= 500 or status in (408, 429)))):
+                raise TransientError(str(e), retry_after(e)) from e
+            raise
         text = "".join(b.text for b in resp.content if b.type == "text")
-        return text, _usage(resp.usage.input_tokens, resp.usage.output_tokens,
-                            count_images(msgs))
+        # Thinking blocks are only returned if something enabled them, but when
+        # they are present they are what explains an empty `text`.
+        thinking = sum(len(getattr(b, "thinking", "") or "")
+                       for b in resp.content if b.type == "thinking")
+        raw_finish = getattr(resp, "stop_reason", None)
+        try:
+            raw = resp.model_dump()
+        except Exception:
+            raw = None
+        return Reply(
+            text=text,
+            usage=_usage(resp.usage.input_tokens, resp.usage.output_tokens,
+                         count_images(msgs)),
+            finish=_ANTHROPIC_FINISH.get(raw_finish),
+            raw_finish=raw_finish,
+            reasoning_chars=thinking,
+            raw=raw,
+        )
 
     return complete
 
@@ -401,20 +455,52 @@ def _openai(p: Provider):
     if p.api_key:
         headers["Authorization"] = f"Bearer {p.api_key}"
 
-    def complete(system: str, messages: list[dict]):
+    def post(body: dict):
+        """One POST. Network-level failures are worth resending, so they are
+        reported as such rather than as a crash."""
+        from planner import TransientError
+
+        try:
+            return httpx.post(url, headers=headers, json=body, timeout=600.0)
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            raise TransientError(f"{type(e).__name__} talking to {url}: {e}") from e
+
+    def complete(system: str, messages: list[dict], **opts):
+        from planner import Reply, TransientError
+
         msgs = messages if p.vision else _strip_images(messages)
         body = {
             "model": p.model,
             "messages": _to_openai(system, msgs),
-            "max_tokens": p.max_tokens,
+            "max_tokens": opts.get("max_tokens") or p.max_tokens,
         }
+
+        # Reasoning models can spend the whole output budget thinking and write
+        # nothing. The knob for turning that down has no standard spelling.
+        level = opts.get("reasoning")
+        base = p.base_url or ""
+        if level in ("low", "off"):
+            if "openrouter" in base:
+                body["reasoning"] = ({"effort": "low"} if level == "low"
+                                     else {"enabled": False})
+            elif level == "low":
+                body["reasoning_effort"] = "low"
+            elif "localhost:11434" in base or "127.0.0.1:11434" in base:
+                body["think"] = False
+
         # The annotate pass returns a bare array, which the layout schema does
         # not describe; detect it and leave json_mode off for that call.
-        if system.startswith("You are a picture editor"):
-            body["_skip_schema"] = True
+        skip_schema = system.startswith("You are a picture editor")
         mode_key = (p.base_url, p.model)
         known = _MODE_CACHE.get(mode_key)
-        if body.pop("_skip_schema", False) or known == "none":
+        if opts.get("json_fallback") and p.json_mode and not skip_schema:
+            # The last reply under this mode came back empty. Step one level
+            # down and remember it, so later calls do not walk into it again.
+            current = known or ("json_schema" if _layout_schema() is not None
+                                else "json_object")
+            known = {"json_schema": "json_object"}.get(current, "none")
+            _MODE_CACHE[mode_key] = known
+        if skip_schema or known == "none":
             pass
         elif p.json_mode:
             # Prefer a real schema over bare JSON mode. OpenAI, vLLM, Ollama
@@ -434,7 +520,20 @@ def _openai(p: Provider):
                 body["response_format"] = {"type": "json_object"}
         # Generous timeout: a local model on CPU is slow, and a planning call
         # is one request per album, not a hot path.
-        r = httpx.post(url, headers=headers, json=body, timeout=600.0)
+        r = post(body)
+
+        def rejected(resp) -> bool:
+            # 408 and 429 are 4xx but say nothing about the request's content.
+            return 400 <= resp.status_code < 500 and resp.status_code not in (408, 429)
+
+        # A reasoning field the endpoint does not know is rejected like any
+        # other unknown parameter. Drop it and ask again, once; the answer is
+        # worth more than the hint.
+        hint_keys = [k for k in ("reasoning", "reasoning_effort", "think") if k in body]
+        if hint_keys and rejected(r):
+            for k in hint_keys:
+                body.pop(k)
+            r = post(body)
 
         # Structured output is the least portable part of the OpenAI contract.
         # Providers reject it for reasons that name their own internals rather
@@ -443,14 +542,14 @@ def _openai(p: Provider):
         # the error text fails exactly when it is needed. Any 4xx while a
         # response_format is in play is treated as a capability problem and the
         # request is retried with progressively weaker constraints.
-        if 400 <= r.status_code < 500 and body.get("response_format"):
+        if rejected(r) and body.get("response_format"):
             first = _error_text(r.text)
             if body["response_format"].get("type") == "json_schema":
                 body["response_format"] = {"type": "json_object"}
-                r = httpx.post(url, headers=headers, json=body, timeout=600.0)
-            if 400 <= r.status_code < 500:
+                r = post(body)
+            if rejected(r):
                 body.pop("response_format", None)
-                r = httpx.post(url, headers=headers, json=body, timeout=600.0)
+                r = post(body)
             _MODE_CACHE[mode_key] = (
                 body.get("response_format", {}).get("type") or "none")
             if r.status_code < 400 and not _WARNED.get(p.model):
@@ -460,16 +559,84 @@ def _openai(p: Provider):
                       f"        ({first.strip()[:300]})")
         elif r.status_code < 400 and body.get("response_format"):
             _MODE_CACHE[mode_key] = body["response_format"]["type"]
+
+        if r.status_code in (408, 429) or r.status_code >= 500:
+            after = None
+            try:
+                after = float(r.headers.get("Retry-After"))
+            except (TypeError, ValueError):
+                pass
+            raise TransientError(
+                f"{r.status_code} from {url}: {_error_text(r.text)[:400]}", after)
         if r.status_code >= 400:
             raise RuntimeError(f"{r.status_code} from {url}: {r.text[:400]}")
-        data = r.json()
+
         try:
-            text = data["choices"][0]["message"]["content"] or ""
-        except (KeyError, IndexError):
-            raise RuntimeError(f"unexpected response shape: {json.dumps(data)[:400]}")
+            data = r.json()
+        except ValueError:
+            # A 200 that is not JSON is a proxy or gateway page, not an answer.
+            raise TransientError(f"non-JSON 200 from {url}: {r.text[:200]!r}")
+        if not isinstance(data, dict):
+            raise TransientError(f"unexpected response shape: {json.dumps(data)[:400]}")
+
+        # OpenRouter (and some gateways) report upstream failures as HTTP 200
+        # with the error in the body, either at the top or inside the choice.
+        if data.get("error"):
+            raise TransientError(_error_text(json.dumps({"error": data["error"]})))
+        choices = data.get("choices")
+        if not choices:
+            raise TransientError(f"response had no choices: {json.dumps(data)[:400]}")
+        choice = choices[0]
+        if choice.get("error"):
+            raise TransientError(_error_text(json.dumps({"error": choice["error"]})))
+
+        msg = choice.get("message") or {}
+        content = msg.get("content")
+        if isinstance(content, list):
+            content = "".join(
+                part.get("text") or "" for part in content
+                if isinstance(part, dict) and isinstance(part.get("text"), str))
+        text = content if isinstance(content, str) else ""
+        # Some relays implement json_schema output by forcing a tool call, so
+        # the layout arrives as the call's arguments and `content` is empty.
+        # Reading only `content` turns a perfectly good answer into "empty".
+        if not text.strip():
+            for call in msg.get("tool_calls") or []:
+                args = (call.get("function") or {}).get("arguments") if isinstance(call, dict) else None
+                if isinstance(args, str) and args.strip():
+                    text = args
+                    break
+
+        raw_finish = choice.get("finish_reason")
+        finish = _OPENAI_FINISH.get(raw_finish)
+        refusal = msg.get("refusal")
+        refusal = refusal if isinstance(refusal, str) and refusal else None
+        if refusal and not text:
+            finish = "refusal"
+
+        reasoning = msg.get("reasoning")
+        if not isinstance(reasoning, str):
+            reasoning = msg.get("reasoning_content")
+        reasoning_chars = len(reasoning) if isinstance(reasoning, str) else 0
+        if not reasoning_chars and isinstance(msg.get("reasoning_details"), list):
+            reasoning_chars = sum(
+                len(d.get("text") or d.get("summary") or "")
+                for d in msg["reasoning_details"] if isinstance(d, dict))
+
         u = data.get("usage") or {}
-        return text, _usage(u.get("prompt_tokens", 0), u.get("completion_tokens", 0),
-                            count_images(msgs))
+        details = u.get("completion_tokens_details") or {}
+        return Reply(
+            text=text,
+            usage=_usage(u.get("prompt_tokens", 0), u.get("completion_tokens", 0),
+                         count_images(msgs)),
+            finish=finish,
+            raw_finish=raw_finish,
+            reasoning_chars=reasoning_chars,
+            reasoning_tokens=int(details.get("reasoning_tokens") or 0),
+            refusal=refusal,
+            response_format=(body.get("response_format") or {}).get("type"),
+            raw=data,
+        )
 
     return complete
 
