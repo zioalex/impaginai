@@ -203,6 +203,15 @@ def resolution_errors(layout: Layout, photos: list[Photo], g, lab: dict) -> list
     warn = float(lab["resolution"]["warn_below_dpi"])
     by_id = {p.id: p for p in photos}
     out = []
+    import overrides as OV
+
+    for sp in layout.spreads:
+        for i, slot in enumerate(sp.slots, 1):
+            if slot.photo_id not in by_id and OV.match_id(slot.photo_id, by_id) is None:
+                out.append(
+                    f"spread {sp.index} ({sp.template}) slot {i}: {slot.photo_id!r} is not a photo "
+                    f"id. Copy ids exactly as the photo list gives them (the first column), "
+                    f"never shortened.")
     for sp in layout.spreads:
         if sp.template not in templates_lib.REGISTRY:
             continue

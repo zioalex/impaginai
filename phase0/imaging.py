@@ -140,7 +140,10 @@ def set_rotation(photo_dir, pid: str, degrees: int) -> int:
     else:
         cur.pop(pid, None)
     f = Path(photo_dir) / ROTATIONS_FILE
-    f.write_text(yaml.safe_dump(dict(sorted(cur.items())), sort_keys=True))
+    if cur:
+        f.write_text(yaml.safe_dump(dict(sorted(cur.items())), sort_keys=True))
+    else:
+        f.unlink(missing_ok=True)
     _ROT_CACHE.pop(str(f.resolve()), None)
     return d
 
@@ -162,3 +165,9 @@ def turn(im, degrees: int):
     return {90: lambda: im.transpose(Image.Transpose.ROTATE_270),
             180: lambda: im.transpose(Image.Transpose.ROTATE_180),
             270: lambda: im.transpose(Image.Transpose.ROTATE_90)}.get(degrees, lambda: im)()
+
+
+def turn_point(f, degrees: int):
+    """A normalised point on a photograph, after turning it `degrees` clockwise."""
+    x, y = float(f[0]), float(f[1])
+    return {90: (1 - y, x), 180: (1 - x, 1 - y), 270: (y, 1 - x)}.get(int(degrees) % 360, (x, y))

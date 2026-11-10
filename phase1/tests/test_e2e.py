@@ -234,6 +234,8 @@ def main() -> int:
             assert all(sp.get("options", {}).get("aspects") or not T_pages(sp)
                        for sp in cur["spreads"]), "composed pages were not laid out for their photographs"
             assert (ed.get("/api/pages") or {}).get("count") == len(cur["spreads"]) * 2, "no page previews"
+            assert cur["spreads"][0]["template"].startswith(("front:", "front-framed:")), \
+                f"the book does not open on the front page: {cur['spreads'][0]['template']}"
             pg = ed.get("/api/pages")
             assert isinstance(pg.get("low_res"), dict), pg
             ph = ed.get("/api/photos")

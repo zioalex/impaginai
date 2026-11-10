@@ -198,17 +198,70 @@ def _downgrade(template: str, needed: int) -> str | None:
     return None
 
 
-def apply_to_layout(layout: dict, ov: Overrides) -> list[str]:
+def match_id(pid: str, known) -> str | None:
+    """The real photo id the model meant, when it wrote one that does not
+    exist — `WA0019` for `IMG-20260805-WA0019`, a dropped extension, a case
+    change. Only an unambiguous match counts; otherwise None."""
+    known = list(known)
+    if pid in known:
+        return pid
+    low = pid.lower().strip()
+    for cand in (
+        [k for k in known if k.lower() == low],
+        [k for k in known if len(low) >= 3 and (k.lower().endswith(low) or low.endswith(k.lower()))],
+        [k for k in known if len(low) >= 4 and low in k.lower()],
+    ):
+        if len(cand) == 1:
+            return cand[0]
+        if len(cand) > 1:
+            return None
+    import difflib
+
+    close = difflib.get_close_matches(pid, known, n=2, cutoff=0.85)
+    return close[0] if len(close) == 1 else None
+
+
+def resolve_ids(layout: dict, known) -> tuple[list[str], set[str]]:
+    """Replace photo ids the model mistyped with the real ones. Returns a log
+    and the ids that match no photograph (to be dropped)."""
+    known = set(known)
+    notes, unknown = [], set()
+    for sp in layout.get("spreads", []):
+        for slot in sp.get("slots") or []:
+            pid = slot["photo_id"]
+            if pid in known:
+                continue
+            real = match_id(pid, known)
+            if real:
+                notes.append(f"spread {sp.get('index')}: photo id {pid!r} read as {real!r}")
+                slot["photo_id"] = real
+            else:
+                notes.append(f"spread {sp.get('index')}: no photograph {pid!r} — left out")
+                unknown.add(pid)
+    cov = layout.get("cover") or {}
+    fid = cov.get("front_photo_id")
+    if fid and fid not in known:
+        cov["front_photo_id"] = match_id(fid, known)
+    return notes, unknown
+
+
+def apply_to_layout(layout: dict, ov: Overrides, known=None) -> list[str]:
     """Re-apply the user's instructions to a planned layout. Returns a log.
 
     Runs on every version, so an override set once survives every later
     revision without the user having to repeat themselves to the model.
     """
     notes: list[str] = []
+    # 0. photo ids the model got wrong: repaired when the meaning is clear,
+    #    dropped otherwise — a slot naming no file must never reach the render
+    unknown: set[str] = set()
+    if known is not None:
+        fixed, unknown = resolve_ids(layout, known)
+        notes += fixed
     spreads = layout.get("spreads", [])
 
     # 1. drop excluded photographs wherever the planner put them
-    excluded = ov.excluded()
+    excluded = ov.excluded() | unknown
     if excluded:
         for sp in spreads:
             before = len(sp.get("slots", []))

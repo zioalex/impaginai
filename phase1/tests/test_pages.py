@@ -211,6 +211,71 @@ def engadin_run_fixes(groups):
     assert lay["spreads"][0]["slots"][0]["photo_id"] == "p001"
     print("low-resolution front page set inside the margins: ok")
 
+    # a photo id the model shortened is read as the real one; one that names
+    # no photograph is left out instead of blocking the render
+    import overrides as OV
+    known = ["IMG-20260805-WA0019", "IMG_20260805_090039_1", "IMG_20260805_085308", "p002"]
+    assert OV.match_id("WA0019", known) == "IMG-20260805-WA0019"
+    assert OV.match_id("img_20260805_085308", known) == "IMG_20260805_085308"
+    assert OV.match_id("IMG_20260805", known) is None, "ambiguous ids must not be guessed"
+    lay = {"spreads": [
+        {"index": 1, "template": "two-up-hero", "options": {}, "text": None, "section_id": None,
+         "slots": [{"photo_id": "p002", "focal": [.5, .5], "caption": None, "caption_position": "below"},
+                   {"photo_id": "WA0019", "focal": [.5, .5], "caption": None, "caption_position": "below"}]},
+        {"index": 2, "template": "two-up-equal", "options": {}, "text": None, "section_id": None,
+         "slots": [{"photo_id": "IMG_20260805_085308", "focal": [.5, .5], "caption": None, "caption_position": "below"},
+                   {"photo_id": "nonexistent", "focal": [.5, .5], "caption": None, "caption_position": "below"}]}],
+        "meta": {}}
+    notes = OV.apply_to_layout(lay, OV.Overrides(), known=known)
+    ids = [s["photo_id"] for sp in lay["spreads"] for s in sp["slots"]]
+    assert "IMG-20260805-WA0019" in ids and "WA0019" not in ids, ids
+    assert "nonexistent" not in ids, ids
+    for sp in lay["spreads"]:
+        assert T.REGISTRY[sp["template"]].slot_count == len(sp["slots"]), sp
+    print(f"mistyped photo ids repaired, unknown ones left out ({len(notes)} note(s)): ok")
+
+    # within one place, pages run in the order the photographs were taken
+    g1 = NS(id="g1", photo_ids=["a", "b", "c", "d"], place="Pontresina", date_label="5. August")
+    lay = {"meta": {}, "spreads": [
+        {"index": 1, "template": "two-up-equal", "options": {}, "text": None, "section_id": None,
+         "slots": [{"photo_id": x, "focal": [.5, .5], "caption": None, "caption_position": "below"}
+                   for x in pair]} for pair in (("c", "a"), ("d", "b"))]}
+    taken = {"a": "2026-08-05T08:53", "b": "2026-08-05T09:00", "c": "2026-08-05T09:36",
+             "d": "2026-08-05T10:23"}
+    PG.repack(lay, [g1], {"pages": {"min": 0, "increment": 2}}, taken=taken, front="a")
+    order = [s["photo_id"] for sp in lay["spreads"] for s in sp["slots"]]
+    assert order == ["a", "b", "c", "d"], order
+    print("pages of one place in the order taken: ok")
+
+    # a photograph the vision pass saw lying on its side is stood up: the turn
+    # goes into rotations.yaml, its shape and focal point turn with it, and a
+    # photograph the user turned by hand is left alone
+    import imaging
+    import annotate
+    import photos as PH
+    from PIL import Image
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        pdir, adir = td / "photos", td / "album"
+        pdir.mkdir()
+        Image.new("RGB", (400, 300), "red").save(pdir / "side.jpg")
+        Image.new("RGB", (400, 300), "blue").save(pdir / "mine.jpg")
+        imaging.set_rotation(pdir, "mine", 180)
+        anns = annotate.Annotations({
+            "side": annotate.Annotation(id="side", focal=(0.2, 0.3), turn=90, v=annotate.ANNOTATION_VERSION),
+            "mine": annotate.Annotation(id="mine", turn=90, v=annotate.ANNOTATION_VERSION)})
+        ph = PH.read_dir(pdir)
+        turned = annotate.apply_turns(ph, anns, adir / "annotations.json", pdir, adir)
+        assert turned == ["side"], turned
+        assert imaging.rotations(pdir) == {"side": 90, "mine": 180}, imaging.rotations(pdir)
+        again = annotate.Annotations.load(adir / "annotations.json")
+        assert again.by_id["side"].turn == 0 and tuple(again.by_id["side"].focal) == (0.7, 0.2)
+        side = next(p for p in PH.read_dir(pdir) if p.id == "side")
+        assert (side.width, side.height) == (300, 400), (side.width, side.height)
+        with Image.open(pdir / "side.jpg") as im:
+            assert R.to_srgb(im).size == (300, 400)
+    print("sideways photographs stood up from the vision pass: ok")
+
 
 def adaptive_pages():
     """A composed page is laid out for its photographs' real shapes: nothing
