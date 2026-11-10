@@ -32,6 +32,7 @@ import argparse
 import copy
 import io
 import json
+import os
 import sys
 import threading
 import time
@@ -55,10 +56,12 @@ import cluster
 import config as CFG
 import imaging
 import geocode
+import keystore
 import overrides as OV
 import pages as PG
 import photos as PH
 import planner
+import prompt as P
 import providers
 import render as R
 import templates_lib
@@ -169,10 +172,10 @@ def run_preflight() -> dict:
         try:
             r = providers.preflight(STATE["providers"][n])
             res = {"ok": r.ok, "status": "ok" if r.ok else "failed",
-                   "message": r.message, "seconds": round(r.seconds, 1)}
+                   "message": keystore.redact(r.message), "seconds": round(r.seconds, 1)}
         except Exception as exc:  # preflight promises not to raise; belt and braces
             res = {"ok": False, "status": "failed", "seconds": 0.0,
-                   "message": f"the model check itself failed: {exc}"}
+                   "message": keystore.redact(f"the model check itself failed: {exc}")}
         with PREFLIGHT_LOCK:
             STATE["preflight"] = {**STATE["preflight"], n: res}
         print(f"  model check · {n}: {'ok' if res['ok'] else 'NOT OK'} — {res['message']}")
@@ -184,6 +187,7 @@ def start_preflight() -> None:
 
 
 def set_job(step: str, progress: int, error: str | None = None, done: bool = False):
+    error = keystore.redact(error)
     with JOB_LOCK:
         JOB.update(step=step, progress=progress, error=error, done=done,
                    running=not (done or error))
@@ -231,7 +235,7 @@ def log_session(kind: str, session: Session, started: float, *, ok: bool,
            "seconds": round(time.time() - started, 1),
            "models": sorted(session.models), **session.usage.as_dict()}
     if error:
-        rec["error"] = error[:300]
+        rec["error"] = keystore.redact(error)[:300]
     f = STATE["album"] / "costs.jsonl"
     with f.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -268,6 +272,11 @@ def save_settings() -> None:
             saved[k] = v
     data["options"] = saved
     STATE["saved_options"] = saved
+    if STATE.get("model_cfg") is not None and not STATE.get("models_locked_by"):
+        data["models"] = STATE["model_cfg"]
+        data["preset"] = STATE.get("model_preset")
+    elif "saved_models" in STATE:
+        data["models"], data["preset"] = STATE["saved_models"]
     settings_path().write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 
@@ -567,6 +576,250 @@ def api_relook():
     anns.save(path)
     n = len([p for p in STATE["all"] if not STATE["ov"].get(p.id).exclude])
     return {"ok": True, "photos": n}
+
+
+# --- AI models and keys --------------------------------------------------
+
+PRESETS_DIR = ROOT / "presets"
+MODEL_FIELDS = ("base_url", "model", "reasoning", "max_tokens", "fallback_model",
+                "fallback_base_url", "json_mode", "vision")
+# "High" is offered for the planner only, to start with: it is the one call
+# where thinking longer pays, and the slowest and costliest to make longer.
+EFFORT = {"plan": ["default", "low", "off", "high"],
+          "revise": ["default", "low", "off"], "annotate": ["default", "low", "off"]}
+
+
+def presets() -> list[dict]:
+    out = []
+    for f in sorted(PRESETS_DIR.glob("*.yaml")):
+        lines = f.read_text(encoding="utf-8").splitlines()
+        head = lines[0].lstrip("# ").strip() if lines else f.stem
+        title, _, blurb = head.partition(" — ")
+        cost = next((ln.lstrip("# ").strip() for ln in lines[1:12]
+                     if "$" in ln and ("about" in ln or "~" in ln or "Cost" in ln)), "")
+        out.append({"name": f.stem, "title": title.strip().capitalize(), "blurb": blurb.strip(),
+                    "cost": cost, "models": providers.load_model_config(f)})
+    return out
+
+
+def _alias(url: str | None) -> str:
+    if not url:
+        return ""
+    for k, v in providers.ALIASES.items():
+        if v == url:
+            return k
+    return url
+
+
+def user_config() -> dict:
+    try:
+        return json.loads((keystore.config_dir() / "config.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_user_config(data: dict) -> None:
+    d = keystore.config_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "config.json").write_text(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def apply_models(check: bool = True) -> None:
+    """Resolve the three roles from the flags, environment and the chosen
+    models, and check them again."""
+    args = STATE["args"]
+    cfg = (providers.load_model_config(args.models) if getattr(args, "models", None)
+           else STATE.get("model_cfg") or {})
+    roles = {r: providers.resolve_role(r, args, cfg) for r in providers.ROLES}
+    STATE["providers"] = roles
+    STATE["has_key"] = roles["plan"].usable
+    if check and STATE.get("preflight_enabled", True):
+        STATE["preflight"] = {n: {"ok": None, "status": "checking", "message": "",
+                                  "seconds": 0.0} for n in _preflight_roles()}
+        start_preflight()
+
+
+def models_locked_by(args) -> str | None:
+    """Why the model choice cannot be changed in the editor, if it cannot."""
+    if getattr(args, "models", None):
+        return f"set by --models {args.models} when the editor was started"
+    flags = [f for f in ("provider", "model", "base_url", "reasoning", "max_tokens")
+             if getattr(args, f, None)]
+    flags += [f"{r}_{f}" for r in providers.ROLES
+              for f in ("model", "base_url", "max_tokens", "reasoning", "fallback_model")
+              if getattr(args, f"{r}_{f}", None)]
+    if flags:
+        return "set by --" + ", --".join(f.replace("_", "-") for f in flags) + \
+            " when the editor was started"
+    env = [v for v in ("ALBUM_PROVIDER", "ALBUM_MODEL", "ALBUM_BASE_URL", "ALBUM_REASONING")
+           + tuple(f"ALBUM_{r.upper()}_MODEL" for r in providers.ROLES) if os.environ.get(v)]
+    if env:
+        return "set by the environment variable " + ", ".join(env)
+    return None
+
+
+def _key_slots() -> list[str]:
+    """The stored-key slots the current models use (hosted endpoints only)."""
+    seen = []
+    for p in STATE["providers"].values():
+        cands = [p]
+        fb = providers.fallback_provider(p) if p.fallback_model else None
+        if fb:
+            cands.append(fb)
+        for q in cands:
+            if q.is_local:
+                continue
+            slot = keystore.slot_for(q.name, q.base_url)
+            if slot not in seen:
+                seen.append(slot)
+    return seen
+
+
+def estimate() -> dict:
+    """About what the next design costs, before it is started."""
+    roles = STATE["providers"]
+    usable = [p for p in STATE["all"] if not STATE["ov"].get(p.id).exclude]
+    anns = annotate.Annotations.load(STATE["album"] / "annotations.json")
+    todo = anns.missing(usable)
+    px = int(STATE.get("vision_px") or annotate.VISION_PX)
+    a_rate, a_known = providers.rate_for(roles["annotate"])
+    img_tokens = (px * px * 3 // 4) // 750 + 120          # a 4:3 copy, plus its line
+    a_usd = len(todo) * (img_tokens * a_rate[0] + 180 * a_rate[1]) / 1e6 \
+        if roles["annotate"].vision else 0.0
+    p_rate, p_known = providers.rate_for(roles["plan"])
+    try:
+        text = (P.system_prompt(STATE["g"], STATE["lab"], STATE["language"])
+                + P.plan_user_content(STATE["title"], STATE["subtitle"], STATE["fmt"],
+                                      STATE["language"], usable, target_spreads(),
+                                      STATE["groups"], prefs()))
+        tin = len(text) // 3
+    except Exception:
+        tin = 6000 + 120 * len(usable)
+    tout = 4000 + 220 * len(usable)
+    high = roles["plan"].reasoning == "high"
+    think = 12000 if high else 3000
+    p_usd = (tin * p_rate[0] + (tout + think) * p_rate[1]) / 1e6
+    high_extra = (9000 * p_rate[1]) / 1e6
+    return {"annotate_photos": len(todo), "annotate_usd": round(a_usd, 4),
+            "plan_usd": round(p_usd, 4), "total_usd": round(a_usd + p_usd, 4),
+            "high": high, "high_extra_usd": round(high_extra, 4),
+            "guessed": not (a_known and p_known)}
+
+
+@app.get("/api/models")
+def api_models():
+    roles = STATE["providers"]
+    cfg = STATE.get("model_cfg") or {}
+    out = {}
+    for r, p in roles.items():
+        out[r] = {"base_url": _alias(p.base_url) or ("anthropic" if p.name == "anthropic" else "openai"),
+                  "model": p.model, "reasoning": p.reasoning or "default",
+                  "max_tokens": p.max_tokens, "fallback_model": p.fallback_model or "",
+                  "json_mode": p.json_mode, "vision": p.vision, "usable": p.usable,
+                  "local": p.is_local, "describe": p.describe(mention_vision=(r == "annotate")),
+                  "needs": providers.ROLE_NEEDS[r], "effort": EFFORT[r]}
+    return {
+        "locked_by": STATE.get("models_locked_by"),
+        "preset": STATE.get("model_preset"),
+        "roles": out,
+        "presets": [{k: v for k, v in pr.items() if k != "models"} for pr in presets()],
+        "endpoints": ["anthropic"] + sorted(providers.ALIASES),
+        "keys": [keystore.status(s) for s in _key_slots()],
+        "all_slots": {k: v[0] for k, v in keystore.SLOTS.items()},
+        "keys_editable": STATE.get("keys_editable", True),
+        "estimate": estimate(),
+        "custom": bool(cfg) and not STATE.get("model_preset"),
+    }
+
+
+class ModelsIn(BaseModel):
+    preset: str | None = None
+    roles: dict[str, dict] | None = None
+
+
+@app.put("/api/models")
+def api_models_put(body: ModelsIn):
+    if JOB["running"]:
+        raise HTTPException(409, "busy — try again when the current job finishes")
+    if STATE.get("models_locked_by"):
+        raise HTTPException(409, f"The models are {STATE['models_locked_by']}.")
+    cfg = copy.deepcopy(STATE.get("model_cfg") or {})
+    preset = STATE.get("model_preset")
+    if body.preset:
+        hit = next((pr for pr in presets() if pr["name"] == body.preset), None)
+        if hit is None:
+            raise HTTPException(404, f"no preset {body.preset!r}")
+        cfg, preset = copy.deepcopy(hit["models"]), body.preset
+    for role, fields in (body.roles or {}).items():
+        if role not in providers.ROLES:
+            raise HTTPException(400, f"unknown role {role!r}")
+        block = dict(cfg.get(role) or {})
+        for k, v in fields.items():
+            if k not in MODEL_FIELDS:
+                raise HTTPException(400, f"{k!r} cannot be set here")
+            if k == "reasoning" and v not in EFFORT[role]:
+                raise HTTPException(400, f"effort for {role} must be one of {', '.join(EFFORT[role])}")
+            if k == "api_key":
+                raise HTTPException(400, "keys are set with PUT /api/keys")
+            if v in ("", None):
+                block.pop(k, None)
+            else:
+                block[k] = v
+        cfg[role] = block
+        preset = None
+    # Validate by resolving: a typo in a level or a budget is refused here,
+    # not discovered at the next design.
+    try:
+        for r in providers.ROLES:
+            providers.resolve_role(r, STATE["args"], cfg)
+    except SystemExit as exc:
+        raise HTTPException(400, str(exc))
+    STATE["model_cfg"], STATE["model_preset"] = cfg, preset
+    save_settings()
+    uc = user_config()
+    uc.update(models=cfg, preset=preset)      # the default for the next new album
+    save_user_config(uc)
+    apply_models()
+    return {"ok": True}
+
+
+class KeyIn(BaseModel):
+    slot: str
+    key: str
+
+
+def _keys_allowed() -> None:
+    if not STATE.get("keys_editable", True):
+        raise HTTPException(403, "API keys cannot be set over the network: the editor was "
+                                 "started on a non-local address without "
+                                 "--allow-remote-settings.")
+
+
+@app.put("/api/keys")
+def api_keys_put(body: KeyIn):
+    _keys_allowed()
+    try:
+        keystore.set_key(body.slot, body.key)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    apply_models()
+    # Never the key: where it comes from, and its masked form.
+    return keystore.status(body.slot)
+
+
+@app.delete("/api/keys/{slot}")
+def api_keys_delete(slot: str):
+    _keys_allowed()
+    if slot not in keystore.SLOTS:
+        raise HTTPException(404, "no such key")
+    keystore.delete_key(slot)
+    apply_models()
+    return keystore.status(slot)
+
+
+@app.get("/api/estimate")
+def api_estimate():
+    return estimate()
 
 
 @app.get("/api/preflight")
@@ -1133,10 +1386,14 @@ def main():
     ap.add_argument("--no-preflight", action="store_true",
                     help="skip the one-request model check at startup")
     ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--allow-remote-settings", action="store_true",
+                    help="allow API keys to be set from the editor even when it listens "
+                         "on a non-local address")
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
-
-    import os
+    # Nothing printed — a log line, a traceback — may carry an API key.
+    sys.stdout = keystore.RedactingStream(sys.stdout)
+    sys.stderr = keystore.RedactingStream(sys.stderr)
 
     args.album.mkdir(parents=True, exist_ok=True)
     # What was chosen in the editor last time, unless a flag says otherwise.
@@ -1186,11 +1443,23 @@ def main():
         front_photo=saved.get("front_photo"),
     )
     apply_options()
-    roles = providers.resolve_all(args, args.models)
-    STATE["providers"] = roles
+    STATE["args"] = args
+    STATE["models_locked_by"] = models_locked_by(args)
+    STATE["keys_editable"] = (args.host in ("127.0.0.1", "localhost", "::1")
+                              or args.allow_remote_settings)
+    # The models: what this album chose in the editor, else what was chosen
+    # last for another album, else the environment's defaults. Flags win.
+    if saved.get("models") is not None:
+        STATE["model_cfg"], STATE["model_preset"] = saved["models"], saved.get("preset")
+    else:
+        uc = user_config()
+        STATE["model_cfg"], STATE["model_preset"] = uc.get("models"), uc.get("preset")
+    if STATE["models_locked_by"]:
+        STATE["saved_models"] = (saved.get("models"), saved.get("preset"))
+    apply_models(check=False)
+    roles = STATE["providers"]
     # Planning is the call that cannot be skipped, so its key decides whether
     # the album can be designed at all; annotate degrades gracefully.
-    STATE["has_key"] = roles["plan"].usable
     heic = sorted(p for p in args.photos.iterdir()
                   if p.suffix.lower() in imaging.HEIF_EXTENSIONS) if args.photos.is_dir() else []
     if (problem := imaging.check(heic)):

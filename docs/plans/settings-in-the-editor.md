@@ -1,6 +1,6 @@
 # Plan: every backend option in the editor
 
-Status: **reviewed; decisions recorded under "Decisions" at the end.** Built in steps A–D. **Step A is built** (Settings tab: book, grouping, places; `phase2/config.py`). The full `open_album()` refactor moves to step C, where switching albums needs it; step A applies option changes live with `apply_options()`.
+Status: **reviewed; decisions recorded under "Decisions" at the end.** Built in steps A–D. **Steps A and B are built** (Settings tab: book, grouping, places — `phase2/config.py`; AI models and keys — `phase1/keystore.py`, `/api/models`, `/api/keys`, `/api/estimate`). Model lists fetched from the endpoints stay in step D. The full `open_album()` refactor moves to step C, where switching albums needs it; step A applies option changes live with `apply_options()`.
 
 ## Goal
 
