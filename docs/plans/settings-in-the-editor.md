@@ -1,6 +1,6 @@
 # Plan: every backend option in the editor
 
-Status: **proposal, for review.** Nothing here is built yet.
+Status: **reviewed; decisions recorded under "Decisions" at the end.** Built in steps A–D.
 
 ## Goal
 
@@ -40,7 +40,7 @@ button:
 |---|---|---|
 | Photo folder | `--photos` (required) | **Choose folder…** opens a folder browser served by the backend (a browser page cannot see local paths). It shows the number of photos found and how many are HEIC. |
 | Album (work) folder | `--album` (required) | **New album** / **Open album** / **Recent albums** list. Each album keeps its own photos folder, settings, versions and costs, as it does now. |
-| Add photos | copy files by hand | Drag and drop onto the Photos tab; files are copied into the photo folder. *(Optional, phase C.)* |
+| Add photos | copy files by hand | Drag and drop onto the Photos tab; files are copied into the photo folder. *(Phase C.)* |
 | Captions file | `--captions` | Kept as an advanced option; the per-photo caption box already replaces it. |
 
 Switching albums happens without restarting the server (see Architecture).
@@ -50,12 +50,18 @@ Switching albums happens without restarting the server (see Architecture).
 | option | today | in the editor | badge |
 |---|---|---|---|
 | Title, subtitle, language, size | editor ✓ | unchanged | instant / redesign |
-| Print lab | `--lab` | Dropdown of `phase0/labs/*.yaml` (only Saal today). Shows min/max pages and DPI rules, read-only. | instant |
+| Print lab | `--lab` | Dropdown of `phase0/labs/*.yaml` (only Saal today). Shows min/max pages and DPI rules, read-only. More labs come from the Swiss print-lab research story. | instant |
 | **Length** | the model decides | *Automatic* or a target page count (stepper, held between the lab's min and max) | redesign |
 | **Density** | fixed in the prompt | *Airy · Balanced · Dense* (about 1.5 / 2.5 / 3.5 photos per page). Feeds the prompt and how eagerly the repacker composes pages. | redesign (repacker part instant) |
 | **Selection** | the model may leave photos out | *Use every photo · Best of (model picks) · Only the strongest* | redesign |
 | Captions | personal, by the model | *Personal (we/our) · Descriptive · Place and date only · None*; your own captions are always kept | redesign |
 | Short-book policy | blank pages at the end | *Pad with blank pages · Split compositions first* (today: split first) | instant |
+
+Density and Selection each have an **ⓘ info pop-up** that explains the
+difference between their choices in plain words, with the effect on the
+number of pages: e.g. *Dense* = more photos per page, fewer pages, smaller
+photos; *Best of* = the model leaves out weak or repeated frames, *Use every
+photo* = nothing is left out, the book gets longer.
 
 Length, density and selection are the three levers that most decide whether an
 album feels designed. Today they are only reachable through the
@@ -72,11 +78,11 @@ comments).
 | Preset | `--models presets/*.yaml` | Cards: *Best result · Budget · Hybrid (local vision) · Fully local*, each showing the measured cost for 100 photos, taken from the preset's header. Picking one fills the fields below. |
 | Per role: endpoint | `base_url` | Dropdown of the known aliases (OpenRouter, Anthropic, OpenAI, Ollama, LM Studio…) plus *Custom URL*. |
 | Per role: model | `model` | Text field with suggestions for that endpoint. For OpenRouter and Ollama the list comes from the endpoint itself (`/models`, `/api/tags`). |
-| Per role: **effort** | `reasoning: default/low/off` | *Off · Low · Default · High*. **High is new**: it maps to Anthropic extended thinking, OpenAI `reasoning_effort: high` and OpenRouter `reasoning.effort`. For the planner it is the knob most worth exposing. |
+| Per role: **effort** | `reasoning: default/low/off` | *Off · Low · Default · High*. **High is new**: it maps to Anthropic extended thinking, OpenAI `reasoning_effort: high` and OpenRouter `reasoning.effort`. **Offered for the planner only** to start with (see Decisions). |
 | Per role: output budget | `max_tokens` | Number field, hidden under *Advanced*. |
 | Per role: fallback model | `fallback_model` | Text field with a hint to choose another vendor. |
 | Per role: JSON mode, vision | flags | Advanced toggles, set by the preset. |
-| API keys | environment variables | **Write-only** password fields, one per provider in use. The backend reports only *set / not set / works*, never the key. See Security. |
+| API keys | environment variables | **Write-only** password fields, one per provider in use. **A key from the environment always wins** over one entered in the GUI. The backend reports only *from environment / your key / missing* and a masked form (`sk-or-…a1b2`), never the key. See Security. |
 | Test | runs at startup | **Test models** button (the existing preflight), plus a green/red dot per role. |
 | Cost so far | editor ✓ | unchanged; plus an *estimated cost of the next design* next to the button |
 
@@ -163,10 +169,23 @@ for that run, and **Save as models.yaml…** exports the GUI choice for the CLI.
 
 ## Security
 
-The editor stays a **local** tool:
+The editor is a **local** tool today, but it should be possible to run it as a
+service later, where each user brings their own key. So:
 
-- Keys are write-only over the API, stored `0600` outside album folders, and
-  never logged, echoed or included in exports.
+- **Precedence:** a key from the environment (`ALBUM_API_KEY`,
+  `OPENROUTER_API_KEY`, …) always wins over a key entered in the GUI. As a
+  service, that means the operator's key is used when set, and a user's own
+  key is used only when the operator has not set one.
+- **Never logged or shown.** Keys are write-only over the API, stored `0600`
+  outside album folders, and never included in exports, error messages,
+  model-call logs (`<album>/logs/`) or the costs file. Wherever a key has to
+  be identified (Settings, debug output, the startup banner) it is **masked**:
+  the first characters of its prefix and the last four, e.g. `sk-or-…a1b2`.
+- A single redaction function is applied to every log line and every error
+  text that can contain request headers or URLs, and a test asserts that a
+  known key never appears in any log, response or file the editor writes.
+- Service mode needs per-user storage and sign-in, which this plan does not
+  build. Keys are stored per user (`~/.config/...`) so that move stays open.
 - The folder browser lists directories only, never file contents, and
   starts under the user's home directory.
 - If the server is started with a non-local `--host`, the key form and folder
@@ -186,7 +205,30 @@ endpoint; a browser check of the Settings tab).
 | **C** | Album section: folder browser, new/open/recent albums, the first-run welcome flow, drag-and-drop photos | depends on A's live re-open |
 | **D** | Polish: *Save as models.yaml*, model lists from the endpoints, docs (README, RUNNING, phase2/README), screenshots | |
 
-## Questions for you
+## Decisions (review of 2026-11-10)
+
+1. **Keys:** a user may enter their own key; an environment key always has
+   priority. Keys are never logged or shown, only masked (see Security).
+2. **Defaults:** Density *Balanced*, Selection *Best of*, each with an info
+   pop-up explaining the difference between the choices.
+3. **Effort High:** planner only, to start with. What it means:
+   - the model thinks longer before it lays out the book, which helps most on
+     large albums with many places and people;
+   - the planning call is slower, typically 2–5× (one to three minutes
+     instead of 20–40 seconds), and the thinking is billed as output tokens,
+     roughly +$0.05–0.30 per design on Sonnet/Opus-class models;
+   - it needs a larger output budget, so choosing High raises the planner's
+     `max_tokens` to at least 32,000;
+   - models without a reasoning setting ignore it.
+   The cost estimate next to *Design again…* shows the difference before you
+   choose. These figures are estimates; step B measures them.
+4. **Drag-and-drop upload:** yes, in step C.
+5. **Print-lab picker:** yes, in step A (Saal only for now). Finding labs
+   that print and ship such books in Switzerland is a separate research
+   story.
+6. Nothing else for now.
+
+## Questions for you (answered above)
 
 1. **Keys in the GUI**, or keep them in environment variables only and just
    show *set / missing*? (The plan stores them in `~/.config/...` with `0600`.)
