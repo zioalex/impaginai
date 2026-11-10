@@ -62,9 +62,25 @@ design*, *vision looks again*), and saved with the album in `settings.json`:
   *look at every photograph again*.
 - **Places and privacy**: place names, and named landmarks (which sends photo
   coordinates to OpenStreetMap's Overpass service).
+- **AI models**: a preset (best result · budget · hybrid · fully local, each
+  with its measured cost), then per role (*annotate* looks at the photos,
+  *plan* designs the book, *revise* applies comments) the endpoint, the model
+  and the **effort**. *High* is offered for the planner only: it thinks longer
+  before laying out the book — slower and costlier, and the output budget is
+  raised to 32,000 tokens; the ⓘ explains it. *Test models* sends one tiny
+  request per model; the line below shows what the next design will cost.
+- **API keys**: paste a key once; it is stored for your user only
+  (`~/.config/photo_album_maker/keys.json`, readable only by you, never in an
+  album folder) and never shown again — only masked, `sk-or-…a1b2`. A key in
+  the environment (`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `ALBUM_API_KEY`,
+  …) **always wins** over one entered here. Keys are redacted from everything
+  the editor prints or writes. Started on a non-local `--host`, the editor
+  refuses keys over the network unless `--allow-remote-settings` is given.
 
 A flag given when the editor is started (`--gap-hours`, `--lab`, `--no-geocode`,
-…) still wins for that run; the option is shown locked with the flag's name.
+`--models`, `--plan-model`, …) still wins for that run; the option is shown
+locked with the flag's name. Models chosen in the editor are saved with the
+album, and become the default for the next new album.
 
 
 

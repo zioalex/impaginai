@@ -45,6 +45,8 @@ import test_loop  # noqa: E402  (fixtures and a known-good layout for these phot
 PHOTOS = REPO / "phase0" / "photos"
 CAPTIONS = ROOT / "examples" / "captions.yaml"
 KEY = "sk-mock-e2e-not-a-real-key"
+CONFIG_DIR = tempfile.mkdtemp(prefix="album-e2e-config-")
+SECRET = "sk-or-v1-e2e-stored-key-must-never-leak-7a7b"
 
 
 def free_port() -> int:
@@ -68,6 +70,8 @@ def env() -> dict:
     e = {k: v for k, v in os.environ.items()
          if not k.startswith(("ALBUM_", "ANTHROPIC_", "OPENAI_", "OPENROUTER_"))}
     e["ALBUM_API_KEY"] = KEY
+    # Keys entered in the editor go here, never into the user's real config.
+    e["ALBUM_CONFIG_DIR"] = CONFIG_DIR
     e["PYTHONUNBUFFERED"] = "1"
     return e
 
@@ -85,14 +89,15 @@ def common(album: Path, models: Path) -> list[str]:
 class Editor:
     """The phase-2 server as a subprocess, driven over its HTTP API."""
 
-    def __init__(self, album: Path, models: Path, log: Path):
+    def __init__(self, album: Path, models: Path | None, log: Path, env_extra: dict | None = None):
         self.port = free_port()
         self.log = log
         self.proc = subprocess.Popen(
             [sys.executable, str(REPO / "phase2" / "server.py"), "--album", str(album),
              "--photos", str(PHOTOS), "--captions", str(CAPTIONS), "--format", "21x21",
-             "--no-geocode", "--models", str(models), "--port", str(self.port)],
-            stdout=log.open("w"), stderr=subprocess.STDOUT, env=env())
+             "--no-geocode", *(["--models", str(models)] if models else []),
+             "--port", str(self.port)],
+            stdout=log.open("w"), stderr=subprocess.STDOUT, env={**env(), **(env_extra or {})})
         self.wait(lambda: self.get("/api/album") is not None, 90, "the editor did not start")
 
     def get(self, path: str):
@@ -291,6 +296,22 @@ def main() -> int:
             assert caps and caps <= mine, caps - mine
             ed.send("PUT", "/api/config", {"captions": "personal", "gap_hours": 4})
             print("settings tab: options, locks, preview, re-applied without the model: ok")
+
+            # 2e. models and keys: --models locks the choice; a key can be
+            #     stored, the environment's still wins, and it is never shown
+            m = ed.get("/api/models")
+            assert m["locked_by"] and "--models" in m["locked_by"], m["locked_by"]
+            assert m["roles"]["plan"]["effort"][-1] == "high" and "high" not in m["roles"]["revise"]["effort"]
+            try:
+                ed.send("PUT", "/api/models", {"preset": "local"})
+                raise AssertionError("a locked model choice was changed")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 409
+            st = ed.send("PUT", "/api/keys", {"slot": "openrouter", "key": SECRET})
+            assert st["source"] == "env" and st["stored"], st
+            assert SECRET not in json.dumps(st) and SECRET not in json.dumps(ed.get("/api/models"))
+            assert m["estimate"]["total_usd"] >= 0
+            print("models locked by --models; key stored, environment key wins, never shown: ok")
             ed.send("PATCH", "/api/photos", {"ids": [drop], "exclude": False})
             ed.job("/api/rerender")
             cur = json.loads(sorted((album_dir / "layouts").glob("v0*[0-9].json"))[-1].read_text())
@@ -338,6 +359,46 @@ def main() -> int:
             print("editor refusal reported, previous version kept: ok")
         finally:
             ed.stop()
+
+        # 4b. models chosen in the editor (no --models): a preset, a role's
+        #     model and effort; High only for the planner; kept in settings
+        ed2 = Editor(tmp / "album2", None, tmp / "editor2.log",
+                     env_extra={"ALBUM_API_KEY": ""})
+        try:
+            m = ed2.get("/api/models")
+            assert not m["locked_by"], m["locked_by"]
+            ed2.send("PUT", "/api/models", {"preset": "cloud-cheap"})
+            m = ed2.get("/api/models")
+            assert m["preset"] == "cloud-cheap" and "openrouter" in m["roles"]["plan"]["base_url"], m
+            keys = {k["slot"]: k for k in m["keys"]}
+            assert keys["openrouter"]["source"] == "user", keys      # stored in 2e
+            assert keys["openrouter"]["masked"].endswith(SECRET[-4:])
+            ed2.send("PUT", "/api/models", {"roles": {"plan": {"base_url": url, "model": "fake/model",
+                                                              "reasoning": "high"}}})
+            plan = ed2.get("/api/models")["roles"]["plan"]
+            assert plan["reasoning"] == "high" and plan["max_tokens"] >= 32000, plan
+            try:
+                ed2.send("PUT", "/api/models", {"roles": {"revise": {"reasoning": "high"}}})
+                raise AssertionError("High was accepted for revise")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 400
+            saved = json.loads((tmp / "album2" / "settings.json").read_text())
+            assert saved["models"]["plan"]["reasoning"] == "high" and saved["preset"] is None, saved
+            assert ed2.get("/api/estimate")["high"] is True
+        finally:
+            ed2.stop()
+        print("models chosen in the editor: preset, model, High for the planner only: ok")
+
+        # the keys never reach a file the editor writes, nor its output
+        leaks = []
+        for root in (tmp, Path(CONFIG_DIR)):
+            for f in root.rglob("*"):
+                if f.is_file() and f.name != "keys.json" and f.suffix not in (".jpg", ".pdf", ".png"):
+                    t = f.read_text(errors="ignore")
+                    if SECRET in t or KEY in t:
+                        leaks.append(str(f))
+        assert not leaks, f"an API key was written to: {leaks}"
+        print("no API key in any file or log the editor wrote: ok")
 
         # 5. a model id that does not exist, rescued by the fallback model
         fake.requests.clear()
