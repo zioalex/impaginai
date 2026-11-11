@@ -1,6 +1,6 @@
-# photo_album_maker
+# ImpaginAI
 
-A self-hosted AI photo album maker. Point it at a folder of photographs and one
+A self-hosted AI photo album maker (formerly `photo_album_maker`). Point it at a folder of photographs and one
 caption each; it decides the sequencing, pacing, sectioning and page layout, and
 emits a print-ready PDF for a photo lab plus a shareable web album from the same
 source data.

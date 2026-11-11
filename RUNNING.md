@@ -7,8 +7,8 @@ otherwise.
 ## Install
 
 ```bash
-git clone https://github.com/zioalex/photo_album_maker
-cd photo_album_maker
+git clone https://github.com/zioalex/impaginai
+cd impaginai
 
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
@@ -245,9 +245,9 @@ CMD ["python","phase2/server.py","--album","/data/album","--photos","/data/photo
 ```
 
 ```bash
-docker build -t photo-album-maker .
+docker build -t impaginai .
 docker run -p 8000:8000 -v /srv/albums/sardinien:/data \
-  -e ANTHROPIC_API_KEY=sk-ant-... photo-album-maker
+  -e ANTHROPIC_API_KEY=sk-ant-... impaginai
 ```
 
 Put your photographs in `/srv/albums/sardinien/photos`. Behind Traefik it is an

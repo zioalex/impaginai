@@ -191,8 +191,8 @@ def resolve(provider=None, model=None, base_url=None, api_key=None,
     headers = {}
     if url and "openrouter" in url:
         # OpenRouter attributes traffic by these; harmless elsewhere.
-        headers = {"HTTP-Referer": "https://github.com/zioalex/photo_album_maker",
-                   "X-Title": "photo_album_maker"}
+        headers = {"HTTP-Referer": "https://github.com/zioalex/impaginai",
+                   "X-Title": "ImpaginAI"}
     mt = _max_tokens(max_tokens if max_tokens is not None
                      else os.environ.get("ALBUM_MAX_TOKENS"))
     rs = _reasoning(reasoning if reasoning is not None

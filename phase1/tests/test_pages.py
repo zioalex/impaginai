@@ -461,6 +461,26 @@ def engadin_run_fixes(groups):
             assert secret not in red and "fromtheenvironment" not in red, red
             keystore.delete_key("openrouter")
             assert keystore.stored("openrouter") is None
+        # The project was renamed: keys stored under the old folder name
+        # follow it, permissions intact, and a folder under the new name wins.
+        saved_home = os.environ.get("HOME")
+        with tempfile.TemporaryDirectory() as home:
+            os.environ["HOME"] = home
+            os.environ.pop("ALBUM_CONFIG_DIR", None)
+            old = Path(home) / ".config" / keystore.OLD_APP_DIR
+            old.mkdir(parents=True)
+            (old / "keys.json").write_text(json.dumps({"openrouter": secret}))
+            os.chmod(old / "keys.json", 0o600)
+            assert keystore.config_dir() == Path(home) / ".config" / keystore.APP_DIR
+            assert not old.exists(), "the old folder is moved, not copied"
+            assert keystore.stored("openrouter") == secret, "stored keys survive the rename"
+            mode = stat.S_IMODE(os.stat(keystore.config_dir() / "keys.json").st_mode)
+            assert mode == 0o600, oct(mode)
+            old.mkdir()
+            (old / "keys.json").write_text(json.dumps({"openrouter": "sk-or-stale"}))
+            assert keystore.stored("openrouter") == secret, "the new folder wins over a stale old one"
+        if saved_home is not None:
+            os.environ["HOME"] = saved_home
     finally:
         for k in ("OPENROUTER_API_KEY", "ALBUM_CONFIG_DIR"):
             os.environ.pop(k, None)
