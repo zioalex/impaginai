@@ -577,6 +577,53 @@ def main() -> int:
             cur = json.loads(sorted((album3 / "layouts").glob("v0*[0-9].json"))[-1].read_text())
             assert late in {s["photo_id"] for sp in cur["spreads"] for s in sp["slots"]}, \
                 "a photograph added after an older design was not brought in"
+            # --- what another website, or a crafted request, must not get ---
+            import http.server
+            import threading
+            seen = []
+
+            class Sink(http.server.BaseHTTPRequestHandler):
+                def do_GET(self):
+                    seen.append(self.headers.get("Authorization"))
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"data": []}')
+
+                def log_message(self, *a):
+                    pass
+
+            sink = http.server.HTTPServer(("127.0.0.1", 0), Sink)
+            threading.Thread(target=sink.serve_forever, daemon=True).start()
+            try:
+                # the address has "api.openai.com" in its path, as an attacker's would
+                bait = urllib.parse.quote(f"http://127.0.0.1:{sink.server_port}/api.openai.com", safe="")
+                ed3.get_raw(f"/api/models/list?role=plan&base_url={bait}")
+                assert seen == [None], f"an API key was sent to an endpoint nobody configured: {seen}"
+            finally:
+                sink.shutdown()
+
+            def refused(method, path, body=None, **headers):
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:{ed3.port}{path}", method=method,
+                    data=json.dumps(body).encode() if body is not None else None,
+                    headers={"Content-Type": "application/json", **headers})
+                try:
+                    urllib.request.urlopen(req, timeout=10).read()
+                except urllib.error.HTTPError as exc:
+                    return exc.code
+                return None
+
+            assert refused("GET", "/api/models/list", **{"Sec-Fetch-Site": "cross-site"}) == 403
+            assert refused("GET", "/api/album", Host="evil.example") == 403, "DNS rebinding"
+            assert refused("PUT", "/api/keys", {"slot": "openai", "key": "sk-attacker-000000000000"},
+                           Origin="https://evil.example") == 403
+            assert refused("GET", "/api/album", **{"Sec-Fetch-Site": "same-origin"}) is None
+            outside = tmp / "outside-the-root" / "x"
+            assert refused("POST", "/api/albums",
+                           {"album": str(outside), "photos": str(home / "Pictures")}) == 403
+            assert not outside.exists(), "an album was created outside the browse root"
+            print("other websites refused; keys stay with their host; albums stay in their root: ok")
             lib2 = home / "Elsewhere"
             lib2.mkdir()
             try:

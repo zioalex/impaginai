@@ -162,7 +162,9 @@ class Geocoder:
     def _save(self) -> None:
         try:
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            self.cache_path.write_text(json.dumps(self.cache, ensure_ascii=False, indent=1))
+            import safeio
+
+            safeio.write_text(self.cache_path, json.dumps(self.cache, ensure_ascii=False, indent=1))
         except Exception:
             pass
 
@@ -311,7 +313,9 @@ class Features:
     def _save(self) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps(self.cache, ensure_ascii=False, indent=1))
+            import safeio
+
+            safeio.write_text(self.path, json.dumps(self.cache, ensure_ascii=False, indent=1))
         except Exception:
             pass
 

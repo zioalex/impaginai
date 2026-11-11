@@ -136,7 +136,9 @@ class Overrides:
             if not o.is_empty()
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=True))
+        import safeio
+
+        safeio.write_text(self.path, yaml.safe_dump(data, allow_unicode=True, sort_keys=True))
 
     def get(self, pid: str) -> Override:
         return self.by_id.get(pid, Override())

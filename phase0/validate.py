@@ -18,7 +18,7 @@ import templates_lib
 from geometry import Geometry, Rect, effective_dpi
 from schema import Layout
 
-Image.MAX_IMAGE_PIXELS = None
+# The pixel limit is set once, in imaging.py.
 
 LEVELS = ("error", "warning", "info")
 
