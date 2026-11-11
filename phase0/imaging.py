@@ -15,6 +15,17 @@ does not exist: it says plainly what is missing and how to install it, because
 
 from __future__ import annotations
 
+import os
+
+from PIL import Image
+
+# Pillow refuses an image of more than twice this many pixels as a
+# decompression bomb: a few kilobytes that decode to gigabytes. The limit was
+# switched off entirely. 300 megapixels leaves room for any camera and for
+# stitched panoramas; raise it with ALBUM_MAX_MEGAPIXELS if a real photograph
+# is refused.
+Image.MAX_IMAGE_PIXELS = int(float(os.environ.get("ALBUM_MAX_MEGAPIXELS", "300")) * 1_000_000)
+
 # Extensions treated as photographs, in one place so the reader and the
 # validator cannot disagree about what is in an album. They disagreed once:
 # .heic was listed by the loader but not the validator, so every HEIC

@@ -23,7 +23,7 @@ import imaging  # noqa: E402  (registers HEIC/HEIF decoders on import)
 import templates_lib  # noqa: E402
 from geometry import Geometry, effective_dpi  # noqa: E402
 
-Image.MAX_IMAGE_PIXELS = None
+# The pixel limit is set once, in phase0/imaging.py.
 
 _EXIF = {v: k for k, v in ExifTags.TAGS.items()}
 _TAG_DATETIME = _EXIF.get("DateTimeOriginal", 36867)
