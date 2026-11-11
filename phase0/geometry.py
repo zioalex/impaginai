@@ -124,7 +124,7 @@ class Geometry:
     # photographs are the design, and wide margins read as wasted paper.
     @property
     def margin_outer(self) -> float:
-        return round(self.page_w * 0.05, 2)
+        return round(self.page_w * 0.04, 2)
 
     @property
     def margin_gutter(self) -> float:
@@ -132,11 +132,11 @@ class Geometry:
 
     @property
     def margin_top(self) -> float:
-        return round(self.page_h * 0.05, 2)
+        return round(self.page_h * 0.04, 2)
 
     @property
     def margin_bottom(self) -> float:
-        return round(self.page_h * 0.06, 2)
+        return round(self.page_h * 0.05, 2)
 
     def text_column(self, side: str) -> Rect:
         """Inset content area of one page, respecting asymmetric margins."""
@@ -211,6 +211,14 @@ def spine_width_mm(
 # the edge of a group. Below this fraction the slot shrinks to the photograph's
 # own shape, centred, so nothing is lost and the page keeps its white space.
 MIN_CROP_KEEP = 0.82
+
+# What the page compositor (compose.adaptive) lets itself cut away when it
+# sizes a slot, and what the renderer must therefore allow too: the two used
+# to disagree (0.75 sized, 0.82 re-fitted), so a portrait sized to fill its
+# page was shrunk back inside white at render time. A photograph alone on its
+# page may lose a quarter of its long side; one of several, 14%.
+CROP_KEEP_SINGLE = 0.75
+CROP_KEEP_MULTI = 0.86
 
 
 def crop_keep(slot: Rect, aspect: float) -> float:

@@ -368,6 +368,24 @@ def unseen_photos(raw: dict | None, usable) -> set[str]:
     return out
 
 
+def touched_photos(by_id: dict) -> set[str]:
+    """Photographs the user has made a choice about (a size, "in a
+    composition", their own words). The design may never have placed them,
+    but the editor counts them as used, so the book must hold them."""
+    return {pid for pid, o in STATE["ov"].by_id.items()
+            if pid in by_id and not o.exclude
+            and (o.size != "auto" or o.compose or o.description)}
+
+
+def placed_ids(data: dict) -> list[str]:
+    """Every photograph on a page of the layout, once, in book order."""
+    seen: dict[str, None] = {}
+    for sp in data.get("spreads") or []:
+        for s in sp.get("slots") or []:
+            seen.setdefault(s["photo_id"], None)
+    return list(seen)
+
+
 def finish_layout(raw: dict, usable) -> dict:
     """The model's layout -> the printed one: the user's settings, measured
     focal points, no empty pages, place stamps, the album's own title. Pure
@@ -395,7 +413,9 @@ def finish_layout(raw: dict, usable) -> dict:
         for sp in data.get("spreads", []):
             for sl in sp.get("slots") or []:
                 sl["caption"] = mine.get(sl["photo_id"])
-    for n in OV.apply_to_layout(data, STATE["ov"], known=[p.id for p in usable]):
+    for n in OV.apply_to_layout(data, STATE["ov"], known=[p.id for p in usable],
+                                groups=STATE["groups"],
+                                taken={p.id: p.taken_at.isoformat() for p in usable if p.taken_at}):
         print(f"  {n}")
     by_id = {p.id: p for p in usable}
     placed = {sl["photo_id"] for sp in data.get("spreads", []) for sl in sp.get("slots") or []}
@@ -410,14 +430,15 @@ def finish_layout(raw: dict, usable) -> dict:
               taken={p.id: p.taken_at.isoformat() for p in usable if p.taken_at},
               front=front, strength={p.id: p.strength for p in usable},
               together=STATE["ov"].composed(),
-              alone={pid for pid, o in STATE["ov"].by_id.items() if o.size == "full-page"},
+              alone={pid for pid, o in STATE["ov"].by_id.items()
+                     if o.size in ("full-page", "spread")},
               no_bleed={p.id for p in usable if (p.can or {}).get("full-page") == "no"},
               density=o.get("density", "balanced"), use_all=o.get("selection") == "all",
               place_names=o.get("captions") != "none",
               split_short=o.get("short_book", "split") == "split",
               # Photographs added after the design: the model never had the
               # chance to leave them out, so they go in.
-              include=unseen_photos(raw, usable),
+              include=unseen_photos(raw, usable) | touched_photos(by_id),
               features={p.id: {"scene": p.scene, "subject": p.subject, "who": p.who}
                         for p in usable})
     PG.apply_focal(data, by_id)
@@ -425,7 +446,7 @@ def finish_layout(raw: dict, usable) -> dict:
     # crop would cut them holds the photograph inside its margins instead, and
     # every slot carries the box the renderer must keep in view.
     fb = STATE["g"].full_bleed("left")
-    keeps = {p.id: p.keep for p in usable if p.keep}
+    keeps = PG.derive_keeps(usable)
     for n in PG.protect_subjects(data, keeps, {p.id: p.width / p.height for p in usable},
                                  fb.w / fb.h):
         print(f"  {n}")
@@ -502,6 +523,7 @@ def _album_info():
                    for r, p in STATE["providers"].items()},
         "preflight": STATE.get("preflight", {}),
         "sizes": list(OV.SIZES),
+        "placed": sorted(latest_placed() or []),
         "treatments": list(OV.TREATMENTS),
         "formats": {k: f"{v['page_w_mm'] / 10:g} × {v['page_h_mm'] / 10:g} cm"
                     for k, v in STATE["lab"]["formats"].items()},
@@ -1244,13 +1266,28 @@ def api_preflight(run: int = 0):
     return STATE.get("preflight", {})
 
 
+def latest_placed() -> set[str] | None:
+    """The photographs on the pages of the latest version, None without one."""
+    try:
+        store = Store(STATE["album"])
+        if store.latest() is None:
+            return None
+        return set(placed_ids(store.get()[1]))
+    except Exception:
+        return None
+
+
 @app.get("/api/photos")
 def api_photos():
     out = []
+    placed = latest_placed()
     for p in STATE["all"]:
         o = STATE["ov"].get(p.id)
         out.append({
             "id": p.id,
+            # In the design as it stands (the latest version), not merely "not
+            # left out". None before the album has been designed.
+            "placed": (p.id in placed) if placed is not None else None,
             "group": p.group,
             "width": p.width,
             "height": p.height,
@@ -1333,10 +1370,13 @@ def _patch_one(photo_id: str, body: OverrideIn) -> None:
             dpi = photo.can.get(body.size + "_dpi")
             raise HTTPException(400, f"{photo_id} is {photo.width}x{photo.height} pixels — printed that "
                                      f"big it would be {dpi} DPI, too coarse to print. Choose a smaller size.")
-        if (body.size == "full-page" and STATE["ov"].get(photo_id).compose
+        if body.size == "spread" and body.compose:
+            raise HTTPException(400, f"{photo_id} cannot span two pages and share a page with others.")
+        if (body.size in ("full-page", "spread") and STATE["ov"].get(photo_id).compose
                 and body.compose is not False):
             raise HTTPException(400, f"{photo_id} is set to always share its page with other "
-                                     f"photographs — turn that off before making it full page.")
+                                     f"photographs — turn that off before making it "
+                                     f"{'full page' if body.size == 'full-page' else 'span two pages'}.")
         kw["size"] = body.size
     if body.treatment is not None:
         if body.treatment not in OV.TREATMENTS:
@@ -1531,7 +1571,7 @@ def _rerender():
         set_job("Applying your changes", 30)
         ensure_thumbs(usable)
         data = finish_layout(raw, usable)
-        placed = {s["photo_id"] for sp in data["spreads"] for s in sp.get("slots") or []}
+        placed = set(placed_ids(data))
         missing = [p.id for p in usable if p.id not in placed]
         Layout.model_validate(data)
         v = store.add(data, parent=pv.version_no, change_summary="your changes applied",
@@ -1539,7 +1579,12 @@ def _rerender():
         set_job("Printing the preview", 60)
         render_proof(store, v, data)
         with JOB_LOCK:
-            JOB["result"] = {"version": v.version_no, "not_placed": missing}
+            JOB["result"] = {"version": v.version_no, "not_placed": missing,
+                             "placed": sorted(placed),
+                             # Photographs the user chose something for that
+                             # are still not on a page: should never happen.
+                             "not_placed_chosen": sorted(touched_photos(
+                                 {p.id: p for p in usable}) - placed)}
         set_job("Ready", 100, done=True)
     except Exception as exc:
         traceback.print_exc()

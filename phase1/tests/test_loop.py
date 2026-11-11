@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -367,10 +368,87 @@ def test_openai_reply_shapes() -> None:
     print("provider reply shapes: ok")
 
 
+def test_unplanned_and_spread_overrides():
+    """What the editor shows as used is in the design, and a photograph can be
+    set across two pages when it has the pixels."""
+    import overrides as OV
+    from schema import Layout
+    from types import SimpleNamespace as NS
+
+    placed_in = lambda lay: [s["photo_id"] for sp in lay["spreads"] for s in sp.get("slots", [])]
+
+    # full_page_unplanned_photo_inserted: the planner never placed p013's
+    # neighbour; the user marked it full page. It used to be skipped.
+    lay = good_layout()
+    for sp in lay["spreads"]:
+        sp["slots"] = [s for s in sp["slots"] if s["photo_id"] != "p012"] if sp["template"] != "grid-four" \
+            else sp["slots"]
+    grid = next(sp for sp in lay["spreads"] if sp["template"] == "grid-four")
+    grid["slots"] = [s for s in grid["slots"] if s["photo_id"] != "p012"]
+    grid["template"] = "trio-page"
+    assert "p012" not in placed_in(lay)
+    ov = OV.Overrides({})
+    ov.set("p012", size="full-page", description="Der letzte Blick")
+    notes = OV.apply_to_layout(lay, ov, known=[f"p{i:03d}" for i in range(1, 16)])
+    assert placed_in(lay).count("p012") == 1, notes
+    host = next(sp for sp in lay["spreads"] if any(s["photo_id"] == "p012" for s in sp["slots"]))
+    assert host["template"] == "full-bleed-single" and host["slots"][0]["caption"] == "Der letzte Blick"
+    assert [sp["index"] for sp in lay["spreads"]] == list(range(1, len(lay["spreads"]) + 1))
+    # ... at its place in the book: after the last spread of its group
+    groups = [NS(id="g3", photo_ids=["p011", "p012", "p014", "p007"])]
+    lay = good_layout()
+    for sp in lay["spreads"]:
+        sp["slots"] = [s for s in sp["slots"] if s["photo_id"] != "p012"]
+    lay["spreads"] = [sp for sp in lay["spreads"] if sp["template"] != "grid-four"]
+    OV.apply_to_layout(lay, ov, groups=groups)
+    assert placed_in(lay).count("p012") == 1
+    # an unknown id is not invented into the book
+    lay = good_layout()
+    ov2 = OV.Overrides({})
+    ov2.set("zzz", size="full-page")
+    OV.apply_to_layout(lay, ov2, known=[f"p{i:03d}" for i in range(1, 16)])
+    assert "zzz" not in placed_in(lay)
+
+    # a spread: pulled out of its host, given a user-spread of its own, once
+    lay = good_layout()
+    ov = OV.Overrides({})
+    ov.set("p004", size="spread")
+    OV.apply_to_layout(lay, ov, known=[f"p{i:03d}" for i in range(1, 16)])
+    hosts = [sp for sp in lay["spreads"] if sp["template"] == "user-spread"]
+    assert len(hosts) == 1 and hosts[0]["slots"][0]["photo_id"] == "p004", hosts
+    assert Layout.model_validate(lay)
+    # and one the planner never placed gets its own spread too
+    lay = good_layout()
+    lay["spreads"][-1]["slots"] = lay["spreads"][-1]["slots"]
+    ov = OV.Overrides({})
+    ov.set("p013", size="spread")
+    OV.apply_to_layout(lay, ov, known=[f"p{i:03d}" for i in range(1, 16)])
+    assert any(sp["template"] == "user-spread" for sp in lay["spreads"])
+    # spread, full page and "in a composition" exclude one another
+    o = ov.set("p004", size="spread")
+    o = ov.set("p004", compose=True)
+    assert o.compose and o.size == "auto"
+    o = ov.set("p004", size="spread")
+    assert o.size == "spread" and not o.compose
+    ov.path = Path(tempfile.mkdtemp()) / "overrides.yaml"
+    ov.save()
+    assert OV.Overrides.load(ov.path.parent).get("p004").size == "spread", "spread did not round-trip"
+    assert "spread" in OV.SIZES
+
+    # a low-res photograph is refused the spread: p016 is 700 px wide
+    g = R.geometry_for(R.load_lab(ROOT.parent / "phase0" / "labs" / "saal.yaml"), "28x21")
+    small = PH.Photo(id="s", path=None, width=1100, height=800)
+    big = PH.Photo(id="b", path=None, width=6000, height=2400)
+    PH.size_capability([small, big], g, 200, 150)
+    assert small.can["spread"] == "no" and big.can["spread"] == "ok", (small.can, big.can)
+    print("overrides: unplanned full-page photograph inserted, two-page spread, low-res refused: ok")
+
+
 def main() -> int:
     test_run_classification()
     test_openai_reply_shapes()
     ensure_fixtures()
+    test_unplanned_and_spread_overrides()
     lab = R.load_lab(ROOT.parent / "phase0" / "labs" / "saal.yaml")
     g = R.geometry_for(lab, "21x21")
     ph = PH.load(PHOTO_DIR, CAPTIONS, g, lab["resolution"]["warn_below_dpi"])

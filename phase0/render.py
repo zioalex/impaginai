@@ -28,7 +28,8 @@ from PIL import Image, ImageCms, ImageOps
 import charts
 import imaging  # registers HEIC/HEIF decoders on import
 import templates_lib
-from geometry import Geometry, Rect, spine_width_mm, MM_PER_INCH, fit_rect
+from geometry import (CROP_KEEP_MULTI, CROP_KEEP_SINGLE, Geometry, Rect, spine_width_mm,
+                      MM_PER_INCH, MIN_CROP_KEEP, fit_rect)
 from schema import Layout
 from validate import PhotoInfo, check, load_photos
 
@@ -267,7 +268,8 @@ def _visible(rect: Rect, aspect: float) -> tuple[float, float]:
     return (r / aspect, 1.0) if aspect > r else (1.0, aspect / r)
 
 
-def place_photo(slot_rect: Rect, aspect: float, focal, keep, bleeds: bool):
+def place_photo(slot_rect: Rect, aspect: float, focal, keep, bleeds: bool,
+                min_keep: float = MIN_CROP_KEEP, fallback: Rect | None = None):
     """Where a photograph goes in its slot and which part of it shows:
     (rect, x%, y%) for object-position.
 
@@ -275,11 +277,20 @@ def place_photo(slot_rect: Rect, aspect: float, focal, keep, bleeds: bool):
     keep-box (people, the main subject) stays wholly inside. If the box cannot
     fit at all, a framed slot shows the whole photograph instead — smaller, but
     nobody cut in half. A page set to the edges is decided upstream
-    (pages.protect_subjects) and keeps its crop."""
-    rect = slot_rect if bleeds else fit_rect(slot_rect, aspect)
+    (pages.protect_subjects) and keeps its crop; should its keep-box still not
+    fit (a bleed slot the upstream pass did not see), it too falls back to the
+    whole photograph inside the slot rather than cutting the subject.
+
+    `min_keep` is how much of the photograph the slot may cut away: a slot
+    sized by compose.adaptive passes the allowance it was sized with, so the
+    render does not shrink again what the compositor already fitted."""
+    rect = slot_rect if bleeds else fit_rect(slot_rect, aspect, min_keep)
     vx, vy = _visible(rect, aspect)
-    if keep and not bleeds and (keep[2] - keep[0] > vx + 0.01 or keep[3] - keep[1] > vy + 0.01):
-        rect = fit_rect(slot_rect, aspect, min_keep=1.0)
+    if keep and (keep[2] - keep[0] > vx + 0.01 or keep[3] - keep[1] > vy + 0.01):
+        if not bleeds:
+            rect = fit_rect(slot_rect, aspect, min_keep=1.0)
+        elif fallback is not None:
+            rect = fit_rect(fallback, aspect, min_keep=1.0)    # inside the margins
         vx, vy = _visible(rect, aspect)
 
     def axis(f, lo, hi, v):
@@ -310,6 +321,11 @@ def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window:
     overlays: list[str] = []      # captions and scrims go above every photograph
     band: list[str] = []          # captions set in the band under the page's photos
     keeps = list((sp.options or {}).get("keeps") or [])
+    # Slots sized by compose.adaptive (the spread carries the photographs'
+    # shapes) were fitted with an allowance: render with the same one.
+    adapted = bool((sp.options or {}).get("aspects"))
+    on_page = sum(1 for b in rendered.slots if _owns(g, window, b.rect))
+    allow = (CROP_KEEP_SINGLE if on_page <= 1 else CROP_KEEP_MULTI) - 0.02 if adapted else MIN_CROP_KEEP
     for n, (slot, box) in enumerate(zip(sp.slots, rendered.slots)):
         if not _owns(g, window, box.rect):
             continue
@@ -324,7 +340,8 @@ def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window:
         # of a photograph than geometry.MIN_CROP_KEEP allows: past that the
         # slot shrinks to the photograph's own shape.
         keep = keeps[n] if n < len(keeps) else None
-        rect, posx, posy = place_photo(box.rect, _aspect(src), (fx, fy), keep, box.bleeds)
+        rect, posx, posy = place_photo(box.rect, _aspect(src), (fx, fy), keep, box.bleeds, allow,
+                                        g.text_column(side))
         fitted = rect is not box.rect
         if first_on_page is None or (rect.y, rect.x) < (first_on_page.y, first_on_page.x):
             first_on_page = rect
@@ -448,11 +465,21 @@ def build_cover_html(layout: Layout, g: Geometry, lab: dict, photo_paths: dict[s
         f'<div class="cover-panel cover-ink" style="left:0;top:0;width:{front_x:.2f}mm;height:{total_h:.2f}mm;"></div>'
     ]
     if cover and cover.front_photo_id and cover.front_photo_id in photo_paths:
-        fx, fy = cover.front_focal
+        # The crop is centred on the focal point and moved just enough that
+        # the people (the keep-box) stay in view, as on the inner pages.
+        # The box rides on the opening spread (options.keeps, slot 0 is the
+        # front photograph) so the layout schema needs no new field.
+        first = layout.spreads[0] if layout.spreads else None
+        fkeeps = list(((first.options or {}).get("keeps") or [])) if first else []
+        fkeep = (fkeeps[0] if fkeeps and first.slots
+                 and first.slots[0].photo_id == cover.front_photo_id else None)
+        area = Rect(front_x, 0.0, total_w - front_x, total_h)
+        _, cx, cy = place_photo(area, _aspect(photo_paths[cover.front_photo_id]),
+                                tuple(cover.front_focal), fkeep, True)
         parts.append(
             f'<img class="slot abs" src="{photo_paths[cover.front_photo_id].as_posix()}" '
             f'style="left:{front_x:.2f}mm;top:0;width:{total_w - front_x:.2f}mm;height:{total_h:.2f}mm;'
-            f"object-position:{fx * 100:.1f}% {fy * 100:.1f}%;\">"
+            f"object-position:{cx:.1f}% {cy:.1f}%;\">"
         )
     if cover and cover.title:
         parts.append(

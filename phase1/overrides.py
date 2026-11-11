@@ -8,7 +8,7 @@ direct channel that does not go through the model at all.
 
     p002:
       description: Sie steht lange am Rand und schaut hinunter
-      size: full-page          # full-page | large | small | auto
+      size: full-page          # full-page | spread | large | small | auto
       treatment: frame         # none | frame | rounded | vignette | soft-edge
     p016:
       exclude: true
@@ -22,10 +22,13 @@ overrides are re-applied to every layout version, deterministically, and the
 model is told about them as well so that it plans around them rather than
 against them.
 
-`size: full-page` is the only one that changes structure. It pulls the photo out
-of its spread, downgrades that spread to a template with one fewer slot, and
-inserts a full-bleed spread immediately after — so the sequence is preserved and
-the page count grows by one spread.
+`size: full-page` and `size: spread` change structure. They pull the photo out
+of its spread, downgrade that spread to a template with one fewer slot, and
+insert a full-bleed spread (or, for `spread`, one photograph across both pages)
+immediately after — so the sequence is preserved and the page count grows by
+one spread. A photograph the planner never placed at all gets its spread at its
+place in the book (by group, else by date), so the editor's choice is always
+in the design.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from pathlib import Path
 
 import yaml
 
-SIZES = ("auto", "full-page", "large", "small")
+SIZES = ("auto", "full-page", "spread", "large", "small")
 TREATMENTS = ("none", "frame", "rounded", "vignette", "soft-edge")
 
 # Which template to fall back to when a spread loses one photograph. Chosen to
@@ -142,12 +145,12 @@ class Overrides:
         o = self.by_id.setdefault(pid, Override())
         for k, v in kw.items():
             setattr(o, k, v)
-        # "In a composition" and "full page" contradict each other: the one
-        # just set wins.
+        # "In a composition" and "full page" / "two pages" contradict each
+        # other: the one just set wins.
         if kw.get("compose"):
-            if o.size == "full-page":
+            if o.size in ("full-page", "spread"):
                 o.size = "auto"
-        elif kw.get("size") == "full-page":
+        elif kw.get("size") in ("full-page", "spread"):
             o.compose = False
         return o
 
@@ -194,6 +197,11 @@ def _downgrade(template: str, needed: int) -> str | None:
         return cand
     for name, spec in templates_lib.REGISTRY.items():
         if spec.planner_visible and spec.slot_count == needed and not spec.spans_fold:
+            return name
+    # No catalogue template has that many slots (five, say): a hidden pair of
+    # page compositions does. The repacker takes the spread apart again.
+    for name, spec in templates_lib.REGISTRY.items():
+        if spec.pages and spec.slot_count == needed and name.startswith("pages:"):
             return name
     return None
 
@@ -245,11 +253,39 @@ def resolve_ids(layout: dict, known) -> tuple[list[str], set[str]]:
     return notes, unknown
 
 
-def apply_to_layout(layout: dict, ov: Overrides, known=None) -> list[str]:
+def _position_for(spreads: list, pid: str, group_of: dict, taken: dict) -> int:
+    """Where a photograph the planner left out belongs: after the last spread
+    of its place, else before the first spread of photographs taken later,
+    else at the end. Never ahead of the opening spread."""
+    first = 1 if spreads and spreads[0].get("template") in (
+        "title-page", "section-divider", "section-divider-plain", "text-page",
+        "photo-and-text") else 0
+    g = group_of.get(pid)
+    if g is not None:
+        last = None
+        for i, sp in enumerate(spreads):
+            if any(group_of.get(s["photo_id"]) is g for s in sp.get("slots", [])):
+                last = i
+        if last is not None:
+            return last + 1
+    t = taken.get(pid)
+    if t:
+        for i, sp in enumerate(spreads):
+            ts = [taken[s["photo_id"]] for s in sp.get("slots", []) if taken.get(s["photo_id"])]
+            if ts and min(ts) > t:
+                return max(i, first)
+    return len(spreads)
+
+
+def apply_to_layout(layout: dict, ov: Overrides, known=None, groups=None,
+                    taken: dict | None = None) -> list[str]:
     """Re-apply the user's instructions to a planned layout. Returns a log.
 
     Runs on every version, so an override set once survives every later
     revision without the user having to repeat themselves to the model.
+    `groups` and `taken` (photo id -> sortable time) say where a photograph the
+    planner never placed belongs when the user asked for it full page or across
+    two pages.
     """
     notes: list[str] = []
     # 0. photo ids the model got wrong: repaired when the meaning is clear,
@@ -309,43 +345,58 @@ def apply_to_layout(layout: dict, ov: Overrides, known=None) -> list[str]:
                 notes.append(f"spread {sp['index']}: {slots[0]['photo_id']} promoted to the feature slot (marked large)")
                 break
 
-    # 6. size: full-page — structural. Pull it out and give it its own spread.
-    wants_full = [pid for pid, o in ov.by_id.items()
-                  if o.size == "full-page" and not o.exclude and not o.compose]
-    for pid in wants_full:
+    # 6. size: full-page / spread — structural. Pull it out and give it its own
+    #    spread; a photograph the planner never placed gets one at its place.
+    group_of = {pid: g for g in (groups or []) for pid in g.photo_ids}
+    wants = [(pid, o.size) for pid, o in sorted(ov.by_id.items())
+             if o.size in ("full-page", "spread") and not o.exclude and not o.compose
+             and (known is None or pid in known)]
+    for pid, kind in wants:
         host = next((sp for sp in spreads if any(s["photo_id"] == pid for s in sp.get("slots", []))), None)
-        if host is None:
-            continue
-        if host["template"] == "full-bleed-single":
+        want_t = "user-spread" if kind == "spread" else "full-bleed-single"
+        if host is not None and host["template"] == want_t:
             continue  # already there
-        slot = next(s for s in host["slots"] if s["photo_id"] == pid)
-        rest = [s for s in host["slots"] if s["photo_id"] != pid]
-        newt = _downgrade(host["template"], len(rest))
-        pos = spreads.index(host)
-        if newt is None and rest:
-            notes.append(f"{pid}: cannot be made full-page without breaking spread {host['index']}")
-            continue
-        if rest:
-            host["slots"] = rest
-            host["template"] = newt
-        else:
-            spreads.pop(pos)
-            pos -= 1
+        o = ov.get(pid)
         # A treated photograph cannot bleed: a frame or a soft edge that runs
         # off the paper is trimmed away, so "full page" for those means the
         # full page inside its margins, not to the edges.
-        treated = ov.get(pid).treatment != "none"
-        spreads.insert(pos + 1, {
-            "index": 0,
-            "section_id": host.get("section_id"),
-            "template": "single-centered" if treated else "full-bleed-single",
-            "slots": [{**slot, "caption_position": "below" if treated else "bottom-left"}],
-            "text": None,
-            "options": {"side": "right"},
-            "note": (f"{pid}: ganzseitig mit Rahmen auf Wunsch" if treated
-                     else f"{pid}: randabfallend ganzseitig auf Wunsch"),
-        })
-        notes.append(f"{pid}: given its own full-page spread")
+        treated = kind == "full-page" and o.treatment != "none"
+        if host is None:
+            slot = {"photo_id": pid, "focal": [0.5, 0.5], "caption": o.description,
+                    "caption_position": "bottom-left", "treatment": o.treatment}
+            pos = _position_for(spreads, pid, group_of, taken or {})
+            sec = spreads[pos - 1].get("section_id") if 0 < pos <= len(spreads) else None
+            how = "not in the design"
+        else:
+            slot = next(s for s in host["slots"] if s["photo_id"] == pid)
+            rest = [s for s in host["slots"] if s["photo_id"] != pid]
+            newt = _downgrade(host["template"], len(rest))
+            pos = spreads.index(host) + 1
+            if newt is None and rest:
+                notes.append(f"{pid}: cannot be made {kind} without breaking spread {host['index']}")
+                continue
+            if rest:
+                host["slots"] = rest
+                host["template"] = newt
+            else:
+                spreads.pop(pos - 1)
+                pos -= 1
+            sec = host.get("section_id")
+            how = "pulled out of its spread"
+        if kind == "spread":
+            new = {"index": 0, "section_id": sec, "template": "user-spread",
+                   "slots": [{**slot, "caption_position": "below"}], "text": None,
+                   "options": {}, "note": f"{pid}: über beide Seiten auf Wunsch"}
+        else:
+            new = {"index": 0, "section_id": sec,
+                   "template": "single-centered" if treated else "full-bleed-single",
+                   "slots": [{**slot, "caption_position": "below" if treated else "bottom-left"}],
+                   "text": None, "options": {"side": "right"},
+                   "note": (f"{pid}: ganzseitig mit Rahmen auf Wunsch" if treated
+                            else f"{pid}: randabfallend ganzseitig auf Wunsch")}
+        spreads.insert(pos, new)
+        notes.append(f"{pid}: given its own {'two-page' if kind == 'spread' else 'full-page'} "
+                     f"spread ({how})")
 
     for i, sp in enumerate(spreads, 1):
         sp["index"] = i

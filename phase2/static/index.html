@@ -433,9 +433,10 @@ kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:
   </div></dialog>
 
 <script>
-const SIZE_LABEL={auto:"Automatic","full-page":"Full page",large:"Large",small:"Small"};
+const SIZE_LABEL={auto:"Automatic","full-page":"Full page",spread:"Two pages",large:"Large",small:"Small"};
 const SIZE_HINT={auto:"Let the album decide.",
  "full-page":"Gets a page to itself, edge to edge.",
+ spread:"Printed across both pages of a spread, over the fold. Needs a sharp, large photograph; the fold runs through it, so it suits landscapes and panoramas better than people.",
  large:"Becomes the main photograph wherever it lands.",
  small:"Kept small, never the main photograph on its page."};
 const TREAT_LABEL={none:"None",frame:"White frame",rounded:"Rounded",vignette:"Vignette","soft-edge":"Soft edge"};
@@ -484,8 +485,11 @@ async function load(){
   await refreshPages();
 }
 
+// In the book: not left out and, once the album is designed, actually on a
+// page of the current design (the server says which photographs those are).
+const inBook=p=>!p.exclude&&p.placed!==false;
 function setHeader(){
-  const used=photos.filter(p=>!p.exclude).length;
+  const used=photos.filter(inBook).length;
   $("counts").textContent=`${used} of ${photos.length} photographs · ${album.groups.length} places · ${album.formats[album.format]||album.format}`;
   $("btnPlan").textContent=designed?"Design again…":"Design the album";
   $("btnExport").disabled=!designed;
@@ -523,7 +527,7 @@ function renderGrid(){
     const info=album.groups.find(x=>x.id===gid);
     const sec=document.createElement("div"); sec.className="group";
     const head=document.createElement("div"); head.className="ghead";
-    const used=list.filter(p=>!p.exclude).length;
+    const used=list.filter(inBook).length;
     head.innerHTML=`<h2></h2><span class="where"></span><span class="acts">
       <button class="small ghost" data-act="in">Include all</button>
       <button class="small ghost" data-act="out">Leave out all</button>
@@ -553,6 +557,7 @@ function tile(p){
   if(p.too_small) b.innerHTML+=`<span class="badge bad">too small</span>`;
   else if(p.low_res) b.innerHTML+=`<span class="badge low" title="Low resolution: sharp up to ${p.sharp_cm[0]} × ${p.sharp_cm[1]} cm, so it cannot fill a page">⚠ low res</span>`;
   if(p.exclude) b.innerHTML+=`<span class="badge">left out</span>`;
+  else if(p.placed===false) b.innerHTML+=`<span class="badge bad" title="This photograph is not on any page of the current design. Use “Design again”, or give it a size or “Always with other photos” to place it.">NOT IN DESIGN</span>`;
   if(p.compose) b.innerHTML+=`<span class="badge comp">▦ composed</span>`;
   if(p.size!=="auto") b.innerHTML+=`<span class="badge">${SIZE_LABEL[p.size]}</span>`;
   if(p.treatment!=="none") b.innerHTML+=`<span class="badge">${TREAT_LABEL[p.treatment]}</span>`;
@@ -608,12 +613,13 @@ function select(id,scroll=true){
   // "Full page" and "always with other photos" contradict each other: while
   // the photograph is composed, full page is not offered.
   const can=Object.assign({},p.can||{});
-  if(p.compose){can["full-page"]="off";}
+  if(p.compose){can["full-page"]="off";can["spread"]="off";}
   opts("sizes",album.sizes,SIZE_LABEL,p.size,v=>patch([id],{size:v}),can);
   $("optComp").setAttribute("aria-pressed",String(!!p.compose));
   $("optComp").textContent=p.compose?"▦ Always with other photos — on":"▦ Always with other photos";
   opts("treats",album.treatments,TREAT_LABEL,p.treatment,v=>patch([id],{treatment:v}));
-  $("sizeHint").textContent=SIZE_HINT[p.size]+(p.can&&p.can["full-page"]==="no"?"  Crossed-out sizes need more pixels than this photograph has.":"");
+  $("sizeHint").textContent=SIZE_HINT[p.size]+(p.can&&(p.can["full-page"]==="no"||p.can.spread==="no")?"  Crossed-out sizes need more pixels than this photograph has.":"")
+    +(!p.exclude&&p.placed===false?"  This photograph is not on any page of the design yet.":"");
   $("treatHint").textContent=TREAT_HINT[p.treatment];
   $("optIn").setAttribute("aria-pressed",String(!p.exclude));
   $("optOut").setAttribute("aria-pressed",String(p.exclude));
