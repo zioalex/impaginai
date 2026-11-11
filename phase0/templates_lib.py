@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Literal
 
 import compose
-from geometry import Geometry, Rect
+from geometry import Geometry, Rect, crop_keep as geometry_crop_keep
 
 Aspect = Literal["landscape", "portrait", "square", "any"]
 Side = Literal["left", "right"]
@@ -74,8 +74,9 @@ class TemplateSpec:
 # Nothing crosses the fold. That is structural here, not a rule to remember:
 # a composition is built inside one page's content area and cannot reach past it.
 
-def _page_slots(g: Geometry, side: Side, comp_name: str, aspects=None, pixels=None) -> list[SlotBox]:
-    rects, feature, cap = compose.build_page(g, side, comp_name, aspects, pixels)
+def _page_slots(g: Geometry, side: Side, comp_name: str, aspects=None, pixels=None,
+                band: bool = True) -> list[SlotBox]:
+    rects, feature, cap = compose.build_page(g, side, comp_name, aspects, pixels, band)
     out: list[SlotBox] = []
     for i, r in enumerate(rects):
         is_feature = (i == feature)
@@ -113,8 +114,15 @@ def _pair(left: str, right: str):
         px = list(o.get("pixels") or [])
         if len(px) != len(asp):
             px = []
-        slots = (_page_slots(g, "left", a, asp[:na] or None, px[:na] or None)
-                 + _page_slots(g, "right", b, asp[na:] or None, px[na:] or None))
+        # `caps`: which slots carry a caption. The band under a page's
+        # photographs is reserved only when its feature has one to set there.
+        caps = list(o.get("caps") or [])
+        if len(caps) != na + nb:
+            caps = [True] * (na + nb)
+        slots = (_page_slots(g, "left", a, asp[:na] or None, px[:na] or None,
+                             bool(caps[0]) if na else True)
+                 + _page_slots(g, "right", b, asp[na:] or None, px[na:] or None,
+                               bool(caps[na]) if nb else True))
         texts = []
         for page_side, name in (("left", a), ("right", b)):
             if name == "text":
@@ -182,6 +190,42 @@ def t_panorama_spread(g: Geometry, o: dict) -> Rendered:
     s = g.safe("right")
     return Rendered(slots=[SlotBox(g.spread_bleed, "landscape", "overlay",
                                    Rect(s.x, s.y2 - 9, s.w, 9), "right", bleeds=True)])
+
+
+USER_SPREAD = "user-spread"
+# What a photograph printed across both pages may lose of its shape before it
+# is set inside the margins instead of to the edges.
+SPREAD_KEEP = 0.75
+
+
+def t_user_spread(g: Geometry, o: dict) -> Rendered:
+    """One photograph across both pages, because the user chose "two pages"
+    for it (overrides `size: spread`). Never offered to the planner and never
+    split, merged or moved by the page repacker.
+
+    A wide photograph runs to all four edges of the spread. One that would
+    lose more than a quarter of its shape doing so is set across the two pages
+    inside the margins instead, cropped by at most a quarter (the keep-box
+    still decides), with its caption under the left half."""
+    asp = list(o.get("aspects") or [])
+    a = asp[0] if asp and asp[0] and asp[0] > 0 else None
+    full = g.spread_bleed
+    if a is None or geometry_crop_keep(full, a) >= SPREAD_KEEP:
+        s = g.safe("left")
+        return Rendered(slots=[SlotBox(full, "any", "overlay", Rect(s.x, s.y2 - 9, s.w, 9),
+                                       "left", bleeds=True)])
+    left, right = g.text_column("left"), g.text_column("right")
+    band = compose.CAPTION_BAND if (o.get("caps") or [True])[0] else 0.0
+    area = Rect(left.x, left.y, right.x2 - left.x, left.h - band)
+    # As wide as it can be while losing no more than SPREAD_KEEP of its shape:
+    # a 3:2 photograph shown whole would be one page wide with the fold
+    # through it and white either side, which is not what "two pages" means.
+    t = a / SPREAD_KEEP if a < area.w / area.h else a * SPREAD_KEEP
+    w, h = (min(area.w, area.h * t), area.h) if a < area.w / area.h else (area.w, min(area.h, area.w / t))
+    r = Rect(round(area.x + (area.w - w) / 2, 2), round(area.y + (area.h - h) / 2, 2),
+             round(w, 2), round(h, 2))
+    cap = Rect(left.x, round(r.y2 + 2.5, 2), left.w, compose.CAPTION_BAND - 2.5)
+    return Rendered(slots=[SlotBox(r, "any", "below", cap, "left", bleeds=False)])
 
 
 # --- Phase 0 calibration templates (never offered to the planner) -------
@@ -258,6 +302,9 @@ _LISTED = [
         # --- withheld --------------------------------------------------
         TemplateSpec("panorama-spread", 1, ("landscape",),
                      "image across both pages", t_panorama_spread, spans_fold=True),
+        TemplateSpec(USER_SPREAD, 1, ("any",),
+                     "one photograph across both pages (only when the user asks for it)",
+                     t_user_spread, spans_fold=True, planner_visible=False),
         TemplateSpec("test-chart", 0, (), "PHASE 0 calibration chart", t_test_chart, planner_visible=False),
         TemplateSpec("gutter-target", 0, (), "PHASE 0 fold alignment target", t_gutter_target, planner_visible=False, spans_fold=True),
 ]
@@ -379,7 +426,7 @@ def attach_aspects(spreads, dims: dict) -> int:
     for sp in spreads:
         get = (lambda k, sp=sp: sp.get(k)) if isinstance(sp, dict) else (lambda k, sp=sp: getattr(sp, k))
         spec = REGISTRY.get(get("template"))
-        if spec is None or not getattr(spec.build, "pages", None):
+        if spec is None or not (getattr(spec.build, "pages", None) or spec.name == USER_SPREAD):
             continue
         slots = get("slots") or []
         ids = [s["photo_id"] if isinstance(s, dict) else s.photo_id for s in slots]
@@ -387,6 +434,9 @@ def attach_aspects(spreads, dims: dict) -> int:
             continue
         asp = [round(dims[i][0] / dims[i][1], 4) for i in ids]
         pix = [int(dims[i][0]) for i in ids]
+        caps = [bool((s.get("caption") if isinstance(s, dict) else s.caption)
+                     and (s.get("caption_position") if isinstance(s, dict)
+                          else s.caption_position) != "none") for s in slots]
         opts = get("options")
         if opts is None:
             opts = {}
@@ -396,5 +446,6 @@ def attach_aspects(spreads, dims: dict) -> int:
                 sp.options = opts
         opts["aspects"] = asp
         opts["pixels"] = pix
+        opts["caps"] = caps
         n += 1
     return n

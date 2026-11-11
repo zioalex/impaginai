@@ -185,6 +185,7 @@ def size_capability(photos: list[Photo], g: Geometry, warn_dpi: float, block_dpi
 
     Measured against the real slot rectangles, not a rule of thumb:
       full-page -> the full-bleed rectangle
+      spread    -> the photograph across both pages (user-spread template)
       large     -> the feature slot of a composed page
       small     -> the smallest slot in the library
     """
@@ -206,6 +207,13 @@ def size_capability(photos: list[Photo], g: Geometry, warn_dpi: float, block_dpi
             dpi = effective_dpi(p.width, p.height, rect)
             p.can[key] = "ok" if dpi >= warn_dpi else ("soft" if dpi >= block_dpi else "no")
             p.can[key + "_dpi"] = round(dpi)
+        # Across both pages: measured on the rectangle the user-spread template
+        # really gives this photograph (its own shape fixes the size), not on
+        # the whole spread, which a 4:3 photograph never fills.
+        sp = templates_lib.build("user-spread", g, {"aspects": [p.width / p.height]}).slots[0].rect
+        dpi = effective_dpi(p.width, p.height, sp)
+        p.can["spread"] = "ok" if dpi >= warn_dpi else ("soft" if dpi >= block_dpi else "no")
+        p.can["spread_dpi"] = round(dpi)
         p.can["auto"] = "ok"
 
 

@@ -170,7 +170,19 @@ def check(
             # sides of the crease is not, because the paper bends there and the
             # subject goes with it.
             if g.spans_fold(box.rect):
-                if not allow_fold:
+                if sp.template == templates_lib.USER_SPREAD:
+                    # The user chose "two pages" for this photograph; the fold
+                    # is theirs to accept. Only the subject is checked: a
+                    # keep-box astride the crease is folded in two.
+                    keeps = (sp.options or {}).get("keeps") or []
+                    kb = keeps[0] if keeps and keeps[0] else None
+                    if kb:
+                        lo = box.rect.x + kb[0] * box.rect.w
+                        hi = box.rect.x + kb[2] * box.rect.w
+                        slack = 0.03 * box.rect.w
+                        if lo - slack < g.fold_x < hi + slack:
+                            issues.append(Issue("warning", "fold", slot_where, f"the subject of {photo.id} sits on the fold of its two-page spread"))
+                elif not allow_fold:
                     issues.append(Issue("error", "fold-crossing", slot_where, f"{photo.id} is printed across the fold; allow_fold_crossing is off"))
                 else:
                     focal_x_mm = box.rect.x + slot.focal[0] * box.rect.w

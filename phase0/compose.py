@@ -33,7 +33,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Literal
 
-from geometry import Geometry, Rect
+from geometry import CROP_KEEP_MULTI, CROP_KEEP_SINGLE, Geometry, Rect
 
 COLS = 6
 ROWS = 6
@@ -129,12 +129,14 @@ COMPOSITIONS: dict[str, Composition] = {
 }
 
 
-def build_page(g: Geometry, side: Side, name: str, aspects=None, pixels=None):
+def build_page(g: Geometry, side: Side, name: str, aspects=None, pixels=None, band: bool = True):
     """Return (rects, feature_index, caption_rect) for one page composition.
 
     With `aspects` (width/height of each photograph, in slot order) the page is
     laid out for the photographs it actually carries — see `adaptive` — instead
     of on fixed grid cells that crop or letterbox whatever does not match.
+    `band` False reserves no caption band at the foot (the page has no caption
+    to set there), so the photographs use that paper too.
     """
     comp = COMPOSITIONS[name]
     if comp.blank or comp.slots == 0:
@@ -142,7 +144,7 @@ def build_page(g: Geometry, side: Side, name: str, aspects=None, pixels=None):
     if comp.bleed:
         return [g.full_bleed(side)], 0, None
     if aspects and len(aspects) == comp.slots and all(a and a > 0 for a in aspects):
-        rects, cap = adaptive(g, side, list(aspects), pixels)
+        rects, cap = adaptive(g, side, list(aspects), pixels, band=band)
         return rects, 0, cap
     rects = [grid_rect(g, side, c) for c in comp.cells]
     feature = next((i for i, c in enumerate(comp.cells) if c.feature), 0)
@@ -159,10 +161,10 @@ def build_page(g: Geometry, side: Side, name: str, aspects=None, pixels=None):
 # is left, and keeps the arrangement that covers the most paper while the
 # feature stays the largest image.
 
-ADAPT_KEEP = 0.86     # never cut more than 14% of a photograph to fill space
+ADAPT_KEEP = CROP_KEEP_MULTI     # never cut more than 14% of a photograph to fill space
 # A photograph alone on its page may lose a little more: a 2:1 phone panorama
 # on a 4:3 page otherwise floats in a band of white half the page high.
-ADAPT_KEEP_SINGLE = 0.75
+ADAPT_KEEP_SINGLE = CROP_KEEP_SINGLE
 MIN_DPI = 200.0       # no photograph is enlarged past this to fill its page
 
 
@@ -212,15 +214,28 @@ def _lines(W: float, H: float, aspects: list[float], parts: list[int], keep: flo
     return out, block_w, y - G
 
 
+def fill_ratio(g: Geometry, side: Side, rects) -> float:
+    """How much of the page's text column the photographs cover: their area
+    (clipped to the column) over the column's. A measure of white space."""
+    c = g.text_column(side)
+    area = 0.0
+    for r in rects:
+        w = min(r.x2, c.x2) - max(r.x, c.x)
+        h = min(r.y2, c.y2) - max(r.y, c.y)
+        if w > 0 and h > 0:
+            area += w * h
+    return area / (c.w * c.h) if c.w * c.h else 0.0
+
+
 def adaptive(g: Geometry, side: Side, aspects: list[float], pixels=None,
-             min_dpi: float = MIN_DPI):
+             min_dpi: float = MIN_DPI, band: bool = True):
     """Rectangles for photographs of the given aspect ratios on one page.
 
     `pixels`, when known, is each photograph's pixel width: the whole block is
     then scaled down (centred) until none prints below `min_dpi`, rather than
     enlarging a small photograph into a soft one to fill the page."""
     c = g.text_column(side)
-    W, H = c.w, c.h - CAPTION_BAND
+    W, H = c.w, c.h - (CAPTION_BAND if band else 0.0)
     n = len(aspects)
     keep = ADAPT_KEEP if n > 1 else ADAPT_KEEP_SINGLE
     best = None
