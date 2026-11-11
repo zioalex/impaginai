@@ -154,6 +154,131 @@ def engadin_run_fixes(groups):
         assert pts[1].features, "the other places are named while one is backing off"
     geocode._DOWN_UNTIL = 0.0
     geocode._CELL_RETRY.clear()
+
+    # --- landmark names from the list kept on this machine -----------------
+    import gazetteer
+    import json
+    import os
+    import time
+
+    def row(name, code, lat, lon, cc="CH"):
+        return "\t".join(["1", name, name, "", str(lat), str(lon), "T", code, cc] + [""] * 10)
+
+    CH = [row("Vadret da Morteratsch", "GLCR", 46.405, 9.935), row("Munt Pers", "PK", 46.42, 9.955),
+          row("Lej Nair", "LK", 46.412, 9.99), row("Berninapass", "PASS", 46.4103, 10.0222),
+          row("Pontresina", "PPL", 46.4955, 9.9016), row("Hotel Morteratsch", "HTL", 46.435, 9.94),
+          row("far away lake", "LK", 47.3, 8.5), "broken line"]
+    IT = [row("Lago Bianco Sud", "LK", 46.39, 10.03, "IT")]
+    rows = gazetteer.parse(CH)
+    assert [r[0] for r in rows] == ["Vadret da Morteratsch", "Munt Pers", "Lej Nair",
+                                    "Berninapass", "far away lake"], rows
+    assert {r[1] for r in rows} == {"glacier", "peak", "lake", "mountain_pass"}
+    saved_cfg, saved_cf = os.environ.get("ALBUM_CONFIG_DIR"), gazetteer.countries_for
+    geocode._OSM_SAID = False
+    try:
+        with tempfile.TemporaryDirectory() as cfg, tempfile.TemporaryDirectory() as td:
+            os.environ["ALBUM_CONFIG_DIR"] = cfg
+            gazetteer.reset()
+            got = []
+
+            def fake_dl(cc):
+                got.append(cc)
+                if cc == "FR":
+                    raise TimeoutError("The read operation timed out")
+                return gazetteer.parse({"CH": CH, "IT": IT}[cc])
+
+            def never(lat, lon, lang):
+                raise AssertionError("near() and a cache-only apply() must not touch the network")
+
+            # a photograph on the glacier, close to the Italian border
+            gazetteer.countries_for = lambda pts, reach_m=2500.0: {"CH", "IT"}
+            pt = [NS(id="a", gps=(46.41, 9.94), place=None, features=[]),
+                  NS(id="b", gps=(46.392, 10.028), place=None, features=[])]
+            assert geocode.prefetch_gazetteer(pt, fetch=fake_dl) is True
+            assert sorted(got) == ["CH", "IT"] and (Path(cfg) / "gazetteer" / "CH.json").exists()
+            assert geocode.prefetch_gazetteer(pt, fetch=fake_dl) is False and len(got) == 2, \
+                "a country already on this machine was downloaded again"
+            geocode.apply(pt, Path(td), offline_db=False, online=False, fetch=never)
+            assert pt[0].place == "Vadret da Morteratsch", pt[0].place
+            assert "Vadret da Morteratsch (glacier" in pt[0].features[0], pt[0].features
+            assert not any("far away" in f or "Hotel" in f for f in pt[0].features)
+            assert pt[1].place == "Lago Bianco Sud", "a landmark across the border was not found"
+            # a new process: read from disk, no download
+            gazetteer.reset()
+            assert geocode.prefetch_gazetteer(pt, fetch=never) is True
+            # the option switched off leaves landmark names out
+            pt[0].place = None
+            geocode.apply(pt, Path(td), offline_db=False, online=False, landmarks=False)
+            assert pt[0].place is None and pt[0].features == []
+            # OpenStreetMap's answer for the same glacier replaces the list's, others are added
+            (Path(td) / "features_cache.json").write_text(json.dumps({"46.41,9.94": [
+                {"name": "Morteratschgletscher", "kind": "glacier", "lat": 46.4052, "lon": 9.9352},
+                {"name": "Aussichtspunkt", "kind": "viewpoint", "lat": 46.411, "lon": 9.941}]}))
+            geocode.apply(pt, Path(td), offline_db=False, online=False, fetch=never)
+            names = [f.split(" (")[0] for f in pt[0].features]
+            assert names[0] == "Morteratschgletscher" and "Vadret da Morteratsch" not in names, names
+            assert "Aussichtspunkt" in names and "Munt Pers" in names, names
+            # a download that fails: said once, not retried during its pause, nothing breaks
+            gazetteer.countries_for = lambda pts, reach_m=2500.0: {"FR"}
+            fr = [NS(id="f", gps=(45.9, 6.9), place=None, features=[])]
+            assert geocode.prefetch_gazetteer(fr, fetch=fake_dl) is False
+            assert geocode.prefetch_gazetteer(fr, fetch=fake_dl) is False
+            assert got.count("FR") == 1 and gazetteer.status()["FR"] == "unavailable"
+            # a slow download is not waited for beyond the limit
+            gazetteer.countries_for = lambda pts, reach_m=2500.0: {"AT"}
+            import threading as _th
+            release = _th.Event()
+
+            def slow(cc):
+                release.wait(10)
+                return []
+
+            t0 = time.monotonic()
+            assert geocode.prefetch_gazetteer(fr, fetch=slow, wait_s=0.3) is False
+            assert time.monotonic() - t0 < 2 and gazetteer.status()["AT"] == "downloading"
+            release.set()
+            gazetteer._THREADS["AT"].join(5)
+            # OpenStreetMap failing says so once and never raises
+            calls.clear()
+            geocode._DOWN_UNTIL = 0.0
+            geocode._CELL_RETRY.clear()
+            assert geocode.prefetch_overpass(pt, Path(td) / "x", fetch=down) == 0 and len(calls) == 1
+            assert geocode.places_status()["osm"] == "unavailable"
+    finally:
+        gazetteer.countries_for = saved_cf
+        gazetteer.reset()
+        geocode._DOWN_UNTIL = 0.0
+        geocode._CELL_RETRY.clear()
+        if saved_cfg is None:
+            os.environ.pop("ALBUM_CONFIG_DIR", None)
+        else:
+            os.environ["ALBUM_CONFIG_DIR"] = saved_cfg
+    # Designing does not wait for OpenStreetMap: it is asked in the background.
+    sys.path.insert(0, str(ROOT.parent / "phase2"))
+    import server
+    saved = (dict(server.STATE), geocode.prefetch_overpass, geocode.prefetch_gazetteer)
+    started, release = _th.Event(), _th.Event()
+
+    def hangs(photos, album_dir, language=None, fetch=None):
+        started.set()
+        release.wait(20)
+        return 0
+
+    try:
+        server.STATE.update(online_places=True, all=[], album=Path("/nowhere"), language="de")
+        geocode.prefetch_overpass, geocode.prefetch_gazetteer = hangs, (lambda ph, wait_s=None, fetch=None: False)
+        t0 = time.monotonic()
+        server.prefetch_places([], wait_s=20)
+        assert time.monotonic() - t0 < 2, "the design waited for OpenStreetMap"
+        assert started.wait(5), "OpenStreetMap was not asked in the background"
+        server.prefetch_places([], wait_s=20)        # a second one does not pile up
+        release.set()
+    finally:
+        release.set()
+        server.STATE.clear()
+        server.STATE.update(saved[0])
+        geocode.prefetch_overpass, geocode.prefetch_gazetteer = saved[1], saved[2]
+    print("landmark names: offline list, across a border, merged with OpenStreetMap, quiet failures: ok")
     print("place lookup cooldown: ok")
 
     # a short book takes the photographs the design left out before blank paper,

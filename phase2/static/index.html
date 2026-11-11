@@ -1020,6 +1020,13 @@ async function renderSettings(){
     try{const r=await send("POST","/api/relook");note(`The next design looks at ${r.photos} photographs again.`);}catch(e){note(e.message,"err");}
   };
 }
+// Where landmark names are coming from right now, in a sentence.
+function placesLine(p){
+  const cs=Object.entries(p.countries||{}), say={ready:"ready",downloading:"downloading…",unavailable:"could not be downloaded yet"};
+  const list=cs.length?"Landmark list: "+cs.map(([c,s])=>`${c} ${say[s]||s}`).join(", ")+".":"Landmark list: not needed yet (no photographs with a location).";
+  const osm={ok:" OpenStreetMap is answering.",unavailable:" OpenStreetMap is not answering; the list above is used.",idle:""}[p.osm]||"";
+  return list+osm;
+}
 function fmtVal(o,v){
   if(o.key==="length")return Number(v)?`${v} pages`:"Automatic";
   if(o.key==="radius_m")return Number(v)>=1000?`${(Number(v)/1000).toFixed(1)} km`:`${v} m`;
@@ -1048,6 +1055,7 @@ function optionRow(o){
       <span class="val" id="val-${o.key}">${fmtVal(o,o.value)}</span></div>`;
   }
   h+=`<div class="hint">${esc(o.help)}</div>`;
+  if(o.key==="online_places"&&album&&album.places)h+=`<div class="hint">${esc(placesLine(album.places))}</div>`;
   if(o.locked)h+=`<div class="locked">🔒 ${esc(o.locked_by||"set when the editor was started")}</div>`;
   return h+`</div>`;
 }

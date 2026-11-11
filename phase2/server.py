@@ -148,7 +148,7 @@ def reload_photos():
     # Cache only: editing must never wait on the network. The named-places
     # lookup runs in prefetch_places(), at startup and before each design.
     geocode.apply(ph, a, offline_db=STATE["geocode"], online=False,
-                  language=STATE["language"])
+                  language=STATE["language"], landmarks=bool(STATE.get("online_places")))
     ov = OV.Overrides.load(a)
     # Keep excluded photographs visible in the UI — the user has to be able to
     # bring one back. Exclusion is applied when building, not when listing.
@@ -172,18 +172,38 @@ def reload_photos():
     return ph
 
 
-def prefetch_places(photos=None) -> None:
-    """Fill the named-places cache (glaciers, lakes, peaks) from OpenStreetMap.
-    Bounded: cached cells are not asked again, and a failure pauses lookups."""
+OSM_LOCK = threading.Lock()
+
+
+def prefetch_places(photos=None, wait_s: float | None = None) -> None:
+    """Have landmark names (glaciers, lakes, peaks) for these photographs.
+
+    The list kept on this machine is loaded, or downloaded once per country,
+    waiting at most `wait_s` for a download. OpenStreetMap is asked from a
+    background thread and never waited for: its public servers time out often,
+    and designing an album used to sit through that."""
     if not STATE.get("online_places"):
         return
+    photos = photos if photos is not None else STATE["all"]
+    album, language = STATE["album"], STATE["language"]
     try:
-        asked = geocode.prefetch(photos if photos is not None else STATE["all"], STATE["album"],
-                                 language=STATE["language"])
-        if asked:
+        if geocode.prefetch_gazetteer(photos, wait_s=wait_s):
             reload_photos()
     except Exception as exc:  # never let the place lookup break the editor
-        print(f"  place lookup failed: {exc}")
+        print(f"  landmark names failed: {exc}")
+
+    def osm():
+        try:
+            if (geocode.prefetch_overpass(photos, album, language=language)
+                    and STATE.get("album") == album and not JOB["running"]):
+                reload_photos()
+        except Exception:
+            pass
+        finally:
+            OSM_LOCK.release()
+
+    if OSM_LOCK.acquire(blocking=False):
+        threading.Thread(target=osm, daemon=True).start()
 
 
 def thumb_dir() -> Path:
@@ -559,6 +579,7 @@ def _album_info():
         for g in STATE.get("groups", [])
     ]
     return {
+        "places": geocode.places_status() if STATE.get("online_places") else None,
         "title": STATE["title"],
         "subtitle": STATE["subtitle"],
         "format": STATE["fmt"],
@@ -1558,7 +1579,7 @@ def _build(do_plan: bool, comment: str | None):
 
         set_job("Preparing photographs", 5)
         ensure_thumbs(usable)
-        prefetch_places(ph)
+        prefetch_places(ph, wait_s=20)
         ph = STATE["all"]
         usable = [p for p in ph if not STATE["ov"].get(p.id).exclude]
 
