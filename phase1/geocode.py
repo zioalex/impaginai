@@ -229,7 +229,7 @@ def _overpass(lat: float, lon: float, language: str | None, timeout: float = TIM
     for url in OVERPASS_URLS:
         req = urllib.request.Request(
             url, data=urllib.parse.urlencode({"data": q}).encode(),
-            headers={"User-Agent": "photo-album-maker (self-hosted)"})
+            headers={"User-Agent": "impaginai (self-hosted)"})
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 data = json.loads(r.read().decode("utf-8"))

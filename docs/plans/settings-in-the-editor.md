@@ -117,8 +117,8 @@ comments).
 | scope | file | holds |
 |---|---|---|
 | per album | `<album>/settings.json` (exists; extended) | photo folder, title, size, language, front photo, length, density, selection, captions style, grouping, vision detail, place options, chosen preset and models |
-| per user | `~/.config/photo_album_maker/config.json` | recent albums, last preset and models, default options for new albums |
-| per user, secret | `~/.config/photo_album_maker/keys.json`, mode `0600` | API keys. Never in an album folder, so an album can be zipped and shared safely. |
+| per user | `~/.config/impaginai/config.json` | recent albums, last preset and models, default options for new albums |
+| per user, secret | `~/.config/impaginai/keys.json`, mode `0600` | API keys. Never in an album folder, so an album can be zipped and shared safely. |
 
 Precedence, highest first: **command-line flag → environment variable →
 album settings → user config → built-in default**. A setting pinned by a flag
