@@ -141,7 +141,8 @@ time and caches subject, people, scene, focal point and a strength rating to
 schema retries cost nothing extra.
 
 **Place names come from an offline database.** GPS resolves to a settlement
-without a network or an API key, and `places.yaml` lets the user override any
+without a network or an API key, lakes, glaciers and peaks come from a
+per-country list downloaded once and kept on the machine, and `places.yaml` lets the user override any
 of them — the beach below Baunei is "Cala Goloritzé" to anyone who went there.
 The place and date are stamped on each chapter opening by the system, once per
 group, rather than left to the model.
@@ -251,3 +252,6 @@ For byte-identical rebuilds, generate a lock file with `pip-compile`.
 ## Licence
 
 Apache 2.0 — see `LICENSE`.
+
+Landmark names come from [GeoNames](https://www.geonames.org) (CC BY 4.0) and,
+when its servers answer, © OpenStreetMap contributors (ODbL).

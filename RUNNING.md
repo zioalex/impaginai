@@ -103,18 +103,40 @@ Useful extras:
 | `--gap-hours 4` | a gap longer than this starts a new group |
 | `--radius-m 400` | moving this far starts a new group |
 | `--no-geocode` | skip place names entirely |
-| `--offline-places` | do not look up glacier, lake and peak names on OpenStreetMap |
+| `--offline-places` | no glacier, lake and peak names: nothing is downloaded or looked up |
 | `--host 0.0.0.0 --port 8000` | reachable from other machines on your network |
 
 ### Glaciers, lakes and peaks by name
 
-The offline database knows towns, not the Morteratsch glacier. So each place
-(rounded to about a kilometre) is also looked up once on OpenStreetMap's public
-Overpass API, which returns the named glaciers, lakes, peaks, passes, rivers and
-viewpoints nearby. The nearest strong one leads the place ("Morteratschgletscher ·
+The town database knows towns, not the Morteratsch glacier. Landmarks come
+from two places:
+
+1. **A list kept on your machine.** The first time an album touches a country,
+   its list of named glaciers, lakes, peaks, passes, waterfalls, bays, beaches,
+   valleys, rivers, castles and monuments is downloaded once from
+   [geonames.org](https://www.geonames.org) (Switzerland about 2 MB, Italy or
+   Germany 10–15 MB) and kept in `~/.config/impaginai/gazetteer/`. After that
+   every lookup is local and instant. Only the country code leaves the machine.
+2. **OpenStreetMap, when it answers.** Each place (rounded to about a
+   kilometre) is also asked of the public Overpass servers, in the background.
+   They add viewpoints and names in the album's language. They are shared and
+   often time out; nothing waits for them, and the editor says so once.
+   Answers are cached in `features_cache.json`.
+
+The nearest strong landmark leads the place ("Morteratschgletscher ·
 Pontresina"), and all of them are given to the model so captions can name them.
-This sends those rounded coordinates to `overpass-api.de`; answers are cached in
-`features_cache.json`. Pass `--offline-places` to keep everything on the machine.
+**Settings → Places** shows which source is in use. Pass `--offline-places` to
+skip both.
+
+To see what answers for a location, and how fast:
+
+```bash
+python phase1/geocode.py check 46.41 9.94
+```
+
+`ALBUM_OVERPASS_URL` points at your own Overpass server and
+`ALBUM_GAZETTEER_URL` at a mirror of the country files
+(`https://example.org/dump/{cc}.zip`).
 
 ### Naming places yourself
 
