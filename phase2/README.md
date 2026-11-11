@@ -83,7 +83,7 @@ design*, *vision looks again*), and saved with the album in `settings.json`:
   next design will cost. *Save as models.yaml* exports the choice for the
   command line (`--models`), without keys.
 - **API keys**: paste a key once; it is stored for your user only
-  (`~/.config/photo_album_maker/keys.json`, readable only by you, never in an
+  (`~/.config/impaginai/keys.json`, readable only by you, never in an
   album folder) and never shown again — only masked, `sk-or-…a1b2`. A key in
   the environment (`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `ALBUM_API_KEY`,
   …) **always wins** over one entered here. Keys are redacted from everything
