@@ -126,6 +126,7 @@ class FakeModel:
                 "max_tokens": body.get("max_tokens"),
                 "reasoning": body.get("reasoning") or body.get("reasoning_effort"),
                 "auth": auth, "turns": len(msgs),
+                "new_photos": "NEW PHOTOGRAPHS" in (users[0] if users else ""),
             })
 
         if "missing" in model:

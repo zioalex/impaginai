@@ -503,8 +503,10 @@ def revise(
     fallback: Completer | None = None,
     on_event: Callable[[str], None] | None = None,
     prefs: dict | None = None,
+    new_photos=None,
 ) -> Result:
     system = P.system_prompt(g, lab, language)
-    return _run(system, P.revise_user_content(current, photos, comment, groups, prefs), complete,
+    return _run(system, P.revise_user_content(current, photos, comment, groups, prefs, new_photos),
+                complete,
                 lambda lay: resolution_errors(lay, photos, g, lab),
                 log_dir=log_dir, kind="revise", fallback=fallback, on_event=on_event)

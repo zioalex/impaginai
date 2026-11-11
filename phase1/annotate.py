@@ -29,7 +29,7 @@ from planner import Completer, Usage, extract_json
 from photos import Photo
 
 BATCH = 8
-ANNOTATION_VERSION = 3   # 3: adds `turn` (photographs stored sideways)
+ANNOTATION_VERSION = 4   # 3: adds `turn` (sideways photos); 4: adds `keep` (do not crop)
 ANNOTATE_TRANSIENT = 3   # tries per batch on a network/server failure
 _sleep = time.sleep      # module-level so tests can replace it
 
@@ -83,7 +83,12 @@ ridge above the tongue of the glacier')>",
   "turn": <0, 90, 180 or 270: degrees CLOCKWISE the image as shown must be \
 rotated to stand upright — sky at the top, horizon level, people and buildings \
 upright. 0 for almost every photograph; give another value only when the image \
-is clearly lying on its side or upside down>}]
+is clearly lying on its side or upside down>,
+  "keep": [x0, y0, x1, y1] or null — the SMALLEST box that contains every person \
+(whole heads and faces, and the bodies of a group) and the main object of the \
+photograph, so that a crop never cuts them. Fractions of the width and height \
+like `focal`, measured on the image as shown. null when there is no single \
+subject to protect, such as a wide landscape}]
 
 Be specific in `subject` too: "milky turquoise meltwater lake", not "lake".
 
@@ -111,6 +116,8 @@ class Annotation:
     # Degrees clockwise the photograph still needs to stand upright, as the
     # model saw it. Consumed by apply_turns, which sets it back to 0.
     turn: int = 0
+    # The box a crop must not cut (fractions), or None. See SYSTEM.
+    keep: list | None = None
     # 1: subject/people/scene only. 2: adds landmark and detail, which the
     # captions need; version-1 entries are looked at again once.
     v: int = 1
@@ -257,6 +264,7 @@ def run(
                 landmark=str(item.get("landmark", "") or "")[:60],
                 detail=str(item.get("detail", "") or "")[:120],
                 turn=_turn(item.get("turn")),
+                keep=normalise_box(item.get("keep"), _image_size(thumb_dir / f"{pid}.jpg")),
                 v=ANNOTATION_VERSION,
             )
         store.save(cache)
@@ -330,6 +338,37 @@ def normalise_focal(raw, size: tuple[int, int] | None) -> tuple[float, float]:
     return (round(min(1.0, max(0.0, x)), 4), round(min(1.0, max(0.0, y)), 4))
 
 
+def normalise_box(raw, size: tuple[int, int] | None) -> list[float] | None:
+    """A keep-box as fractions [x0, y0, x1, y1], whatever the model sent, or
+    None. Pixels are divided by the size of the image the model saw; corners
+    are put in order and clamped. A box that covers nearly the whole frame
+    protects nothing a crop could avoid, so it counts as none: otherwise every
+    landscape would be shown uncropped and small."""
+    if not raw or not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        return None
+    try:
+        v = [float(c) for c in raw]
+    except (TypeError, ValueError):
+        return None
+    if any(c != c for c in v):
+        return None
+    if max(v) > 1:
+        if size and size[0] > 0 and size[1] > 0 and max(v) > 100:
+            v = [v[0] / size[0], v[1] / size[1], v[2] / size[0], v[3] / size[1]]
+        elif max(v) <= 100:
+            v = [c / 100 for c in v]
+        else:
+            return None
+    v = [min(1.0, max(0.0, c)) for c in v]
+    x0, x1 = sorted((v[0], v[2]))
+    y0, y1 = sorted((v[1], v[3]))
+    if x1 - x0 < 0.01 or y1 - y0 < 0.01:
+        return None
+    if x1 - x0 > 0.92 and y1 - y0 > 0.92:
+        return None
+    return [round(x0, 4), round(y0, 4), round(x1, 4), round(y1, 4)]
+
+
 def vision_size(width: int, height: int, px: int = VISION_PX) -> tuple[int, int]:
     """The size of the vision copy made from a photograph of this size."""
     s = min(1.0, px / max(width, height))
@@ -363,6 +402,7 @@ def apply_turns(photos: list[Photo], anns: Annotations, cache: Path, photo_dir: 
         if p.id not in manual:
             imaging.set_rotation(photo_dir, p.id, a.turn)
             a.focal = imaging.turn_point(a.focal, a.turn)
+            a.keep = imaging.turn_box(a.keep, a.turn)
             for root in (album_dir / "derivatives", album_dir / "renders" / "derivatives"):
                 if root.exists():
                     for f in root.rglob(f"{p.id}.jpg"):
@@ -386,3 +426,5 @@ def apply(photos: list[Photo], anns: Annotations) -> None:
             p.suggested_focal = normalise_focal(a.focal, vision_size(p.width, p.height))
             p.landmark = a.landmark
             p.detail = a.detail
+            p.keep = normalise_box(a.keep, vision_size(p.width, p.height))
+            p.scene, p.subject, p.who, p.people = a.scene, a.subject, a.who, a.people

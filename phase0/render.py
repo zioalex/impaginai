@@ -258,6 +258,46 @@ def stamp_html(g: Geometry, window: Rect, photo: Rect | None, text: str) -> str:
     return f'<div class="stamp abs" style="{rect_style(r)}">{esc(text)}</div>'
 
 
+def _visible(rect: Rect, aspect: float) -> tuple[float, float]:
+    """Fractions of a photograph's width and height left visible when it
+    covers `rect` (object-fit: cover)."""
+    r = rect.w / rect.h if rect.h else 1.0
+    if aspect <= 0:
+        return 1.0, 1.0
+    return (r / aspect, 1.0) if aspect > r else (1.0, aspect / r)
+
+
+def place_photo(slot_rect: Rect, aspect: float, focal, keep, bleeds: bool):
+    """Where a photograph goes in its slot and which part of it shows:
+    (rect, x%, y%) for object-position.
+
+    The crop is centred on the focal point, then moved just enough that the
+    keep-box (people, the main subject) stays wholly inside. If the box cannot
+    fit at all, a framed slot shows the whole photograph instead — smaller, but
+    nobody cut in half. A page set to the edges is decided upstream
+    (pages.protect_subjects) and keeps its crop."""
+    rect = slot_rect if bleeds else fit_rect(slot_rect, aspect)
+    vx, vy = _visible(rect, aspect)
+    if keep and not bleeds and (keep[2] - keep[0] > vx + 0.01 or keep[3] - keep[1] > vy + 0.01):
+        rect = fit_rect(slot_rect, aspect, min_keep=1.0)
+        vx, vy = _visible(rect, aspect)
+
+    def axis(f, lo, hi, v):
+        if v >= 0.999:
+            return 50.0
+        start = f - v / 2
+        if lo is not None:
+            start = min(start, lo)            # the box's start must show
+            start = max(start, hi - v)        # and so must its end
+        start = min(max(start, 0.0), 1.0 - v)
+        return start / (1.0 - v) * 100
+
+    fx, fy = focal
+    px = axis(fx, keep[0] if keep else None, keep[2] if keep else None, vx)
+    py = axis(fy, keep[1] if keep else None, keep[3] if keep else None, vy)
+    return rect, px, py
+
+
 def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window: Rect) -> str:
     parts: list[str] = []
     side = _side_of(g, window)
@@ -269,7 +309,8 @@ def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window:
     first_on_page: Rect | None = None
     overlays: list[str] = []      # captions and scrims go above every photograph
     band: list[str] = []          # captions set in the band under the page's photos
-    for slot, box in zip(sp.slots, rendered.slots):
+    keeps = list((sp.options or {}).get("keeps") or [])
+    for n, (slot, box) in enumerate(zip(sp.slots, rendered.slots)):
         if not _owns(g, window, box.rect):
             continue
         src = photo_paths.get(slot.photo_id)
@@ -282,13 +323,14 @@ def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window:
         # focal point, never shrunk into white. Elsewhere, never cut away more
         # of a photograph than geometry.MIN_CROP_KEEP allows: past that the
         # slot shrinks to the photograph's own shape.
-        rect = box.rect if box.bleeds else fit_rect(box.rect, _aspect(src))
+        keep = keeps[n] if n < len(keeps) else None
+        rect, posx, posy = place_photo(box.rect, _aspect(src), (fx, fy), keep, box.bleeds)
         fitted = rect is not box.rect
         if first_on_page is None or (rect.y, rect.x) < (first_on_page.y, first_on_page.x):
             first_on_page = rect
         parts.append(
             f'<img class="{cls}" src="{src.as_posix()}" '
-            f'style="{rect_style(rect)}object-position:{fx * 100:.1f}% {fy * 100:.1f}%;">'
+            f'style="{rect_style(rect)}object-position:{posx:.1f}% {posy:.1f}%;">'
         )
         if not slot.caption or box.caption_style == "none" or slot.caption_position == "none":
             continue

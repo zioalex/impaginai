@@ -457,6 +457,46 @@ def main() -> int:
             assert ed3.post("/api/albums", {"album": first["album"]})["photo_count"] == 5
             saved = json.loads((Path(first["album"]) / "settings.json").read_text())
             assert saved["photos_dir"] == str(trip.resolve()), saved
+
+            # photographs added after the design are brought into the book at
+            # once (no model call), and a revision is told to place them
+            ed3.send("PUT", "/api/models", {"roles": {r: {"base_url": url, "model": "fake/model"}
+                                                      for r in ("annotate", "plan", "revise")}})
+            job = ed3.build()
+            assert job.get("done") and not job.get("error"), job
+            album3 = Path(first["album"])
+            v1 = json.loads(sorted((album3 / "layouts").glob("v0*[0-9].json"))[-1].read_text())
+            before = {s["photo_id"] for sp in v1["spreads"] for s in sp["slots"]}
+            jpg2 = sorted(PHOTOS.glob("*.jpg"))[6].read_bytes()
+            added = ed3.put_raw("/api/upload?name=added_later.jpg", jpg2)["id"]
+            ed3.post("/api/photos/reload", {})
+            fake.requests.clear()
+            j = ed3.job("/api/rerender")
+            assert j.get("done") and not j.get("error"), j
+            assert not fake.requests, "bringing in an added photograph called the model"
+            cur = json.loads(sorted((album3 / "layouts").glob("v0*[0-9].json"))[-1].read_text())
+            after = {s["photo_id"] for sp in cur["spreads"] for s in sp["slots"]}
+            assert added in after and added not in before, (added, after)
+            fake.requests.clear()
+            job = ed3.build("make it calmer")
+            assert job.get("done") and not job.get("error"), job
+            rv = fake.of_kind("revise")
+            assert rv and rv[0]["new_photos"], "the revision was not told about the new photograph"
+            # a design made before designs recorded what the model saw: a
+            # photograph whose file is newer than the design counts as new
+            for f in (album3 / "layouts").glob("v*.raw.json"):
+                d = json.loads(f.read_text())
+                d.pop("_seen_photos", None)
+                f.write_text(json.dumps(d))
+            time.sleep(1.5)
+            late = ed3.put_raw("/api/upload?name=added_much_later.jpg",
+                               sorted(PHOTOS.glob("*.jpg"))[7].read_bytes())["id"]
+            ed3.post("/api/photos/reload", {})
+            j = ed3.job("/api/rerender")
+            assert j.get("done") and not j.get("error"), j
+            cur = json.loads(sorted((album3 / "layouts").glob("v0*[0-9].json"))[-1].read_text())
+            assert late in {s["photo_id"] for sp in cur["spreads"] for s in sp["slots"]}, \
+                "a photograph added after an older design was not brought in"
             lib2 = home / "Elsewhere"
             lib2.mkdir()
             try:
@@ -471,7 +511,7 @@ def main() -> int:
         ed4 = Editor(Path(first["album"]), None, tmp / "editor4.log", env_extra=lib_env, photos=None)
         try:
             a = ed4.get("/api/album")
-            assert a["open"] and a["title"] == "Engadin 2026" and len(ed4.get("/api/photos")) == 5, a
+            assert a["open"] and a["title"] == "Engadin 2026" and len(ed4.get("/api/photos")) == 7, a
         finally:
             ed4.stop()
         print("albums: welcome, folder browser in its root, new/open/recent, uploads, reopen: ok")

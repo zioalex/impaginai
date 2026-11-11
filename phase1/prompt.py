@@ -133,6 +133,13 @@ supporting ones after it. Order matters; it is not a list of equals.
 - Composition is for photographs that belong together — the same subject from two \
 angles, a detail beside the thing it came from, three frames of one moment. Unrelated \
 pictures on one page look like a contact sheet.
+- **Similar scenes go together.** When three or four photographs show the same scene \
+— the same place and moment, a similar subject, the same people — put them on ONE \
+composed page (`trio-page`, `grid-four`, `hero-and-trio`, `mosaic-spread` for six) \
+with the strongest as the feature, rather than giving each its own page.
+- **Never plan a crop through people.** A group whose people reach the edges of the \
+frame, or a subject that fills it, goes in a slot of its own shape — not \
+`full-bleed-single`, which crops to the page.
 - Weak frames (strength 1-2) belong in the small rectangles of a composed page, never \
 on a page of their own.
 - Vary the density. A composed page wants a quiet one facing it or next to it; \
@@ -294,13 +301,19 @@ def plan_user_content(
 
 
 def revise_user_content(current: dict, photos: list[Photo], comment: str, groups=None,
-                        prefs: dict | None = None) -> str:
+                        prefs: dict | None = None, new_photos=None) -> str:
+    new = ""
+    if new_photos:
+        new = ("\n\nNEW PHOTOGRAPHS: the user added these after the current layout was made. "
+               "Place every one of them, in the place and time they belong to (their group "
+               "says where), even where the comment does not mention them: "
+               + ", ".join(sorted(new_photos)) + ".")
     return (
         "Here is the current album layout, the photo list, and a comment from the user.\n\n"
         "Return the COMPLETE revised layout JSON — not a patch, not a diff. Change what the "
         "comment asks for and what follows from it; leave everything else alone. Set "
         "`change_summary` to one line describing what you changed.\n\n"
-        f"USER COMMENT:\n{comment}{preferences_block(prefs)}\n\n"
+        f"USER COMMENT:\n{comment}{preferences_block(prefs)}{new}\n\n"
         f"CURRENT LAYOUT:\n{json.dumps(current, ensure_ascii=False, indent=1)}\n\n"
         f"PHOTOS:{groups_block(groups)}\n{photo_block(photos)}"
     )

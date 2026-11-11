@@ -340,11 +340,40 @@ def apply_format(fmt: str) -> None:
 # --- finishing a layout without the model ------------------------------
 
 
+def unseen_photos(raw: dict | None, usable) -> set[str]:
+    """Photographs the model never saw: added after the design was made.
+
+    A design records the photographs it was shown (`_seen_photos`). A design
+    made before that was recorded falls back to the files' age: a photograph
+    whose file is newer than the last design or revision is new."""
+    ids = {p.id for p in usable}
+    seen = (raw or {}).get("_seen_photos")
+    if seen is not None:
+        return ids - set(seen)
+    try:
+        designs = [v for v in Store(STATE["album"]).versions()
+                   if v.kind in ("design", "revise", None)]
+    except Exception:
+        return set()
+    if not designs:
+        return set()
+    t = datetime.fromisoformat(designs[-1].created_at).timestamp()
+    out = set()
+    for p in usable:
+        try:
+            if p.path.stat().st_mtime > t + 1:
+                out.add(p.id)
+        except OSError:
+            pass
+    return out
+
+
 def finish_layout(raw: dict, usable) -> dict:
     """The model's layout -> the printed one: the user's settings, measured
     focal points, no empty pages, place stamps, the album's own title. Pure
     and repeatable, so it runs again whenever a setting changes."""
     data = copy.deepcopy(raw)
+    data.pop("_seen_photos", None)
     data.setdefault("meta", {})
     data["meta"]["format"] = STATE["fmt"]
     old_title = data["meta"].get("title")
@@ -385,8 +414,22 @@ def finish_layout(raw: dict, usable) -> dict:
               no_bleed={p.id for p in usable if (p.can or {}).get("full-page") == "no"},
               density=o.get("density", "balanced"), use_all=o.get("selection") == "all",
               place_names=o.get("captions") != "none",
-              split_short=o.get("short_book", "split") == "split")
+              split_short=o.get("short_book", "split") == "split",
+              # Photographs added after the design: the model never had the
+              # chance to leave them out, so they go in.
+              include=unseen_photos(raw, usable),
+              features={p.id: {"scene": p.scene, "subject": p.subject, "who": p.who}
+                        for p in usable})
     PG.apply_focal(data, by_id)
+    # Never cut the people or the main subject: a page set to the edges whose
+    # crop would cut them holds the photograph inside its margins instead, and
+    # every slot carries the box the renderer must keep in view.
+    fb = STATE["g"].full_bleed("left")
+    keeps = {p.id: p.keep for p in usable if p.keep}
+    for n in PG.protect_subjects(data, keeps, {p.id: p.width / p.height for p in usable},
+                                 fb.w / fb.h):
+        print(f"  {n}")
+    PG.attach_keeps(data, keeps)
     # The cover shows the front page's photograph and the album's own title.
     opening = (data.get("spreads") or [{}])[0]
     cover = data.get("cover") or {}
@@ -1330,6 +1373,7 @@ def _rotate(photo_id: str, degrees: int) -> None:
     a = anns.by_id.get(photo_id)
     if a is not None and a.focal:
         a.focal = imaging.turn_point(a.focal, delta)
+        a.keep = imaging.turn_box(a.keep, delta)
         anns.save(apath)
     ensure_thumbs([p for p in STATE["all"] if p.id == photo_id])
 
@@ -1432,15 +1476,20 @@ def _build(do_plan: bool, comment: str | None):
         else:
             set_job("Revising the album", 45)
             pv, current = store.get()
+            new = sorted(unseen_photos(store.raw(pv.version_no) or current, usable))
             res = planner.revise(current=current, comment=comment or "", photos=usable,
                                  g=STATE["g"], lab=STATE["lab"], language=STATE["language"],
                                  complete=complete, fallback=fallback,
                                  on_event=lambda m: set_job(m, 45),
-                                 groups=groups, log_dir=a / "logs", prefs=prefs())
+                                 groups=groups, log_dir=a / "logs", prefs=prefs(),
+                                 new_photos=new)
             parent, comment_txt, summary = pv.version_no, comment, res.layout.change_summary
 
         set_job("Applying your settings", 70)
         raw = res.layout.model_dump(mode="json", exclude_none=False)
+        # What the model was shown, so photographs added later are known to
+        # be new (and brought into the book) when the design is re-applied.
+        raw["_seen_photos"] = [p.id for p in usable]
         data = finish_layout(raw, usable)
         Layout.model_validate(data)
         cost = session.usage.cost_usd
