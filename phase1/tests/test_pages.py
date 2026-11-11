@@ -138,7 +138,22 @@ def engadin_run_fixes(groups):
         geocode.apply(pts, Path(td), offline_db=False, online=True, fetch=down)
         geocode.apply(pts, Path(td), offline_db=False, online=True, fetch=down)
         assert len(calls) == 1, f"the lookup was retried {len(calls)} times during its cooldown"
+        # After the cooldown the place that failed is not asked first again:
+        # one slow place used to block every other one, every time.
+        asked = []
+
+        def slow_first(lat, lon, lang):
+            asked.append(lat)
+            if lat == 46.4:
+                raise TimeoutError("The read operation timed out")
+            return [{"name": "Lej Nair", "kind": "lake", "lat": lat, "lon": lon}]
+
+        geocode._DOWN_UNTIL = 0.0
+        geocode.apply(pts, Path(td), offline_db=False, online=True, fetch=slow_first)
+        assert 46.4 not in asked and len(asked) == 3, asked
+        assert pts[1].features, "the other places are named while one is backing off"
     geocode._DOWN_UNTIL = 0.0
+    geocode._CELL_RETRY.clear()
     print("place lookup cooldown: ok")
 
     # a short book takes the photographs the design left out before blank paper,
@@ -222,6 +237,10 @@ def engadin_run_fixes(groups):
     assert OV.match_id("WA0019", known) == "IMG-20260805-WA0019"
     assert OV.match_id("img_20260805_085308", known) == "IMG_20260805_085308"
     assert OV.match_id("IMG_20260805", known) is None, "ambiguous ids must not be guessed"
+    wa = known + ["IMG-20260805-WA0018", "IMG-20260805-WA0020"]
+    assert OV.match_id("IMG_20260805-WA0019", wa) == "IMG-20260805-WA0019", \
+        "a swapped separator is read as the real id even among near-identical neighbours"
+    assert OV.match_id("IMG_20260805_WA0021", wa) is None
     lay = {"spreads": [
         {"index": 1, "template": "two-up-hero", "options": {}, "text": None, "section_id": None,
          "slots": [{"photo_id": "p002", "focal": [.5, .5], "caption": None, "caption_position": "below"},
@@ -465,6 +484,27 @@ def engadin_run_fixes(groups):
             assert secret not in red and "fromtheenvironment" not in red, red
             keystore.delete_key("openrouter")
             assert keystore.stored("openrouter") is None
+        # A named key goes only to its own host: the words in a path do not count.
+        assert keystore.slot_for("openai", "https://evil.example/api.openai.com") == "other"
+        assert keystore.slot_for("openai", "https://openrouter.ai.evil.example/v1") == "other"
+        assert keystore.slot_for("openai", "https://api.openai.com/v1") == "openai"
+        assert keystore.slot_for("openai", "https://openrouter.ai/api/v1") == "openrouter"
+        os.environ["OPENAI_API_KEY"] = "sk-openai-fromtheenvironment00"
+        p = providers.resolve(base_url="https://evil.example/api.openai.com/v1", model="x")
+        assert p.api_key is None, "OPENAI_API_KEY was handed to another host"
+        p = providers.resolve(base_url="openai", model="x")
+        assert p.api_key == "sk-openai-fromtheenvironment00"
+        os.environ.pop("OPENAI_API_KEY")
+        # State files are replaced whole: a failed write leaves the old content.
+        import safeio
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "overrides.yaml"
+            safeio.write_text(f, "first")
+            try:
+                safeio.write_text(f, 12345)          # not text: the write fails
+            except TypeError:
+                pass
+            assert f.read_text() == "first" and list(Path(td).iterdir()) == [f]
         # The project was renamed: keys stored under the old folder name
         # follow it, permissions intact, and a folder under the new name wins.
         saved_home = os.environ.get("HOME")

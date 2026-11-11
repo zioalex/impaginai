@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import dataclasses
 import io
 import json
 import os
@@ -64,6 +65,7 @@ import planner
 import prompt as P
 import providers
 import render as R
+import safeio
 import templates_lib
 from planner import Usage
 from schema import Layout
@@ -74,6 +76,50 @@ app = FastAPI(title="Album editor")
 
 # Endpoints that work before any album is open: the welcome screen uses them.
 NO_ALBUM_OK = {"/api/album", "/api/albums", "/api/fs", "/api/job", "/api/library"}
+
+
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _hostname(netloc: str) -> str:
+    """Host name of a Host header or URL authority, without the port."""
+    netloc = netloc.strip().lower()
+    if netloc.startswith("["):                       # [::1]:8000
+        return netloc[1:].split("]")[0]
+    return netloc.rsplit(":", 1)[0] if ":" in netloc else netloc
+
+
+def cross_site(headers, local: bool) -> str | None:
+    """Why a request must be refused as coming from another website, or None.
+
+    The editor has no login: on this machine, being able to reach the port is
+    the permission. A web page open in the same browser can reach it too, so
+    three things are checked. The Host header (a page whose domain was
+    re-pointed at 127.0.0.1 still announces its own name), the Origin header,
+    and Sec-Fetch-Site, which browsers attach even to an <img> request."""
+    host = headers.get("host", "")
+    if local and _hostname(host) not in LOOPBACK_HOSTS:
+        return f"this editor answers only as localhost, not {host!r}"
+    site = headers.get("sec-fetch-site")
+    if site and site not in ("same-origin", "none"):
+        return "requests from other websites are refused"
+    origin = headers.get("origin")
+    if origin and origin != "null":
+        from urllib.parse import urlparse
+
+        if (urlparse(origin).netloc or "").lower() != host.lower():
+            return "requests from other websites are refused"
+    elif origin == "null":
+        return "requests from other websites are refused"
+    return None
+
+
+@app.middleware("http")
+async def same_site_only(request, call_next):
+    why = cross_site(request.headers, STATE.get("local", True))
+    if why:
+        return JSONResponse({"detail": why}, status_code=403)
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -209,7 +255,11 @@ def set_job(step: str, progress: int, error: str | None = None, done: bool = Fal
 
 
 def start_job(kind: str) -> None:
+    """Claim the one job slot, or refuse. Checked and set under the lock: two
+    requests arriving together used to both find it free."""
     with JOB_LOCK:
+        if JOB["running"]:
+            raise HTTPException(409, "busy — try again when the current job finishes")
         JOB.update(running=True, step="Starting", progress=1, error=None, done=False,
                    kind=kind, cost=None, seconds=0.0, result=None, started=time.time())
 
@@ -294,7 +344,7 @@ def save_settings() -> None:
         data["preset"] = STATE.get("model_preset")
     elif "saved_models" in STATE:
         data["models"], data["preset"] = STATE["saved_models"]
-    settings_path().write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    safeio.write_text(settings_path(), json.dumps(data, ensure_ascii=False, indent=2))
 
 
 def apply_options() -> None:
@@ -776,6 +826,23 @@ def _browse_ok(path: Path) -> Path:
     return p
 
 
+def _album_ok(path: Path) -> Path:
+    """An album folder the editor may open or create: one it already knows
+    (opened before, or started with --album), or one inside the album library
+    or the browse root. Anything else used to be created wherever it pointed."""
+    p = Path(path).expanduser().resolve()
+    known = {str(Path(r["album"]).expanduser().resolve())
+             for r in user_config().get("recent", []) if r.get("album")}
+    if STATE.get("album") is not None:
+        known.add(str(Path(STATE["album"]).resolve()))
+    if str(p) in known:
+        return p
+    lib = library_dir().expanduser().resolve()
+    if p != lib and lib in p.parents:
+        return p
+    return _browse_ok(p)
+
+
 def _count_photos(d: Path, cap: int = 5000) -> int:
     n = 0
     try:
@@ -852,7 +919,7 @@ def api_albums_open(body: AlbumIn):
     photos = _browse_ok(Path(body.photos)) if body.photos else None
     title = None
     if body.album:
-        album = Path(body.album).expanduser()
+        album = _album_ok(Path(body.album))
         if not (album / "settings.json").exists() and photos is None:
             raise HTTPException(404, "That folder is not an album made here.")
     elif body.name and body.name.strip():
@@ -915,11 +982,23 @@ async def api_upload(request: Request, name: str):
     if not stem_ or stem_.startswith(".") or Path(base).suffix.lower() not in imaging.EXTENSIONS:
         raise HTTPException(400, f"{name}: not a photograph this editor can use "
                                  f"({', '.join(sorted(imaging.EXTENSIONS))})")
-    data = await request.body()
+    too_big = HTTPException(413, f"{base} is larger than {MAX_UPLOAD // 2**20} MB")
+    try:
+        if int(request.headers.get("content-length") or 0) > MAX_UPLOAD:
+            raise too_big
+    except ValueError:
+        pass
+    # Counted as it arrives: the whole body used to be held in memory before
+    # its size was looked at.
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > MAX_UPLOAD:
+            raise too_big
+        chunks.append(chunk)
+    data = b"".join(chunks)
     if not data:
         raise HTTPException(400, f"{base} is empty")
-    if len(data) > MAX_UPLOAD:
-        raise HTTPException(413, f"{base} is larger than {MAX_UPLOAD // 2**20} MB")
     dest = STATE["photos"] / base
     stem, suf, n = dest.stem, dest.suffix, 2
     while dest.exists():
@@ -993,7 +1072,7 @@ def user_config() -> dict:
 def save_user_config(data: dict) -> None:
     d = keystore.config_dir()
     d.mkdir(parents=True, exist_ok=True)
-    (d / "config.json").write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    safeio.write_text(d / "config.json", json.dumps(data, ensure_ascii=False, indent=2))
 
 
 def apply_models(check: bool = True) -> None:
@@ -1201,6 +1280,15 @@ def api_models_list(role: str = "plan", base_url: str | None = None):
             p = providers.resolve(provider="anthropic", model=p.model)
         else:
             p = providers.resolve(provider="openai", base_url=base_url, model=p.model)
+            # An endpoint that is only being looked at gets a key only if it is
+            # one of the named services or one already configured for a role.
+            # ALBUM_API_KEY and the "other endpoint" key are not tied to a host,
+            # and this address arrives in a URL any page could have written.
+            trusted = {keystore.origin_of(u) for u in providers.ALIASES.values()}
+            trusted |= {keystore.origin_of(q.base_url) for q in STATE["providers"].values()
+                        if q.base_url}
+            if keystore.origin_of(p.base_url) not in trusted:
+                p = dataclasses.replace(p, api_key=None)
     try:
         rows = providers.list_models(p, need_vision=(role == "annotate"))
     except RuntimeError as exc:
@@ -1882,6 +1970,7 @@ def main():
     local = args.host in ("127.0.0.1", "localhost", "::1")
     STATE.update(args=args, pinned=pinned, lab_paths=lab_paths, album=None,
                  models_locked_by=models_locked_by(args),
+                 local=local,
                  keys_editable=local or args.allow_remote_settings,
                  files_editable=local or args.allow_remote_settings,
                  browse_root=(args.browse_root or Path(os.environ.get("ALBUM_BROWSE_ROOT")
