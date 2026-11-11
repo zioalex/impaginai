@@ -169,8 +169,13 @@ def resolve(provider=None, model=None, base_url=None, api_key=None,
 
     key = api_key or os.environ.get("ALBUM_API_KEY")
     if not key:
-        for env in (("ANTHROPIC_API_KEY",) if name == "anthropic"
-                    else ("OPENROUTER_API_KEY", "OPENAI_API_KEY")):
+        # A named key goes only to the host it belongs to. OPENAI_API_KEY in
+        # the environment used to be sent to whatever --base-url said.
+        slot = keystore.slot_for(name, url)
+        envs = {"anthropic": ("ANTHROPIC_API_KEY",), "openrouter": ("OPENROUTER_API_KEY",),
+                "openai": ("OPENAI_API_KEY",), "together": ("TOGETHER_API_KEY",),
+                "groq": ("GROQ_API_KEY",)}.get(slot, ())
+        for env in envs:
             if os.environ.get(env):
                 key = os.environ[env]
                 break

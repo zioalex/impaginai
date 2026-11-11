@@ -63,14 +63,48 @@ def _path() -> Path:
 def slot_for(provider: str, base_url: str | None) -> str:
     """Which stored key a provider/endpoint uses."""
     url = (base_url or "").lower()
-    if provider == "anthropic" and (not url or "anthropic.com" in url):
+    host = host_of(url)
+    if provider == "anthropic" and (not url or _is(host, "anthropic.com")):
         return "anthropic"
-    for s in ("openrouter", "together", "groq"):
-        if s in url:
+    for s, domain in KEY_HOSTS.items():
+        if _is(host, domain):
             return s
-    if not url or "api.openai.com" in url:
+    if not url:
         return "openai"
     return "other"
+
+
+# Which host each named key belongs to. Matched on the URL's host name, never
+# on the text of the URL: `https://evil.example/api.openai.com` contains the
+# right words and must not be handed the OpenAI key.
+KEY_HOSTS = {"openrouter": "openrouter.ai", "together": "together.xyz",
+             "groq": "groq.com", "openai": "openai.com"}
+
+
+def host_of(url: str | None) -> str:
+    from urllib.parse import urlparse
+
+    try:
+        return (urlparse(url or "").hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def origin_of(url: str | None) -> str:
+    """scheme://host:port of an endpoint: what a key is trusted to, exactly.
+    The port counts — another program on this machine is another endpoint."""
+    from urllib.parse import urlparse
+
+    try:
+        u = urlparse(url or "")
+        port = u.port or {"http": 80, "https": 443}.get(u.scheme, 0)
+        return f"{u.scheme}://{(u.hostname or '').lower()}:{port}"
+    except ValueError:
+        return ""
+
+
+def _is(host: str, domain: str) -> bool:
+    return host == domain or host.endswith("." + domain)
 
 
 def _load() -> dict[str, str]:

@@ -52,6 +52,10 @@ order, decide whether it succeeds.
 
 ### 2. Security (confirmed)
 
+> **Status, 11 November:** S1–S4, the non-atomic writes and the job-gate race
+> below were fixed the same day, with regression tests. What remains open in
+> this area: no login for `--host 0.0.0.0`, and edits made while a design runs.
+
 | # | Severity | Finding | Where |
 |---|---|---|---|
 | S1 | Critical | **Any web page the user visits can steal their API key.** `GET /api/models/list?base_url=<attacker>` makes the server send `Authorization: Bearer <key>` to that URL. An `<img>` tag is enough. Reproduced: a listener on another port received the `OPENAI_API_KEY` value. Environment keys go to any URL; stored keys are matched by substring (`…/api.openai.com` in a path is enough). | `phase2/server.py:1170`, `phase1/providers.py:170-180`, `:1245-1249`, `phase1/keystore.py:47-57` |

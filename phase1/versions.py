@@ -12,7 +12,10 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import threading
 from pathlib import Path
+
+_ADD_LOCK = threading.Lock()
 
 
 @dataclass
@@ -76,6 +79,16 @@ class Store:
         settings were applied. Kept beside the version so the settings can be
         re-applied later — bringing back a photograph that was left out, say —
         without asking the model again."""
+        import safeio
+
+        # One writer at a time: two jobs reading the same index would both
+        # take the same version number and one would overwrite the other.
+        with _ADD_LOCK:
+            return self._add(layout, parent, user_comment, change_summary, cost_usd,
+                             kind, raw, safeio)
+
+    def _add(self, layout, parent, user_comment, change_summary, cost_usd, kind, raw,
+             safeio) -> Version:
         vs = self.versions()
         v = Version(
             version_no=(vs[-1].version_no + 1) if vs else 1,
@@ -86,15 +99,13 @@ class Store:
             cost_usd=(round(cost_usd, 4) if cost_usd is not None else None),
             kind=kind,
         )
-        (self.layouts / v.filename).write_text(
-            json.dumps(layout, ensure_ascii=False, indent=2)
-        )
+        safeio.write_text(self.layouts / v.filename,
+                          json.dumps(layout, ensure_ascii=False, indent=2))
         if raw is not None:
-            (self.layouts / v.raw_filename).write_text(
-                json.dumps(raw, ensure_ascii=False, indent=2))
-        self.index_path.write_text(
-            json.dumps([asdict(x) for x in vs + [v]], ensure_ascii=False, indent=2)
-        )
+            safeio.write_text(self.layouts / v.raw_filename,
+                              json.dumps(raw, ensure_ascii=False, indent=2))
+        safeio.write_text(self.index_path,
+                          json.dumps([asdict(x) for x in vs + [v]], ensure_ascii=False, indent=2))
         return v
 
     def rollback(self, to_version: int) -> Version:

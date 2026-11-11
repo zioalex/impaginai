@@ -484,6 +484,27 @@ def engadin_run_fixes(groups):
             assert secret not in red and "fromtheenvironment" not in red, red
             keystore.delete_key("openrouter")
             assert keystore.stored("openrouter") is None
+        # A named key goes only to its own host: the words in a path do not count.
+        assert keystore.slot_for("openai", "https://evil.example/api.openai.com") == "other"
+        assert keystore.slot_for("openai", "https://openrouter.ai.evil.example/v1") == "other"
+        assert keystore.slot_for("openai", "https://api.openai.com/v1") == "openai"
+        assert keystore.slot_for("openai", "https://openrouter.ai/api/v1") == "openrouter"
+        os.environ["OPENAI_API_KEY"] = "sk-openai-fromtheenvironment00"
+        p = providers.resolve(base_url="https://evil.example/api.openai.com/v1", model="x")
+        assert p.api_key is None, "OPENAI_API_KEY was handed to another host"
+        p = providers.resolve(base_url="openai", model="x")
+        assert p.api_key == "sk-openai-fromtheenvironment00"
+        os.environ.pop("OPENAI_API_KEY")
+        # State files are replaced whole: a failed write leaves the old content.
+        import safeio
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "overrides.yaml"
+            safeio.write_text(f, "first")
+            try:
+                safeio.write_text(f, 12345)          # not text: the write fails
+            except TypeError:
+                pass
+            assert f.read_text() == "first" and list(Path(td).iterdir()) == [f]
         # The project was renamed: keys stored under the old folder name
         # follow it, permissions intact, and a folder under the new name wins.
         saved_home = os.environ.get("HOME")
