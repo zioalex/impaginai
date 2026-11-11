@@ -49,6 +49,9 @@ SPLITS = {
 }
 
 
+# A page of similar photographs gives up as little as it can: one photograph.
+SPLITS_SIMILAR = {"quad": ("trio-feature", "solo"), "trio-feature": ("duo-stack", "solo")}
+
 SINGLES = ("solo", "solo-air")
 
 
@@ -60,6 +63,7 @@ class Page:
     stamp: str | None = None
     note: str | None = None
     caption_fallback: dict = field(default_factory=dict)
+    similar: bool = False        # photographs of one scene, composed on purpose
 
 
 def _pages_of(sp: dict) -> list[Page]:
@@ -112,25 +116,35 @@ def _split_one(pages: list[Page], together: set[str] = frozenset()) -> bool:
 
     A split that would leave a photograph the user wants composed (`together`)
     alone on its page is never made."""
+    def rule(p: Page):
+        return (SPLITS_SIMILAR if p.similar else SPLITS).get(p.comp)
+
     def ok(p: Page) -> bool:
-        if p.comp not in SPLITS:
+        if rule(p) is None:
             return False
-        n = compose.COMPOSITIONS[SPLITS[p.comp][0]].slots
+        n = compose.COMPOSITIONS[rule(p)[0]].slots
         for part in (p.slots[:n], p.slots[n:]):
             if len(part) == 1 and part[0]["photo_id"] in together:
                 return False
         return True
 
+    # A page of similar photographs was composed on purpose: split any other
+    # page first, and that one only when nothing else can give.
     best = None
-    for i, p in enumerate(pages):
-        if ok(p) and (best is None or len(p.slots) > len(pages[best].slots)):
-            best = i
+    for pass_similar in (False, True):
+        for i, p in enumerate(pages):
+            if p.similar and not pass_similar:
+                continue
+            if ok(p) and (best is None or len(p.slots) > len(pages[best].slots)):
+                best = i
+        if best is not None:
+            break
     if best is None:
         return False
     p = pages[best]
-    a, b = SPLITS[p.comp]
+    a, b = rule(p)
     n = compose.COMPOSITIONS[a].slots
-    first = Page(a, p.slots[:n], p.section_id, p.stamp, p.note)
+    first = Page(a, p.slots[:n], p.section_id, p.stamp, p.note, similar=p.similar)
     second = Page(b, p.slots[n:], p.section_id, None, p.note)
     pages[best:best + 1] = [first, second]
     return True
@@ -192,6 +206,141 @@ def _compose_flagged(pages: list[Page], together: set[str], by_photo: dict,
     return moved
 
 
+# Pages that may be folded into a page of similar photographs. Full-bleed
+# pages are left alone: those are meant to be big.
+GROUPABLE = {"solo", "solo-air", "duo-stack", "duo-offset", "trio-feature", "trio-column"}
+SIMILAR_WITHIN_S = 45 * 60
+_STOP = {"with", "from", "over", "under", "near", "into", "their", "there", "this", "that",
+         "photo", "photograph", "view", "shot", "scene", "image", "some", "other", "very"}
+
+
+def _words(text: str) -> set[str]:
+    import re as _re
+
+    return {w for w in _re.findall(r"[a-zà-ÿ]{4,}", (text or "").lower()) if w not in _STOP}
+
+
+def similar(a: str, b: str, features: dict, by_photo: dict, taken: dict) -> bool:
+    """Two photographs of the same scene: the same place and moment (group),
+    taken within SIMILAR_WITHIN_S of each other, and the vision pass saw the
+    same kind of scene, a shared subject, or the same people."""
+    ga, gb = by_photo.get(a), by_photo.get(b)
+    if ga is None or ga is not gb:
+        return False
+    ta, tb = taken.get(a), taken.get(b)
+    if ta and tb:
+        from datetime import datetime
+
+        try:
+            if abs((datetime.fromisoformat(ta) - datetime.fromisoformat(tb)).total_seconds()) \
+                    > SIMILAR_WITHIN_S:
+                return False
+        except ValueError:
+            pass
+    fa, fb = features.get(a) or {}, features.get(b) or {}
+    if fa.get("who") and fa.get("who") == fb.get("who"):
+        return True
+    if _words(fa.get("subject", "")) & _words(fb.get("subject", "")):
+        return True
+    return bool(fa.get("scene")) and fa.get("scene") == fb.get("scene")
+
+
+def _group_similar(pages: list[Page], features: dict, by_photo: dict, taken: dict,
+                   strength: dict, alone: set[str], room) -> list[int]:
+    """Fold runs of pages showing the same scene into one page of three or
+    four photographs, the strongest as the feature. `room(n)` says whether a
+    book of n pages is still long enough. Returns where pages were made."""
+    made = []
+    i = 0
+    while i < len(pages):
+        p = pages[i]
+        ids = [s["photo_id"] for s in p.slots]
+        if p.comp not in GROUPABLE or any(x in alone for x in ids):
+            i += 1
+            continue
+        j = i + 1
+        while j < len(pages):
+            q = pages[j]
+            qids = [s["photo_id"] for s in q.slots]
+            if (q.comp not in GROUPABLE or q.stamp or len(ids) + len(qids) > 4
+                    or any(x in alone for x in qids)
+                    or not all(similar(x, y, features, by_photo, taken)
+                               for x in ids for y in qids)):
+                break
+            ids += qids
+            j += 1
+        if j - i > 1 and len(ids) >= 3 and room(len(pages) - (j - i - 1)):
+            slots = [s for pg in pages[i:j] for s in pg.slots]
+            slots.sort(key=lambda s: (-(strength.get(s["photo_id"]) or 0),
+                                      taken.get(s["photo_id"]) or ""))
+            pages[i:j] = [Page("trio-feature" if len(slots) == 3 else "quad", slots,
+                               p.section_id, p.stamp, p.note, similar=True)]
+            made.append(i)
+        i += 1
+    return made
+
+
+def protect_subjects(layout: dict, keeps: dict, aspects: dict, page_aspect: float) -> list[str]:
+    """A photograph set to the edges is cropped to the page's shape. When that
+    crop would cut the people or the main subject (its keep-box is wider or
+    taller than what stays visible), the page holds it inside the margins
+    instead — whole, never cut."""
+    notes = []
+    for sp in layout.get("spreads", []):
+        name = sp.get("template", "")
+        spec = T.REGISTRY.get(name)
+        if spec is None or not spec.pages or "bleed" not in spec.pages:
+            continue
+        a, b = spec.pages
+        opts = sp.get("options") or {}
+        right_first = opts.get("side", "left") == "right" and not name.startswith("front")
+        left, right = (b, a) if right_first else (a, b)
+        n_left = compose.COMPOSITIONS[left].slots
+        changed = False
+        for side, comp in (("left", left), ("right", right)):
+            if comp != "bleed":
+                continue
+            idx = 0 if side == "left" else n_left
+            slots = sp.get("slots") or []
+            if idx >= len(slots):
+                continue
+            pid = slots[idx]["photo_id"]
+            box, asp = keeps.get(pid), aspects.get(pid)
+            if not box or not asp:
+                continue
+            vx, vy = (page_aspect / asp, 1.0) if asp > page_aspect else (1.0, asp / page_aspect)
+            if box[2] - box[0] <= vx + 0.01 and box[3] - box[1] <= vy + 0.01:
+                continue
+            if side == "left":
+                left = "solo"
+            else:
+                right = "solo"
+            changed = True
+            notes.append(f"{pid}: kept inside the margins so its subject is not cut")
+        if not changed:
+            continue
+        if name.startswith("front:"):
+            sp["template"] = T.front_framed_name(right)
+            continue
+        new, o = _template_for(left, right)
+        sp["template"] = new
+        sp["options"] = {**opts, **o}
+    return notes
+
+
+def attach_keeps(layout: dict, keeps: dict) -> None:
+    """Each slot's keep-box, for the renderer (options.keeps, in slot order)."""
+    for sp in layout.get("spreads", []):
+        slots = sp.get("slots") or []
+        if not slots:
+            continue
+        ks = [keeps.get(s["photo_id"]) for s in slots]
+        if any(ks):
+            sp.setdefault("options", {})["keeps"] = ks
+        else:
+            (sp.get("options") or {}).pop("keeps", None)
+
+
 def _take_out(pages: list[Page], pid: str) -> None:
     """Remove a photograph from every page, lightening or dropping the page."""
     for i in range(len(pages) - 1, -1, -1):
@@ -246,7 +395,8 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
            strength: dict | None = None, together: set[str] | None = None,
            alone: set[str] | None = None, no_bleed: set[str] | None = None,
            density: str = "balanced", use_all: bool = False, place_names: bool = True,
-           split_short: bool = True) -> list[str]:
+           split_short: bool = True, include: set[str] | None = None,
+           features: dict | None = None) -> list[str]:
     """Rebuild the spreads with no empty pages. Returns a log.
 
     `spare` lists photo ids the layout left out that may still be used, in
@@ -277,7 +427,14 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
     together, "dense" also folds a single into a neighbouring pair of the same
     moment; `use_all` brings every photograph the design left out into the
     book; `place_names` False prints no place names; `split_short` False keeps the
-    compositions and pads a short book with blank pages instead."""
+    compositions and pads a short book with blank pages instead.
+
+    `include` lists photographs that must be in the book although the design
+    left them out — the ones added after the model last saw the album.
+
+    `features` maps photo id to what the vision pass saw ({"scene", "subject",
+    "who"}): runs of three or four photographs of the same scene, moment and
+    place are then composed on one page."""
     spreads = layout.get("spreads", [])
     if not spreads:
         return []
@@ -438,7 +595,8 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
     # A photograph the user wants composed is in the book, whatever the
     # design decided.
     on_pages = {s["photo_id"] for p in pages for s in p.slots}
-    brought = [pid for pid in (spare or []) if (use_all or pid in together)
+    brought = [pid for pid in (spare or [])
+               if (use_all or pid in together or pid in (include or ()))
                and pid not in on_pages and pid != pick]
     for pid in brought:
         insert_solo(pid)
@@ -472,6 +630,12 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
             pages[i:i + 2] = [Page("trio-feature", a.slots + b.slots, a.section_id,
                                    a.stamp, a.note)]
         i += 1
+
+    grouped = []
+    if features and density != "airy":
+        grouped = _group_similar(pages, features, by_photo, taken or {}, strength or {},
+                                 set(alone or ()),
+                                 lambda n: total(n) >= min_pages)
 
     composed = _compose_flagged(pages, together, by_photo, set(alone or ()) - together)
 
@@ -556,6 +720,8 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
            + (f", {lone} page(s) left empty" if lone else ", no empty pages")]
     if brought:
         log.append(f"brought into the book (your choice): {', '.join(brought)}")
+    if grouped:
+        log.append(f"{len(grouped)} page(s) of similar photographs composed together")
     if composed:
         log.append(f"composed with other photographs (your choice): {', '.join(composed)}")
     if added:

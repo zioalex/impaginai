@@ -238,8 +238,17 @@ def finish(data: dict, ov, groups, photos, lab=None) -> dict:
                        strength={p.id: p.strength for p in photos},
                        together=ov.composed(),
                        alone={pid for pid, o in ov.by_id.items() if o.size == "full-page"},
-                       no_bleed={p.id for p in photos if (p.can or {}).get("full-page") == "no"})
+                       no_bleed={p.id for p in photos if (p.can or {}).get("full-page") == "no"},
+                       features={p.id: {"scene": p.scene, "subject": p.subject, "who": p.who}
+                                 for p in photos})
     refocused = PG.apply_focal(data, {p.id: p for p in photos})
+    keeps = {p.id: p.keep for p in photos if p.keep}
+    if lab is not None:
+        g = R.geometry_for(lab, (data.get("meta") or {}).get("format") or "21x21")
+        fb = g.full_bleed("left")
+        notes += PG.protect_subjects(data, keeps, {p.id: p.width / p.height for p in photos},
+                                     fb.w / fb.h)
+    PG.attach_keeps(data, keeps)
     import templates_lib
     templates_lib.attach_aspects(data.get("spreads", []),
                                  {p.id: (p.width, p.height) for p in photos})

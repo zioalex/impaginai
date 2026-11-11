@@ -80,6 +80,8 @@ OPTIONS: list[Option] = [
                 "composed pages; the default.\n"
                 "Dense — about 3–4 per page. Photographs of one moment are grouped "
                 "on composed pages; fewer pages, smaller pictures.\n"
+                "With Balanced and Dense, three or four photographs of the same scene "
+                "and moment are composed together on one page.\n"
                 "Photographs you mark “Always with other photos” or “Full page” "
                 "keep that, whatever is chosen here."),
     Option("selection", "book", "Which photos", "best", "redesign", "choice",
