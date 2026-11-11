@@ -206,6 +206,10 @@ def _downgrade(template: str, needed: int) -> str | None:
     return None
 
 
+def _alnum(s: str) -> str:
+    return "".join(c for c in s.lower() if c.isalnum())
+
+
 def match_id(pid: str, known) -> str | None:
     """The real photo id the model meant, when it wrote one that does not
     exist — `WA0019` for `IMG-20260805-WA0019`, a dropped extension, a case
@@ -218,6 +222,10 @@ def match_id(pid: str, known) -> str | None:
         [k for k in known if k.lower() == low],
         [k for k in known if len(low) >= 3 and (k.lower().endswith(low) or low.endswith(k.lower()))],
         [k for k in known if len(low) >= 4 and low in k.lower()],
+        # `IMG_20260805-WA0019` for `IMG-20260805-WA0019`: the right letters
+        # and digits with a separator swapped. Checked before the fuzzy match,
+        # which gives up when neighbours (WA0018, WA0020) look just as close.
+        [k for k in known if _alnum(k) == _alnum(low)],
     ):
         if len(cand) == 1:
             return cand[0]

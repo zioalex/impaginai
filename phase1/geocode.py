@@ -177,14 +177,21 @@ class Geocoder:
 # network call in the place pipeline; `online=False` (--offline-places) skips it.
 
 # The public instances are busy; one answers when the other is overloaded.
-OVERPASS_URLS = ("https://overpass-api.de/api/interpreter",
-                 "https://overpass.kumi.systems/api/interpreter")
+OVERPASS_URLS = ["https://overpass-api.de/api/interpreter",
+                 "https://overpass.private.coffee/api/interpreter",
+                 "https://overpass.kumi.systems/api/interpreter"]
 FEATURE_RADIUS_M = 2500
-TIMEOUT_S = 12.0
+# Longer than the 15 s the query allows the server: giving up first (it was
+# 12 s) threw away answers that were on their way.
+TIMEOUT_S = 20.0
 # After a failure, stop asking for this long. Every reload of the editor used
 # to try again (and wait out the timeout again), printing the same line each time.
 COOLDOWN_S = 15 * 60
 _DOWN_UNTIL = 0.0
+# A place that failed waits longer than the general cooldown, so the next
+# round starts with the others instead of the same slow one.
+CELL_COOLDOWN_S = 2 * 60 * 60
+_CELL_RETRY: dict[str, float] = {}
 
 # kind of feature -> how strongly it names a place (lower wins at equal distance)
 _KINDS = {
@@ -196,7 +203,7 @@ _KINDS = {
 _QUERY = """[out:json][timeout:15];
 (
   nwr(around:{r},{lat},{lon})["natural"~"^(glacier|water|peak|valley|bay|beach)$"]["name"];
-  nwr(around:{r},{lat},{lon})["waterway"~"^(river|waterfall)$"]["name"];
+  nw(around:{r},{lat},{lon})["waterway"~"^(river|waterfall)$"]["name"];
   nwr(around:{r},{lat},{lon})["mountain_pass"="yes"]["name"];
   nwr(around:{r},{lat},{lon})["tourism"~"^(viewpoint|attraction)$"]["name"];
   nwr(around:{r},{lat},{lon})["historic"~"^(castle|monument)$"]["name"];
@@ -226,13 +233,16 @@ def _overpass(lat: float, lon: float, language: str | None, timeout: float = TIM
 
     q = _QUERY.format(r=FEATURE_RADIUS_M, lat=f"{lat:.4f}", lon=f"{lon:.4f}")
     data, last = None, None
-    for url in OVERPASS_URLS:
+    for url in list(OVERPASS_URLS):
         req = urllib.request.Request(
             url, data=urllib.parse.urlencode({"data": q}).encode(),
             headers={"User-Agent": "impaginai (self-hosted)"})
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 data = json.loads(r.read().decode("utf-8"))
+            if url != OVERPASS_URLS[0]:      # ask the one that answered first next time
+                OVERPASS_URLS.remove(url)
+                OVERPASS_URLS.insert(0, url)
             break
         except Exception as exc:
             last = exc
@@ -270,7 +280,9 @@ class Features:
         global _DOWN_UNTIL
         k = _feature_key(gps)
         if k not in self.cache:
-            if not self.online or self.failed or time.monotonic() < _DOWN_UNTIL:
+            now = time.monotonic()
+            if (not self.online or self.failed or now < _DOWN_UNTIL
+                    or now < _CELL_RETRY.get(k, 0.0)):
                 return []
             try:
                 # An empty answer is cached too: "nothing named here" is an
@@ -281,6 +293,7 @@ class Features:
                       f"trying again in {COOLDOWN_S // 60} minutes")
                 self.failed = True
                 _DOWN_UNTIL = time.monotonic() + COOLDOWN_S
+                _CELL_RETRY[k] = time.monotonic() + CELL_COOLDOWN_S
                 return []
             self._save()
         found = []
