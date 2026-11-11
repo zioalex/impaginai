@@ -7,7 +7,7 @@ only when there is not.
 Stored keys live per user, outside every album folder (so an album can be
 zipped and shared), in a file only that user can read:
 
-    $ALBUM_CONFIG_DIR/keys.json         (default ~/.config/photo_album_maker)
+    $ALBUM_CONFIG_DIR/keys.json         (default ~/.config/impaginai)
     {"openrouter": "sk-or-...", "anthropic": "sk-ant-..."}
 
 Nothing in this module returns a key to a caller that displays things: the
@@ -35,9 +35,25 @@ SLOTS: dict[str, tuple[str, tuple[str, ...]]] = {
 _EXTRA: set[str] = set()      # keys seen at runtime (e.g. --api-key), for redact()
 
 
+APP_DIR = "impaginai"
+OLD_APP_DIR = "photo_album_maker"      # the project's name before the rename
+
+
 def config_dir() -> Path:
     d = os.environ.get("ALBUM_CONFIG_DIR")
-    return Path(d) if d else Path.home() / ".config" / "photo_album_maker"
+    if d:
+        return Path(d)
+    base = Path.home() / ".config"
+    new, old = base / APP_DIR, base / OLD_APP_DIR
+    if not new.exists() and old.is_dir():
+        # Carry stored keys and recent albums over from the old name, once.
+        # If the move is refused, keep using the old folder rather than
+        # start empty and make the keys look lost.
+        try:
+            old.rename(new)
+        except OSError:
+            return old
+    return new
 
 
 def _path() -> Path:
