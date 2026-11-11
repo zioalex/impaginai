@@ -187,6 +187,13 @@ def T_pages(sp: dict) -> bool:
     return bool(spec and spec.pages) and bool(sp.get("slots"))
 
 
+def T_pages_of(sp: dict) -> tuple[str, str]:
+    """The (left, right) page compositions of a spread, as the template reads."""
+    import templates_lib
+    a, b = templates_lib.REGISTRY[sp["template"]].pages
+    return (b, a) if (sp.get("options") or {}).get("side") == "right" else (a, b)
+
+
 def main() -> int:
     test_loop.ensure_fixtures()
     fake = FakeModel(test_loop.good_layout())
@@ -374,6 +381,79 @@ def main() -> int:
             print("editor refusal reported, previous version kept: ok")
         finally:
             ed.stop()
+
+        # 4a. what the editor counts as used is in the design: a photograph
+        #     the model never placed, marked full page, is on a page; one
+        #     marked "two pages" spans both; one too small for that is refused
+        short = test_loop.good_layout()
+        grid = next(sp for sp in short["spreads"] if sp["template"] == "grid-four")
+        grid["template"] = "trio-page"
+        grid["slots"] = [x for x in grid["slots"] if x["photo_id"] != "p012"]
+        fake2 = FakeModel(short)
+        url2 = fake2.start()
+        ed5 = Editor(tmp / "album5", write_models(tmp / "m5.yaml", url2), tmp / "editor5.log")
+        try:
+            job = ed5.build()
+            assert job.get("done") and not job.get("error"), job
+            a5 = tmp / "album5"
+
+            def latest():
+                return json.loads(sorted((a5 / "layouts").glob("v0*[0-9].json"))[-1].read_text())
+
+            ed5.send("PATCH", "/api/photos/p012", {"size": "full-page"})
+            j = ed5.job("/api/rerender")
+            assert j.get("done") and not j.get("error"), j
+            cur = latest()
+            hosts = [(sp, i) for sp in cur["spreads"] for i, s in enumerate(sp["slots"]) if s["photo_id"] == "p012"]
+            assert len(hosts) == 1, [sp["template"] for sp in cur["spreads"]]
+            sp12, i12 = hosts[0]
+            pages12 = T_pages_of(sp12)
+            assert pages12[0 if i12 < __import__("compose").COMPOSITIONS[pages12[0]].slots else 1] == "bleed", \
+                f"p012 is not full page: {sp12['template']}"
+            res = j["result"]
+            placed_layout = sorted({s["photo_id"] for sp in cur["spreads"] for s in sp["slots"]})
+            assert res["placed"] == placed_layout, (res["placed"], placed_layout)
+            assert "p012" not in res["not_placed_chosen"]
+            phs = ed5.get("/api/photos")
+            assert {x["id"] for x in phs if x["placed"]} == set(placed_layout), "placed does not match the layout"
+            assert ed5.get("/api/album")["placed"] == placed_layout
+            assert "p012" in (a5 / "renders" / "inner-proof.html").read_text(), "p012 is not in the rendered book"
+
+            # two pages: a high-resolution photograph spans the fold
+            ed5.send("PATCH", "/api/photos/p004", {"size": "spread"})
+            ed5.job("/api/rerender")
+            cur = latest()
+            spans = [sp for sp in cur["spreads"] if sp["template"] == "user-spread"]
+            assert len(spans) == 1 and spans[0]["slots"][0]["photo_id"] == "p004", spans
+            import re
+            html = (a5 / "renders" / "inner-proof.html").read_text()
+            imgs = re.findall(r'<img [^>]*p004[^>]*style="([^"]*)"', html)
+            # (the photograph may also sit on an ordinary page elsewhere)
+            imgs = [x for x in imgs if float(re.search(r"width:([\d.]+)mm", x).group(1)) > 250]
+            drawn = {re.match(r"left:([\d.\-]+)mm;top:([\d.\-]+)mm;width:([\d.]+)mm", x).groups() for x in imgs}
+            assert len(imgs) == 2 and len(drawn) == 1, "one picture should be drawn on both pages: " + str(imgs)
+            left, _, width = (float(v) for v in drawn.pop())
+            assert left < 213 < left + width, (left, width)   # across the 21x21 fold at 213 mm
+            assert ed5.get("/api/report")["pages"] == len(cur["spreads"]) * 2
+            # too small to span: refused with a readable reason
+            try:
+                ed5.send("PATCH", "/api/photos/p013", {"size": "spread"})
+                raise AssertionError("a 700 px photograph was allowed to span two pages")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 400, exc.code
+            p4 = next(x for x in ed5.get("/api/photos") if x["id"] == "p004")
+            assert p4["size"] == "spread" and p4["can"]["spread"] == "ok", p4
+            # "two pages" and "always with other photographs" exclude each other
+            try:
+                ed5.send("PATCH", "/api/photos/p004", {"compose": True})
+                ed5.send("PATCH", "/api/photos/p004", {"size": "spread"})
+                raise AssertionError("spread accepted on a composed photograph")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 400
+        finally:
+            ed5.stop()
+            fake2.stop()
+        print("photographs marked full page / two pages are in the design; placed matches the book: ok")
 
         # 4b. models chosen in the editor (no --models): a preset, a role's
         #     model and effort; High only for the planner; kept in settings
