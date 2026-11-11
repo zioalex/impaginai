@@ -85,6 +85,10 @@ def main() -> int:
     print("crop guard: ok")
 
     adaptive_pages()
+    fuller_pages()
+    compositions_survive(groups)
+    subjects_without_a_box()
+    user_spreads(groups)
     gutter_and_bleed()
     costs_and_places()
     engadin_run_fixes(groups)
@@ -564,6 +568,280 @@ def adaptive_pages():
     fixed = T.build("trio-page", g, {})
     assert [b.rect for b in r.slots[:3]] != [b.rect for b in fixed.slots[:3]]
     print("adaptive pages: ok")
+
+
+PHOTO_DIR = ROOT.parent / "phase0" / "photos"
+
+
+def _dims() -> dict:
+    from PIL import Image
+
+    test_loop_ensure()
+    return {f.stem: Image.open(f).size for f in PHOTO_DIR.glob("*.jpg")}
+
+
+def test_loop_ensure():
+    import test_loop
+
+    test_loop.ensure_fixtures()
+
+
+def _img_rects(html: str) -> list[Rect]:
+    """The rectangles of the <img> tags in one page's HTML, as drawn."""
+    import re
+
+    out = []
+    for m in re.finditer(r'<img [^>]*style="left:([\d.\-]+)mm;top:([\d.\-]+)mm;'
+                         r'width:([\d.]+)mm;height:([\d.]+)mm;', html):
+        x, y, w, h = (float(v) for v in m.groups())
+        out.append(Rect(x, y, w, h))
+    return out
+
+
+def _page_html(g, sp: dict, side: str, dims: dict) -> str:
+    """One page of one spread as the renderer draws it."""
+    from schema import Layout as L
+
+    lay = {"meta": {"title": "t", "format": "28x21", "spread_count": 1}, "sections": [],
+           "spreads": [{**sp, "index": 1, "section_id": None}]}
+    spread = L.model_validate(lay).spreads[0]
+    T.attach_aspects([spread], dims)
+    rendered = T.build(spread.template, g, spread.options)
+    paths = {s.photo_id: PHOTO_DIR / f"{s.photo_id}.jpg" for s in spread.slots}
+    return R.canvas_html(spread, rendered, g, paths, g.page_window(side))
+
+
+def fuller_pages():
+    """White space: a photograph alone on its page fills the page's content
+    area, the compositor and the renderer agree on its rectangle, and a
+    repacked book is mostly photograph."""
+    from geometry import CROP_KEEP_SINGLE, MIN_CROP_KEEP
+
+    g = R.geometry_for(LAB, "28x21")
+    dims = _dims()
+
+    # fill_ratio_single: a 4:3 landscape fills at least 80% of the text column;
+    # a portrait, which used to be shrunk back to a narrow strip, at least 60%
+    # as drawn.
+    rects, _ = compose.adaptive(g, "right", [4 / 3], [4000])
+    assert compose.fill_ratio(g, "right", rects) >= 0.80, compose.fill_ratio(g, "right", rects)
+    sp = {"template": "single-centered", "slots": [
+        {"photo_id": "p002", "focal": [0.5, 0.5], "caption": None, "caption_position": "none"}],
+        "options": {}}
+    drawn = _img_rects(_page_html(g, sp, "right", dims))
+    assert len(drawn) == 1
+    portrait = compose.fill_ratio(g, "right", drawn)
+    assert portrait >= 0.60, f"a portrait fills only {portrait:.0%} of the page"
+    # no caption on the page: no band reserved at its foot
+    with_band, _ = compose.adaptive(g, "right", [1.0])
+    no_band, _ = compose.adaptive(g, "right", [1.0], band=False)
+    assert no_band[0].h > with_band[0].h + 5, (no_band, with_band)
+    assert g.margin_outer < g.page_w * 0.05 and g.margin_top < g.page_h * 0.05
+
+    # fit_rect_agrees_with_adaptive: what compose.adaptive sized is what is
+    # drawn (the renderer used to fit it again with a stricter crop limit)
+    for pid in ("p002", "p007", "p005", "p001", "p004"):
+        sp = {"template": "single-centered", "slots": [
+            {"photo_id": pid, "focal": [0.5, 0.5], "caption": None, "caption_position": "none"}],
+            "options": {}}
+        from schema import Layout as L
+
+        spread = L.model_validate({"meta": {"title": "t", "format": "28x21", "spread_count": 1},
+                                   "spreads": [{**sp, "index": 1, "section_id": None}]}).spreads[0]
+        T.attach_aspects([spread], dims)
+        slot = T.build(spread.template, g, spread.options).slots[0].rect
+        drawn = _img_rects(_page_html(g, sp, "right", dims))[0]
+        assert abs(drawn.w - slot.w) < 0.1 and abs(drawn.h - slot.h) < 0.1, (pid, slot, drawn)
+    assert CROP_KEEP_SINGLE < MIN_CROP_KEEP
+
+    # a repacked book: the pages that carry photographs are mostly photograph
+    groups = [NS(id="g1", photo_ids=["p001", "p015", "p005", "p002", "p003"], place="A", date_label="1"),
+              NS(id="g2", photo_ids=["p006", "p008", "p009", "p010", "p004"], place="B", date_label="2"),
+              NS(id="g3", photo_ids=["p011", "p012", "p014", "p007"], place="C", date_label="3")]
+    lay = good_layout()
+    PG.repack(lay, groups, LAB)
+    T.attach_aspects(lay["spreads"], dims)
+    fills = []
+    for sp in lay["spreads"]:
+        html_l = _img_rects(_page_html(g, sp, "left", dims)) if sp["slots"] else []
+        html_r = _img_rects(_page_html(g, sp, "right", dims)) if sp["slots"] else []
+        for side, rs in (("left", html_l), ("right", html_r)):
+            if rs:
+                fills.append(min(1.0, compose.fill_ratio(g, side, rs)))
+    mean = sum(fills) / len(fills)
+    assert len(fills) >= 14 and mean >= 0.6, f"mean fill {mean:.0%} over {len(fills)} pages"
+    print(f"fuller pages: 4:3 {compose.fill_ratio(g, 'right', rects):.0%}, portrait {portrait:.0%}, "
+          f"book mean {mean:.0%}: ok")
+
+
+def compositions_survive(groups):
+    """Trios and quads are not the first thing the 24-page minimum breaks."""
+    def single(i, pid, section="s1"):
+        return {"index": i, "section_id": section, "template": "single-centered",
+                "slots": [{"photo_id": pid, "focal": [.5, .5], "caption": None,
+                           "caption_position": "below"}], "text": None, "options": {}, "note": None}
+
+    ids = [f"q{i:02d}" for i in range(1, 16)]
+    gs = [NS(id="g1", photo_ids=ids, place="Lej", date_label="")]
+    feats = {x: {"scene": "other", "subject": "", "who": ""} for x in ids}
+    for x in ids[4:8]:
+        feats[x] = {"scene": "seascape", "subject": "lake", "who": ""}
+
+    def book():
+        return {"meta": {"title": "t"}, "spreads": [single(i + 1, x) for i, x in enumerate(ids)]}
+
+    def comps(lay):
+        out = []
+        for sp in lay["spreads"]:
+            spec = T.REGISTRY[sp["template"]]
+            a, b = spec.pages or ("blank", "blank")
+            if (sp.get("options") or {}).get("side") == "right" and not sp["template"].startswith("front"):
+                a, b = b, a
+            if sp["template"].startswith("front"):
+                a, b = "bleed", spec.pages[1]
+            out += [a, b]
+        return out
+
+    # trio_quad_survive_minimum: similar photographs, 15 photos, 24-page minimum
+    lay = book()
+    PG.repack(lay, gs, LAB, front=ids[0], features=feats, taken={x: f"2026-08-05T10:{i:02d}" for i, x in enumerate(ids)})
+    assert len(lay["spreads"]) * 2 >= LAB["pages"]["min"]
+    assert any(c in ("trio-feature", "trio-column", "quad") for c in comps(lay)), comps(lay)
+    # ... but a book that has just enough photographs for the minimum is not
+    # given empty pages to keep that composition: it gives way instead
+    full = [f"r{i:02d}" for i in range(1, 25)]          # 24 photographs, 24 pages
+    fg = [NS(id="g1", photo_ids=full, place="Lej", date_label="")]
+    ff = {x: {"scene": "other", "subject": "", "who": ""} for x in full}
+    for x in full[4:8]:
+        ff[x] = {"scene": "seascape", "subject": "lake", "who": ""}
+    lay = {"meta": {"title": "t"}, "spreads": [single(i + 1, x) for i, x in enumerate(full)]}
+    PG.repack(lay, fg, LAB, front=full[0], features=ff,
+              taken={x: f"2026-08-05T10:{i:02d}" for i, x in enumerate(full)})
+    assert len(lay["spreads"]) * 2 == LAB["pages"]["min"], len(lay["spreads"])
+    assert "blank" not in comps(lay) and "text" not in comps(lay), comps(lay)
+    assert sorted({s["photo_id"] for sp in lay["spreads"] for s in sp["slots"]}) == full
+    # ... and the photographs the user marked, when they sit side by side
+    lay = book()
+    PG.repack(lay, gs, LAB, front=ids[0], together=set(ids[9:13]))
+    assert len(lay["spreads"]) * 2 >= LAB["pages"]["min"]
+    assert any(c in ("trio-feature", "trio-column", "quad") for c in comps(lay)), comps(lay)
+    assert all(x in {s["photo_id"] for sp in lay["spreads"] for s in sp["slots"]} for x in ids)
+    # even with nothing marked, the lighter pages give way first: a book made
+    # of pairs and one quad keeps the quad
+    lay = {"meta": {"title": "t"}, "spreads": [
+        {"index": 1, "section_id": "s1", "template": "two-up-equal", "slots": [
+            {"photo_id": x, "focal": [.5, .5], "caption": None, "caption_position": "below"}
+            for x in ids[:2]], "text": None, "options": {}, "note": None},
+        {"index": 2, "section_id": "s1", "template": "grid-four", "slots": [
+            {"photo_id": x, "focal": [.5, .5], "caption": None, "caption_position": "below"}
+            for x in ids[2:6]], "text": None, "options": {}, "note": None},
+        {"index": 3, "section_id": "s1", "template": "duo-page", "slots": [
+            {"photo_id": x, "focal": [.5, .5], "caption": None, "caption_position": "below"}
+            for x in ids[6:8]], "text": None, "options": {}, "note": None},
+        {"index": 4, "section_id": "s1", "template": "duo-page", "slots": [
+            {"photo_id": x, "focal": [.5, .5], "caption": None, "caption_position": "below"}
+            for x in ids[8:10]], "text": None, "options": {}, "note": None}]}
+    PG.repack(lay, gs, LAB, front=ids[0], spare=ids[10:])
+    assert "quad" in comps(lay) or "trio-feature" in comps(lay), comps(lay)
+
+    # compose_flagged_makes_trio: three side by side become one trio, directly
+    pages = [PG.Page("solo", [{"photo_id": x, "focal": [.5, .5], "caption": None,
+                               "caption_position": "below"}]) for x in ids[:6]]
+    moved = PG._compose_flagged(pages, set(ids[1:4]), {})
+    assert [(p.comp, len(p.slots)) for p in pages] == \
+        [("solo", 1), ("trio-feature", 3), ("solo", 1), ("solo", 1)], \
+        [(p.comp, len(p.slots)) for p in pages]
+    assert sorted(moved) == sorted(ids[1:4])
+    print("trios and quads survive the page minimum; three marked photographs make one trio: ok")
+
+
+def subjects_without_a_box():
+    """A person the vision pass saw but drew no box around is still not cut."""
+    # people, no box: a fallback box around the focal point
+    box = PG.fallback_keep((0.9, 0.5), 3)
+    assert box and box[2] <= 1.0 and box[0] >= 0 and box[0] < 0.9 < box[2], box
+    assert PG.fallback_keep((0.5, 0.5), 0) is None
+    one = PG.fallback_keep((0.5, 0.5), 1)
+    assert (one[2] - one[0]) < (box[2] - box[0]), "a group is a wider box than one person"
+    photos = [NS(id="a", keep=None, suggested_focal=(0.9, 0.5), people=3),
+              NS(id="b", keep=[0.1, 0.1, 0.4, 0.9], suggested_focal=(0.2, 0.5), people=1),
+              NS(id="c", keep=None, suggested_focal=(0.5, 0.5), people=0)]
+    keeps = PG.derive_keeps(photos)
+    assert keeps["a"] == box and keeps["b"] == [0.1, 0.1, 0.4, 0.9] and "c" not in keeps
+    # subject_not_cut_without_keepbox: a portrait of three people set to the
+    # edges of a landscape page is held inside the margins, not cropped
+    lay = {"meta": {}, "spreads": [
+        {"index": 1, "template": "full-bleed-single", "options": {"side": "left"},
+         "slots": [{"photo_id": "a", "focal": [.9, .5], "caption": None, "caption_position": "none"}],
+         "text": None, "section_id": None}]}
+    notes = PG.protect_subjects(lay, {}, {"a": 0.75}, 280 / 210)
+    assert not notes, "without any box nothing is known"
+    notes = PG.protect_subjects(lay, keeps, {"a": 0.75}, 280 / 210)
+    assert notes and "bleed" not in T.REGISTRY[lay["spreads"][0]["template"]].pages, lay["spreads"][0]
+    # the renderer too: a bleeding slot whose box cannot fit shows the whole
+    # photograph inside the margins rather than cutting it
+    g = R.geometry_for(LAB, "28x21")
+    rect, px, py = R.place_photo(g.full_bleed("left"), 0.75, (0.9, 0.5), keep=box, bleeds=True,
+                                 fallback=g.text_column("left"))
+    assert rect != g.full_bleed("left") and rect.x >= g.trim("left").x, rect
+    print("subjects without a keep-box are not cut: ok")
+
+
+def user_spreads(groups):
+    """A photograph set across two pages."""
+    g = R.geometry_for(LAB, "28x21")
+    dims = _dims()
+    spec = T.REGISTRY[T.USER_SPREAD]
+    assert spec.spans_fold and not spec.planner_visible
+    assert T.USER_SPREAD not in [c["template"] for c in T.catalogue_for_prompt(True)]
+    wide = T.build(T.USER_SPREAD, g, {"aspects": [2.4]}).slots[0]
+    assert wide.bleeds and wide.rect == g.spread_bleed and g.spans_fold(wide.rect)
+    tall = T.build(T.USER_SPREAD, g, {"aspects": [1.5]}).slots[0]
+    assert not tall.bleeds and g.spans_fold(tall.rect) and abs(
+        (tall.rect.x + tall.rect.x2) / 2 - g.fold_x) < 1, tall.rect
+
+    lay = good_layout()
+    lay["spreads"][2]["template"] = T.USER_SPREAD
+    lay["spreads"][2]["slots"] = lay["spreads"][2]["slots"][:1]
+    pid = lay["spreads"][2]["slots"][0]["photo_id"]
+    PG.repack(lay, groups, LAB)
+    Layout.model_validate(lay)
+    at = [i for i, sp in enumerate(lay["spreads"]) if sp["template"] == T.USER_SPREAD]
+    assert len(at) == 1 and lay["spreads"][at[0]]["slots"][0]["photo_id"] == pid, \
+        [sp["template"] for sp in lay["spreads"]]
+    assert [s["photo_id"] for sp in lay["spreads"] for s in sp["slots"]].count(pid) == 1
+    assert len(lay["spreads"]) * 2 >= LAB["pages"]["min"]
+    # still there when the book is short and every other page is taken apart,
+    # and when the spread would be the page facing the front
+    lay2 = good_layout()
+    lay2["spreads"] = [lay2["spreads"][0], dict(lay2["spreads"][2], template=T.USER_SPREAD,
+                                                slots=lay2["spreads"][2]["slots"][:1])] + lay2["spreads"][3:]
+    for i, sp in enumerate(lay2["spreads"], 1):
+        sp["index"] = i
+    lay2["meta"]["spread_count"] = len(lay2["spreads"])
+    PG.repack(lay2, groups, LAB)
+    Layout.model_validate(lay2)
+    assert lay2["spreads"][0]["template"].startswith("front")
+    assert sum(sp["template"] == T.USER_SPREAD for sp in lay2["spreads"]) == 1
+    assert T.REGISTRY[lay2["spreads"][0]["template"]].pages[1] != "blank" or len(lay2["spreads"]) > 1
+    # the validator allows the fold for this template, and only this one
+    import validate
+    from validate import load_photos
+
+    photos = load_photos(PHOTO_DIR)
+    rep = validate.check(Layout.model_validate(lay), photos, g, LAB)
+    assert not [i for i in rep.issues if i.code == "fold-crossing"], \
+        [str(i) for i in rep.issues if i.code == "fold-crossing"]
+    bad = Layout.model_validate(lay)
+    bad.spreads[at[0]].template = "panorama-spread"
+    rep = validate.check(bad, photos, g, LAB)
+    assert [i for i in rep.issues if i.code == "fold-crossing"], "allow_fold_crossing is still off"
+    # rendered: one picture reaches both pages
+    sp = lay["spreads"][at[0]]
+    left, right = (_img_rects(_page_html(g, sp, s, dims)) for s in ("left", "right"))
+    assert len(left) == 1 and len(right) == 1 and left[0] == right[0], (left, right)
+    assert left[0].x < g.fold_x < left[0].x2
+    print("a photograph across two pages: placed once, never split, fold allowed only for it: ok")
 
 
 def gutter_and_bleed():

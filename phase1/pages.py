@@ -49,10 +49,13 @@ SPLITS = {
 }
 
 
-# A page of similar photographs gives up as little as it can: one photograph.
-SPLITS_SIMILAR = {"quad": ("trio-feature", "solo"), "trio-feature": ("duo-stack", "solo")}
-
 SINGLES = ("solo", "solo-air")
+
+# A photograph the user set across both pages (`size: spread`). It travels
+# through the repacker as one page that is two pages wide: never split, merged
+# with another or moved off its place, and always laid out as a spread of its
+# own (templates_lib.USER_SPREAD).
+SPREAD = "spread"
 
 
 @dataclass
@@ -63,7 +66,7 @@ class Page:
     stamp: str | None = None
     note: str | None = None
     caption_fallback: dict = field(default_factory=dict)
-    similar: bool = False        # photographs of one scene, composed on purpose
+    similar: bool = False        # photographs of one scene, composed on purpose (keep_composed)
 
 
 def _pages_of(sp: dict) -> list[Page]:
@@ -84,6 +87,8 @@ def _pages_of(sp: dict) -> list[Page]:
             if compose.COMPOSITIONS[comp].slots and ss:
                 out.append(Page(comp, ss, sec, note=note))
         return out
+    if sp["template"] == T.USER_SPREAD:
+        return [Page(SPREAD, slots[:1], sec, note=note)] if slots else []
     # Text-and-photo templates: keep the photograph as a full-bleed page.
     # The chapter title is carried as a stamp, so it stays on the photograph.
     text = sp.get("text") or {}
@@ -111,16 +116,61 @@ def _blank_pair(page: Page) -> tuple[str, dict]:
     return T.pair_name(page.comp, "blank"), {"side": "left"}
 
 
-def _split_one(pages: list[Page], together: set[str] = frozenset()) -> bool:
-    """Split the densest composed page into two. False when none can split.
+# The last resort before an empty page: a composed page gives up one
+# photograph and stays composed as long as it can.
+SPLITS_GENTLE = {"quad": ("trio-feature", "solo"),
+                 "trio-feature": ("duo-stack", "solo"),
+                 "trio-column": ("duo-stack", "solo")}
 
-    A split that would leave a photograph the user wants composed (`together`)
-    alone on its page is never made."""
+
+def _split_gentle(pages: list[Page], together: set[str], comps, floor: int) -> bool:
+    """Take one photograph off a page of three or four (`comps`), even one of
+    similar photographs; a page of three only while more than `floor` pages of
+    three or four remain. Pages holding a photograph the user wants composed
+    are left alone. False when no page qualifies."""
+    big = sum(1 for p in pages if len(p.slots) >= 3)
+    for i, p in enumerate(pages):
+        if p.comp not in comps or p.comp not in SPLITS_GENTLE or len(p.slots) < 3:
+            continue
+        if any(s["photo_id"] in together for s in p.slots):
+            continue
+        a, b = SPLITS_GENTLE[p.comp]
+        n = compose.COMPOSITIONS[a].slots
+        if len(p.slots) != n + compose.COMPOSITIONS[b].slots:
+            continue
+        if n < 3 and big <= floor:
+            continue
+        pages[i:i + 1] = [Page(a, p.slots[:n], p.section_id, p.stamp, p.note,
+                               similar=p.similar and n >= 3),
+                          Page(b, p.slots[n:], p.section_id, None, p.note)]
+        return True
+    return False
+
+
+def _protected(p: Page, together: set[str]) -> bool:
+    """A page that was composed on purpose (`keep_composed`): made by
+    `_group_similar`, or holding a photograph the user marked "in a
+    composition". The repacker never takes it apart."""
+    return p.similar or any(s["photo_id"] in together for s in p.slots)
+
+
+def _split_one(pages: list[Page], together: set[str] = frozenset(), floor: int = 0,
+               max_slots: int = 4) -> bool:
+    """Split one composed page into two lighter ones. False when none can.
+
+    The lightest composed page goes first: pairs and singles give way before
+    a trio or a quad is broken, so the book keeps its compositions. Never
+    split: a page composed on purpose (`_protected`), one whose split would
+    leave a photograph the user wants composed (`together`) alone, and, while
+    `floor` pages of three or four photographs are all the book has, those.
+    `max_slots` limits the pages considered by their photograph count."""
     def rule(p: Page):
-        return (SPLITS_SIMILAR if p.similar else SPLITS).get(p.comp)
+        return SPLITS.get(p.comp)
 
     def ok(p: Page) -> bool:
-        if rule(p) is None:
+        if rule(p) is None or p.comp == SPREAD or _protected(p, together):
+            return False
+        if len(p.slots) > max_slots:
             return False
         n = compose.COMPOSITIONS[rule(p)[0]].slots
         for part in (p.slots[:n], p.slots[n:]):
@@ -128,23 +178,19 @@ def _split_one(pages: list[Page], together: set[str] = frozenset()) -> bool:
                 return False
         return True
 
-    # A page of similar photographs was composed on purpose: split any other
-    # page first, and that one only when nothing else can give.
+    big = sum(1 for p in pages if len(p.slots) >= 3)
     best = None
-    for pass_similar in (False, True):
-        for i, p in enumerate(pages):
-            if p.similar and not pass_similar:
-                continue
-            if ok(p) and (best is None or len(p.slots) > len(pages[best].slots)):
-                best = i
-        if best is not None:
-            break
+    for i, p in enumerate(pages):
+        if not ok(p) or (len(p.slots) >= 3 and big <= floor):
+            continue
+        if best is None or len(p.slots) < len(pages[best].slots):
+            best = i
     if best is None:
         return False
     p = pages[best]
     a, b = rule(p)
     n = compose.COMPOSITIONS[a].slots
-    first = Page(a, p.slots[:n], p.section_id, p.stamp, p.note, similar=p.similar)
+    first = Page(a, p.slots[:n], p.section_id, p.stamp, p.note)
     second = Page(b, p.slots[n:], p.section_id, None, p.note)
     pages[best:best + 1] = [first, second]
     return True
@@ -162,7 +208,7 @@ HEAVIER = {"bleed": "duo-stack", "solo": "duo-stack", "solo-air": "duo-stack",
 
 
 def _compose_flagged(pages: list[Page], together: set[str], by_photo: dict,
-                     alone: set[str] = frozenset()) -> list[str]:
+                     alone: set[str] = frozenset()) -> list[str]:  # noqa: C901
     """Put every photograph the user marked "in a composition" on a page with
     others: a page carrying it alone is folded into the neighbouring page,
     preferring one of the same place and moment, then the lighter one. This
@@ -172,6 +218,27 @@ def _compose_flagged(pages: list[Page], together: set[str], by_photo: dict,
     settings for that photograph say otherwise: one marked full-page (`alone`)
     keeps its page."""
     moved = []
+    # Three or four marked photographs next to each other make one trio or
+    # quad directly, not a pair that a neighbour then grows by one.
+    i = 0
+    while i < len(pages):
+        run, n = [], 0
+        while (i + len(run) < len(pages)):
+            q = pages[i + len(run)]
+            if (q.comp not in GROUPABLE and q.comp != "bleed") or not q.slots \
+                    or any(s["photo_id"] not in together or s["photo_id"] in alone for s in q.slots) \
+                    or n + len(q.slots) > 4:
+                break
+            run.append(q)
+            n += len(q.slots)
+        if n >= 3 and len(run) > 1:
+            slots = [s for q in run for s in q.slots]
+            pages[i:i + len(run)] = [Page("trio-feature" if n == 3 else "quad", slots,
+                                          run[0].section_id,
+                                          next((q.stamp for q in run if q.stamp), None),
+                                          run[0].note)]
+            moved += [s["photo_id"] for s in slots]
+        i += 1
     i = 0
     while i < len(pages):
         p = pages[i]
@@ -222,21 +289,13 @@ def _words(text: str) -> set[str]:
 
 def similar(a: str, b: str, features: dict, by_photo: dict, taken: dict) -> bool:
     """Two photographs of the same scene: the same place and moment (group),
-    taken within SIMILAR_WITHIN_S of each other, and the vision pass saw the
-    same kind of scene, a shared subject, or the same people."""
+    and the vision pass saw the same kind of scene, a shared subject, or the
+    same people. (They used to need to be within 45 minutes of each other too;
+    a group is already one place on one stretch of the trip, and the time
+    limit kept almost every trio from forming.)"""
     ga, gb = by_photo.get(a), by_photo.get(b)
     if ga is None or ga is not gb:
         return False
-    ta, tb = taken.get(a), taken.get(b)
-    if ta and tb:
-        from datetime import datetime
-
-        try:
-            if abs((datetime.fromisoformat(ta) - datetime.fromisoformat(tb)).total_seconds()) \
-                    > SIMILAR_WITHIN_S:
-                return False
-        except ValueError:
-            pass
     fa, fb = features.get(a) or {}, features.get(b) or {}
     if fa.get("who") and fa.get("who") == fb.get("who"):
         return True
@@ -278,6 +337,39 @@ def _group_similar(pages: list[Page], features: dict, by_photo: dict, taken: dic
             made.append(i)
         i += 1
     return made
+
+
+def fallback_keep(focal, people: int) -> list[float] | None:
+    """A keep-box for a photograph the vision pass saw people in but drew no
+    box around: centred on its focal point, sized by how many people there
+    are (one person is a narrow tall box, a group a wide one). Without it such
+    a photograph is cropped by its focal point alone and the person at the
+    edge of the frame is cut in half."""
+    if not people or people < 1:
+        return None
+    try:
+        fx, fy = float(focal[0]), float(focal[1])
+    except (TypeError, ValueError, IndexError):
+        fx, fy = 0.5, 0.5
+    w = min(0.95, 0.28 + 0.14 * people)
+    h = min(0.9, 0.5 + 0.1 * people)
+    x0 = min(max(fx - w / 2, 0.0), 1.0 - w)
+    y0 = min(max(fy - h / 2, 0.0), 1.0 - h)
+    return [round(x0, 3), round(y0, 3), round(x0 + w, 3), round(y0 + h, 3)]
+
+
+def derive_keeps(photos, keeps: dict | None = None) -> dict:
+    """Every photograph's keep-box: the vision pass's own where it drew one,
+    else `fallback_keep` for a photograph with people in it."""
+    out = dict(keeps or {})
+    for p in photos:
+        if p.id in out and out[p.id]:
+            continue
+        box = getattr(p, "keep", None) or fallback_keep(
+            getattr(p, "suggested_focal", None) or (0.5, 0.5), getattr(p, "people", 0) or 0)
+        if box:
+            out[p.id] = box
+    return out
 
 
 def protect_subjects(layout: dict, keeps: dict, aspects: dict, page_aspect: float) -> list[str]:
@@ -465,7 +557,7 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
     front_page = False
     together = set(together or ()) - ({front} if front else set())
     own = [s["photo_id"] for s in (opening or {}).get("slots") or []]
-    placed = [s["photo_id"] for p in pages for s in p.slots]
+    placed = [s["photo_id"] for p in pages if p.comp != SPREAD for s in p.slots]
     candidates = placed + [x for x in (spare or []) if x not in placed]
     pick = None
     if front and (front in own or front in candidates):
@@ -571,6 +663,10 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
     # front page is one page: the first ordinary page faces it.
     lead = 1 if front_page else 0
 
+    def npg() -> int:
+        """Pages in the list; a two-page spread counts for two."""
+        return len(pages) + sum(1 for p in pages if p.comp == SPREAD)
+
     def total(n_pages: int) -> int:
         if front_page:
             return 2 * ((n_pages + lead + 1) // 2)
@@ -611,7 +707,7 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
         ga = by_photo.get(a.slots[0]["photo_id"]) if a.slots else None
         gb = by_photo.get(b.slots[0]["photo_id"]) if b.slots else None
         if (a.comp in SINGLES and b.comp in SINGLES and not b.stamp
-                and (ga is gb) and total(len(pages) - 1) >= min_pages):
+                and (ga is gb) and total(npg() - 1) >= min_pages):
             pages[i:i + 2] = [Page("duo-stack", a.slots + b.slots, a.section_id,
                                    a.stamp, a.note)]
         i += 1
@@ -624,7 +720,7 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
         gb = by_photo.get(b.slots[0]["photo_id"]) if b.slots else None
         pair = {"duo-stack", "duo-offset"}
         if (ga is gb and ga is not None and not b.stamp
-                and total(len(pages) - 1) >= min_pages
+                and total(npg() - 1) >= min_pages
                 and ((a.comp in pair and b.comp in SINGLES)
                      or (a.comp in SINGLES and b.comp in pair))):
             pages[i:i + 2] = [Page("trio-feature", a.slots + b.slots, a.section_id,
@@ -633,27 +729,73 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
 
     grouped = []
     if features and density != "airy":
+        # Pages of similar photographs are composed even when that leaves the
+        # book short of the lab minimum: they are kept whole (`_protected`),
+        # and the photographs the design left out make up the difference; only
+        # when there are none does such a page give up a photograph again
+        # (`_split_gentle`), so the book does not end in empty pages. Refusing them whenever the book was short is why
+        # no trio or quad ever survived the 24-page minimum.
         grouped = _group_similar(pages, features, by_photo, taken or {}, strength or {},
-                                 set(alone or ()),
-                                 lambda n: total(n) >= min_pages)
+                                 set(alone or ()), lambda n: True)
 
     composed = _compose_flagged(pages, together, by_photo, set(alone or ()) - together)
 
-    while ((split_short and total(len(pages)) < min_pages) or total(len(pages)) % inc
-           or odd(len(pages))) and _split_one(pages, together):
+    # Reaching the lab minimum and an even page count. The book gives up its
+    # compositions last: lighten the pairs first, then bring in photographs
+    # the design left out (each on a page of its own, right after its place),
+    # and only then break a trio or a quad, and never the last few of them or
+    # a page composed on purpose (the user's, or one of similar photographs).
+    floor = max(1, len(pages) // 8)
+
+    def short() -> bool:
+        return split_short and total(npg()) < min_pages
+
+    def misaligned() -> bool:
+        # A two-page spread starts on a left page, so the ordinary pages
+        # (not the spreads) must pair up, or one is left facing blank paper.
+        return bool(total(npg()) % inc
+                    or odd(sum(1 for p in pages if p.comp != SPREAD)))
+
+    while (short() or misaligned()) and _split_one(pages, together, floor, max_slots=2):
         pass
 
-    # Still short: rather than pad with blank paper, bring in the photographs
-    # the planner left out, each on its own page right after its place's run.
     added = []
     pool = [pid for pid in (spare or [])
             if pid != pick and pid not in {s["photo_id"] for p in pages for s in p.slots}]
-    while pool and total(len(pages)) < min_pages:
+    while pool and total(npg()) < min_pages:
         pid = pool.pop(0)
         insert_solo(pid)
         added.append(pid)
-    while (total(len(pages)) % inc or odd(len(pages))) and _split_one(pages, together):
+
+    while (short() or misaligned()) and _split_one(pages, together, floor):
         pass
+    # An odd page left over: one more photograph from the pool rather than a
+    # blank page, if there is one.
+    while misaligned() and pool:
+        pid = pool.pop(0)
+        insert_solo(pid)
+        added.append(pid)
+    # Still short, or one page over: an empty page is the worst outcome of
+    # all, so the pages of similar photographs give way too, one photograph
+    # at a time — a quad becomes a trio first (the composition stays), then
+    # the pairs that leaves are taken apart, and only then a trio, never the
+    # last `floor` of them — unless taking those apart too fills the book
+    # completely: no empty page beats keeping one more trio. When the book
+    # cannot be filled whatever is split (too few photographs), the floor
+    # stays, since empty pages are left either way. The user's own
+    # compositions are never touched.
+    give = sum(len(p.slots) - 1 for p in pages
+               if p.comp in SPLITS_GENTLE or p.comp in SPLITS
+               if not any(s["photo_id"] in together for s in p.slots))
+    need = 0
+    while split_short and need < 256 and total(npg() + need) < min_pages:
+        need += 1
+    last = 0 if give >= need else floor
+    while short() or misaligned():
+        if not (_split_gentle(pages, together, ("quad",), last)
+                or _split_one(pages, together, 0, max_slots=2)
+                or _split_gentle(pages, together, ("trio-feature", "trio-column"), last)):
+            break
 
     if taken:
         for p in pages:
@@ -664,7 +806,11 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
     out: list[dict] = []
     rest_pages = pages
     if front_page:
-        first = pages[0] if pages else None
+        # The page facing the front is an ordinary one, never a two-page spread.
+        k = next((i for i, p in enumerate(pages) if p.comp != SPREAD), None)
+        if k:
+            pages.insert(0, pages.pop(k))
+        first = pages[0] if pages and pages[0].comp != SPREAD else None
         opts: dict = {"side": "left"}
         if first is not None and first.stamp:
             opts["stamps"] = {"right": first.stamp}
@@ -673,35 +819,47 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
                                  else T.front_name)(first.comp if first else "blank"),
                     "slots": opening["slots"] + (first.slots if first else []),
                     "options": opts})
-        rest_pages = pages[1:]
+        rest_pages = pages[1:] if first is not None else pages
     elif opening:
         out.append(opening)
-    for i in range(0, len(rest_pages), 2):
-        pair = rest_pages[i:i + 2]
-        if len(pair) == 2:
-            name, opts = _template_for(pair[0].comp, pair[1].comp)
+    queue = list(rest_pages)
+    while queue:
+        a = queue.pop(0)
+        if a.comp == SPREAD:
+            out.append({"index": 0, "section_id": a.section_id, "template": T.USER_SPREAD,
+                        "slots": a.slots, "text": None,
+                        "options": ({"stamps": {"left": a.stamp}} if a.stamp else {}),
+                        "note": a.note or "two pages, on request"})
+            continue
+        b = None
+        if queue and queue[0].comp != SPREAD:
+            b = queue.pop(0)
+        elif queue:
+            # A spread comes next: the first ordinary page after it comes
+            # forward to face this one, rather than leaving this one alone.
+            k = next((i for i, q in enumerate(queue) if q.comp != SPREAD), None)
+            if k is not None:
+                b = queue.pop(k)
+        if b is not None:
+            name, opts = _template_for(a.comp, b.comp)
         else:
-            name, opts = _blank_pair(pair[0])
+            name, opts = _blank_pair(a)
         stamps = {}
-        a, b = (pair + [None])[:2]
-        if len(pair) == 2:
-            if a.stamp:
-                stamps["left"] = a.stamp
-            if b.stamp:
-                stamps["right"] = b.stamp
-        elif a.stamp:
+        if a.stamp:
             stamps["left"] = a.stamp
+        if b is not None and b.stamp:
+            stamps["right"] = b.stamp
         if stamps:
             opts["stamps"] = stamps
-        slots = [s for p in pair for s in p.slots]
+        slots = list(a.slots) + (list(b.slots) if b is not None else [])
         out.append({
             "index": 0,
-            "section_id": pair[0].section_id,
+            "section_id": a.section_id,
             "template": name,
             "slots": slots,
             "text": None,
             "options": opts,
-            "note": pair[0].note,
+            "note": a.note,
         })
 
     # Still short (nothing left to split): pad with photograph-free spreads at
