@@ -365,7 +365,7 @@ def save_settings() -> None:
         data["preset"] = STATE.get("model_preset")
     elif "saved_models" in STATE:
         data["models"], data["preset"] = STATE["saved_models"]
-    safeio.write_text(settings_path(), json.dumps(data, ensure_ascii=False, indent=2))
+    safeio.write_text(settings_path(), json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def apply_options() -> None:
@@ -539,14 +539,14 @@ def finish_layout(raw: dict, usable) -> dict:
 def render_proof(store: Store, v, data: dict) -> None:
     a = STATE["album"]
     tmp = a / f"layout-v{v.version_no:03d}.json"
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     run_render("proof", tmp, a / "renders")
     # Small page images for the editor's Book view, from the same HTML.
     html = a / "renders" / "inner-proof.html"
     if html.exists():
         R.render_jpegs(html.read_text(encoding="utf-8"), html, a / "renders" / "pages-thumb",
                        thumb_px=520)
-        (a / "renders" / "pages-thumb" / "version.txt").write_text(str(v.version_no))
+        (a / "renders" / "pages-thumb" / "version.txt").write_text(str(v.version_no), encoding="utf-8")
 
 
 def run_render(command: str, layout_path: Path, out: Path, *extra: str) -> int:
@@ -746,7 +746,7 @@ def load_album_settings(album: Path) -> dict:
     sp = album / "settings.json"
     if sp.exists():
         try:
-            return json.loads(sp.read_text())
+            return json.loads(sp.read_text(encoding="utf-8"))
         except ValueError:
             return {}
     return {}
@@ -1086,7 +1086,7 @@ def _alias(url: str | None) -> str:
 
 def user_config() -> dict:
     try:
-        return json.loads((keystore.config_dir() / "config.json").read_text())
+        return json.loads((keystore.config_dir() / "config.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
@@ -1094,7 +1094,7 @@ def user_config() -> dict:
 def save_user_config(data: dict) -> None:
     d = keystore.config_dir()
     d.mkdir(parents=True, exist_ok=True)
-    safeio.write_text(d / "config.json", json.dumps(data, ensure_ascii=False, indent=2))
+    safeio.write_text(d / "config.json", json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def apply_models(check: bool = True) -> None:
@@ -1716,7 +1716,7 @@ def _export(kind: str, dpi: int):
         v, data = store.get()
         out = a / "exports"
         tmp = a / f"layout-v{v.version_no:03d}.json"
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         set_job(f"Exporting: {EXPORTS[kind][0]}", 30)
         if kind == "jpeg":
             code = run_render("jpeg", tmp, out, "--dpi", str(dpi))
@@ -1845,7 +1845,7 @@ def low_res_pages(data: dict) -> dict[int, list[dict]]:
 def api_pages():
     d = STATE["album"] / "renders" / "pages-thumb"
     files = sorted(d.glob("page-*.jpg")) if d.exists() else []
-    ver = (d / "version.txt").read_text() if (d / "version.txt").exists() else None
+    ver = (d / "version.txt").read_text(encoding="utf-8") if (d / "version.txt").exists() else None
     low = {}
     if ver and files:
         try:
@@ -1929,7 +1929,7 @@ def api_proof():
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return (HERE / "static" / "index.html").read_text()
+    return (HERE / "static" / "index.html").read_text(encoding="utf-8")
 
 
 def main():
@@ -1968,6 +1968,7 @@ def main():
                          "(default: your home folder)")
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
+    safeio.safe_console()
     # Nothing printed — a log line, a traceback — may carry an API key.
     sys.stdout = keystore.RedactingStream(sys.stdout)
     sys.stderr = keystore.RedactingStream(sys.stderr)

@@ -108,6 +108,35 @@ def main() -> int:
     return 0
 
 
+def test_portable_dates_and_text():
+    """Two things that worked on Linux and failed on Windows: a date format
+    code only glibc has, and text files written in whatever the system's
+    encoding happened to be."""
+    import tempfile
+    from datetime import datetime
+
+    import cluster
+    import overrides as OV
+    import versions
+
+    day = lambda *a: NS(taken_at=datetime(*a))
+    assert cluster.date_range([day(2026, 8, 5, 9)]) == "5 August 2026"
+    assert cluster.date_range([day(2026, 8, 5, 9), day(2026, 8, 9, 9)]) == "5–9 August 2026"
+    assert cluster.date_range([day(2026, 7, 30, 9), day(2026, 8, 2, 9)]) == "30 Jul – 2 Aug 2026"
+    words = "Zürich · Lej da Segl → 山 “quoted”"
+    with tempfile.TemporaryDirectory() as td:
+        store = versions.Store(Path(td))
+        store.add({"meta": {"title": words}}, parent=None, user_comment=words)
+        assert store.versions()[0].user_comment == words
+        assert store.get()[1]["meta"]["title"] == words
+        assert words.encode("utf-8") in (Path(td) / "versions.json").read_bytes(), \
+            "state files must be UTF-8 on every system"
+        ov = OV.Overrides.load(Path(td))
+        ov.set("p001", description=words)
+        ov.save()
+        assert OV.Overrides.load(Path(td)).get("p001").description == words
+
+
 def test_repack_and_crop_guard(): _run("repack_and_crop_guard")
 def test_adaptive_pages(): _run("adaptive_pages")
 def test_fuller_pages(): _run("fuller_pages")
@@ -237,7 +266,7 @@ def engadin_run_fixes(groups):
             # OpenStreetMap's answer for the same glacier replaces the list's, others are added
             (Path(td) / "features_cache.json").write_text(json.dumps({"46.41,9.94": [
                 {"name": "Morteratschgletscher", "kind": "glacier", "lat": 46.4052, "lon": 9.9352},
-                {"name": "Aussichtspunkt", "kind": "viewpoint", "lat": 46.411, "lon": 9.941}]}))
+                {"name": "Aussichtspunkt", "kind": "viewpoint", "lat": 46.411, "lon": 9.941}]}), encoding="utf-8")
             geocode.apply(pt, Path(td), offline_db=False, online=False, fetch=never)
             names = [f.split(" (")[0] for f in pt[0].features]
             assert names[0] == "Morteratschgletscher" and "Vadret da Morteratsch" not in names, names
@@ -649,12 +678,12 @@ def engadin_run_fixes(groups):
         import safeio
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "overrides.yaml"
-            safeio.write_text(f, "first")
+            safeio.write_text(f, "first", encoding="utf-8")
             try:
-                safeio.write_text(f, 12345)          # not text: the write fails
+                safeio.write_text(f, 12345, encoding="utf-8")          # not text: the write fails
             except TypeError:
                 pass
-            assert f.read_text() == "first" and list(Path(td).iterdir()) == [f]
+            assert f.read_text(encoding="utf-8") == "first" and list(Path(td).iterdir()) == [f]
         # The project was renamed: keys stored under the old folder name
         # follow it, permissions intact, and a folder under the new name wins.
         # Path.home() reads HOME on Linux and macOS, USERPROFILE on Windows
@@ -664,7 +693,7 @@ def engadin_run_fixes(groups):
             os.environ.pop("ALBUM_CONFIG_DIR", None)
             old = Path(home) / ".config" / keystore.OLD_APP_DIR
             old.mkdir(parents=True)
-            (old / "keys.json").write_text(json.dumps({"openrouter": secret}))
+            (old / "keys.json").write_text(json.dumps({"openrouter": secret}), encoding="utf-8")
             os.chmod(old / "keys.json", 0o600)
             assert keystore.config_dir() == Path(home) / ".config" / keystore.APP_DIR
             assert not old.exists(), "the old folder is moved, not copied"
@@ -672,7 +701,7 @@ def engadin_run_fixes(groups):
             mode = stat.S_IMODE(os.stat(keystore.config_dir() / "keys.json").st_mode)
             assert mode == 0o600 or os.name == "nt", oct(mode)
             old.mkdir()
-            (old / "keys.json").write_text(json.dumps({"openrouter": "sk-or-stale"}))
+            (old / "keys.json").write_text(json.dumps({"openrouter": "sk-or-stale"}), encoding="utf-8")
             assert keystore.stored("openrouter") == secret, "the new folder wins over a stale old one"
         for k, v in saved_home.items():
             if v is None:
@@ -1084,7 +1113,7 @@ def gutter_and_bleed():
     layout = Layout.model_validate(lay)
     g = R.geometry_for(LAB, "21x21")
     paths = {pano: info[pano].path}
-    css = (ROOT.parent / "phase0" / "assets" / "style.css").read_text()
+    css = (ROOT.parent / "phase0" / "assets" / "style.css").read_text(encoding="utf-8")
     html, _ = R.build_inner_html(layout, g, paths, css)
     with tempfile.TemporaryDirectory() as td:
         files = R.render_jpegs(html, Path(td) / "x.html", Path(td) / "pages", dpi=40)

@@ -253,14 +253,14 @@ def test_run_classification() -> None:
             assert "the raw replies are in" in str(exc), exc
         files = sorted((Path(d) / "logs").glob("plan-*-attempt*.json"))
         assert len(files) == 3, files
-        rec = json.loads(files[0].read_text())
+        rec = json.loads(files[0].read_text(encoding="utf-8"))
         assert rec["text"] == "nope" and rec["raw"] == {"id": "x"} and rec["kind"] == "plan"
     c, _ = script(Reply(good, u))
     # a log folder that cannot be created (its parent is a file) must not
     # stop the plan; /proc was used here, which only Linux has
     with tempfile.TemporaryDirectory() as d:
         blocker = Path(d) / "a-file"
-        blocker.write_text("x")
+        blocker.write_text("x", encoding="utf-8")
         run(c, log_dir=blocker / "logs")
 
     # --- fallback model ---------------------------------------------------
@@ -602,7 +602,7 @@ def test_core_loop() -> None:
     assert not rep.blocking, "planned layout failed print validation"
 
     tmp = ALBUM / "layout-v002.json"
-    tmp.write_text(json.dumps(store.get(2)[1], ensure_ascii=False, indent=2))
+    tmp.write_text(json.dumps(store.get(2)[1], ensure_ascii=False, indent=2), encoding="utf-8")
     argv = ["render.py", "proof", "--layout", str(tmp), "--photos", str(PHOTO_DIR),
             "--out", str(ALBUM / "renders"), "--format", "21x21"]
     saved, sys.argv = sys.argv, argv
@@ -616,7 +616,7 @@ def test_core_loop() -> None:
     alb = ALBUM / "ovtest"
     alb.mkdir(parents=True, exist_ok=True)
     (alb / "places.yaml").write_text(
-        "- name: Testbucht\n  lat: 40.1150\n  lon: 9.6900\n  radius_m: 3000\n")
+        "- name: Testbucht\n  lat: 40.1150\n  lon: 9.6900\n  radius_m: 3000\n", encoding="utf-8")
     demo = ROOT / "demo_photos"
     if demo.exists():
         dph = PH.load(demo, ROOT / "examples" / "demo_captions.yaml", g, 200, 150)
@@ -700,7 +700,7 @@ def test_core_loop() -> None:
     cfgf = ALBUM / "models.yaml"
     cfgf.write_text(
         "default:\n  base_url: http://remote.invalid/v1\n  model: planner\n"
-        "  api_key: k\nannotate:\n  base_url: ollama\n  model: visionmodel\n")
+        "  api_key: k\nannotate:\n  base_url: ollama\n  model: visionmodel\n", encoding="utf-8")
     roles = PR.resolve_all(config_path=cfgf)
     assert roles["annotate"].model == "visionmodel", "annotate did not take its override"
     assert roles["plan"].model == "planner", "plan did not inherit the default"

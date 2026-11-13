@@ -123,7 +123,7 @@ def rotations(photo_dir) -> dict[str, int]:
         return hit[1]
     import yaml
 
-    raw = yaml.safe_load(f.read_text()) or {}
+    raw = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
     out = {}
     for pid, deg in raw.items():
         try:
@@ -152,7 +152,7 @@ def set_rotation(photo_dir, pid: str, degrees: int) -> int:
         cur.pop(pid, None)
     f = Path(photo_dir) / ROTATIONS_FILE
     if cur:
-        f.write_text(yaml.safe_dump(dict(sorted(cur.items())), sort_keys=True))
+        f.write_text(yaml.safe_dump(dict(sorted(cur.items())), sort_keys=True), encoding="utf-8")
     else:
         f.unlink(missing_ok=True)
     _ROT_CACHE.pop(str(f.resolve()), None)

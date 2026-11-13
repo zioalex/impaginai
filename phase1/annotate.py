@@ -139,7 +139,7 @@ class Annotations:
     def load(cls, path: Path) -> "Annotations":
         if not path.exists():
             return cls()
-        raw = json.loads(path.read_text())
+        raw = json.loads(path.read_text(encoding="utf-8"))
         known = set(Annotation.__dataclass_fields__)
         return cls({k: Annotation(**{f: x for f, x in v.items() if f in known})
                     for k, v in raw.items()})
@@ -148,8 +148,7 @@ class Annotations:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps({k: asdict(v) for k, v in self.by_id.items()},
-                       ensure_ascii=False, indent=2)
-        )
+                       ensure_ascii=False, indent=2), encoding="utf-8")
 
     def missing(self, photos: list[Photo]) -> list[Photo]:
         return [p for p in photos
