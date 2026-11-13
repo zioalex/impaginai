@@ -657,9 +657,10 @@ def engadin_run_fixes(groups):
             assert f.read_text() == "first" and list(Path(td).iterdir()) == [f]
         # The project was renamed: keys stored under the old folder name
         # follow it, permissions intact, and a folder under the new name wins.
-        saved_home = os.environ.get("HOME")
+        # Path.home() reads HOME on Linux and macOS, USERPROFILE on Windows
+        saved_home = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
         with tempfile.TemporaryDirectory() as home:
-            os.environ["HOME"] = home
+            os.environ["HOME"] = os.environ["USERPROFILE"] = home
             os.environ.pop("ALBUM_CONFIG_DIR", None)
             old = Path(home) / ".config" / keystore.OLD_APP_DIR
             old.mkdir(parents=True)
@@ -673,8 +674,11 @@ def engadin_run_fixes(groups):
             old.mkdir()
             (old / "keys.json").write_text(json.dumps({"openrouter": "sk-or-stale"}))
             assert keystore.stored("openrouter") == secret, "the new folder wins over a stale old one"
-        if saved_home is not None:
-            os.environ["HOME"] = saved_home
+        for k, v in saved_home.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
     finally:
         for k in ("OPENROUTER_API_KEY", "ALBUM_CONFIG_DIR"):
             os.environ.pop(k, None)

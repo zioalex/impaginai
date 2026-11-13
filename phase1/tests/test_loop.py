@@ -141,7 +141,9 @@ def ensure_fixtures() -> None:
     if not PHOTO_DIR.exists() or not any(PHOTO_DIR.glob("*.jpg")):
         gen = ROOT.parent / "phase0" / "tools" / "make_placeholder_photos.py"
         print(f"generating fixtures: {gen.name}")
-        subprocess.run([sys.executable, str(gen)], check=True, capture_output=True)
+        r = subprocess.run([sys.executable, str(gen)], capture_output=True, text=True)
+        # say why: a bare "exit status 1" hid a font path that only Linux has
+        assert r.returncode == 0, f"{gen.name} failed:\n{r.stderr[-2000:]}"
     demo = ROOT / "demo_photos"
     if not demo.exists() or not any(demo.glob("*.jpg")):
         gen = ROOT / "tools" / "make_demo_photos.py"
