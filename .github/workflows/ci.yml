@@ -1,12 +1,19 @@
 # Three things, on every push: do the dependencies have known holes, does the
-# code have mistakes a linter can see, and does the print chain still work. The second matters because the Chromium scaling bug
-# documented in phase0/README.md was invisible except in the rendered output.
+# code have mistakes a linter can see, and does the print chain still work.
+# The last matters because the Chromium scaling bug documented in
+# phase0/README.md was invisible except in the rendered output.
+#
+# Everything installs from requirements.lock.txt, so a pull request is tested
+# against the same versions every time. The `latest` job, weekly, installs the
+# newest versions the floors in requirements.txt allow, so a release that
+# breaks something is found on a Monday and not by a user.
 name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
   schedule:
-    - cron: "17 6 * * 1"      # Monday: catch advisories published since the last push
+    - cron: "17 6 * * 1"      # Monday: advisories and releases since the last push
 
 jobs:
   audit:
@@ -17,7 +24,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pip-audit
-      - run: pip-audit -r requirements.txt --strict
+      # The lock is what people install; the floors are checked by `latest`.
+      - run: pip-audit -r requirements.lock.txt --strict
 
   lint:
     runs-on: ubuntu-latest
@@ -26,19 +34,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r requirements-dev.txt
+      - run: pip install -r requirements-dev.lock.txt
       # Names that do not exist, unused imports, syntax errors: see pyproject.toml.
       - run: ruff check .
 
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }}, ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false          # one platform failing must not hide the others
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.11" }
+          - { os: ubuntu-latest, python: "3.12", summary: true }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: macos-latest, python: "3.12" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
           cache: pip
-      - run: pip install -r requirements.txt -r requirements-dev.txt
+          cache-dependency-path: requirements*.lock.txt
+      - run: pip install -r requirements.lock.txt -r requirements-dev.lock.txt
       - run: playwright install --with-deps chromium
       - name: Warm the offline geocoder
         run: python -c "import reverse_geocoder as rg; rg.search([(47.4, 8.6)])"
@@ -48,17 +66,54 @@ jobs:
       - name: Tests
         run: pytest --cov --cov-report=term --cov-report=markdown:coverage.md
       - name: Coverage summary
-        if: always()
+        if: always() && matrix.summary
         run: test -f coverage.md && cat coverage.md >> "$GITHUB_STEP_SUMMARY" || true
       - name: Calibration book renders to spec
         run: |
           cd phase0
           python tools/make_placeholder_photos.py
-          python render.py proof --layout examples/layout_test24.json \
-                 --photos ./photos --allow-fold --out /tmp/out
+          python render.py proof --layout examples/layout_test24.json --photos ./photos --allow-fold --out "${{ runner.temp }}/out"
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && matrix.summary
         with:
           name: proof-pdf
-          path: /tmp/out/inner-proof.pdf
+          path: ${{ runner.temp }}/out/inner-proof.pdf
           if-no-files-found: ignore
+
+  # The engine on Windows: planning, page building, rendering, keys. The two
+  # tests that start the editor as a separate process are left out here: they
+  # stop it with SIGTERM, which Windows does not have, and that is its own
+  # piece of work. So the editor itself is NOT tested on Windows yet.
+  test-windows:
+    name: test (windows-latest, 3.12, engine only)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.lock.txt
+      - run: pip install -r requirements.lock.txt -r requirements-dev.lock.txt
+      - run: playwright install chromium
+      - name: Warm the offline geocoder
+        run: python -c "import reverse_geocoder as rg; rg.search([(47.4, 8.6)])"
+      - name: Tests (engine)
+        run: pytest phase1/tests/test_loop.py phase1/tests/test_pages.py
+
+  # Newest versions the floors allow. Not on pull requests: it would turn a
+  # change red for something the change did not do.
+  latest:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt -r requirements-dev.txt pip-audit
+      - run: pip-audit -r requirements.txt --strict
+      - run: playwright install --with-deps chromium
+      - name: Warm the offline geocoder
+        run: python -c "import reverse_geocoder as rg; rg.search([(47.4, 8.6)])"
+      - run: pytest

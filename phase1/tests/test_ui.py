@@ -32,7 +32,14 @@ def main() -> int:
     fake = E.FakeModel(test_loop.good_layout())
     url = fake.start()
     tmp = Path(tempfile.mkdtemp(prefix="album-ui-"))
-    ed = E.Editor(tmp / "album", E.write_models(tmp / "good.yaml", url), tmp / "editor.log")
+    # A copy of the photographs: this test adds one, and the folder the other
+    # tests share must not change under them.
+    import shutil
+
+    photos = tmp / "photos"
+    shutil.copytree(E.PHOTOS, photos)
+    ed = E.Editor(tmp / "album", E.write_models(tmp / "good.yaml", url), tmp / "editor.log",
+                  photos=photos)
     problems: list[str] = []
     try:
         ed.wait(lambda: (ed.get("/api/album") or {}).get("preflight", {})
@@ -41,11 +48,18 @@ def main() -> int:
             browser = p.chromium.launch()
             page = browser.new_page(viewport={"width": 1400, "height": 900})
             page.on("pageerror", lambda e: problems.append(f"script error: {e}"))
+            # Two things are not problems. A preview refresh that arrives while
+            # another job runs is answered 409 and the editor tries again by
+            # itself. And a download ends the request that started it.
+            def busy(url: str, status: int | None = None) -> bool:
+                return url.endswith("/api/rerender") and status in (409, None)
+
             page.on("console", lambda m: problems.append(f"console error: {m.text}")
-                    if m.type == "error" else None)
+                    if m.type == "error" and not busy(m.location.get("url", "")) else None)
             page.on("response", lambda r: problems.append(f"{r.status} {r.request.method} {r.url}")
-                    if r.status >= 400 else None)
-            page.on("requestfailed", lambda r: problems.append(f"request failed: {r.url}"))
+                    if r.status >= 400 and not busy(r.url, r.status) else None)
+            page.on("requestfailed", lambda r: problems.append(f"request failed: {r.url}")
+                    if "/export/" not in r.url else None)
 
             def ok(step: str) -> None:
                 assert not problems, f"{step}: " + "; ".join(problems)
@@ -101,6 +115,73 @@ def main() -> int:
             page.click("#tabPhotos")
             page.wait_for_selector("#grid img", timeout=10000)
             ok("settings tab and back")
+
+            def job_done(what: str) -> dict:
+                # the editor waits a moment before refreshing the preview: let
+                # that refresh start, then finish
+                page.wait_for_function("!dirty", timeout=60000)
+                ed.wait(lambda: not (ed.get("/api/job") or {}).get("running"), 180, f"{what} did not finish")
+                j = ed.get("/api/job")
+                assert not j.get("error"), j
+                return j
+
+            # 6. adding a photograph from the file chooser
+            src = sorted((E.PHOTOS).glob("*.jpg"))[3]
+            extra = tmp / "added_in_the_browser.jpg"
+            extra.write_bytes(src.read_bytes())
+            page.set_input_files("#fileAdd", str(extra))
+            page.wait_for_function(f"document.querySelectorAll('#grid img').length >= {n + 1}", timeout=30000)
+            assert any(p["id"] == "added_in_the_browser" for p in ed.get("/api/photos"))
+            job_done("the preview after adding a photograph")
+            ok("a photograph added from the file chooser appears")
+
+            # 7. a setting changed in the editor is saved, and costs no model call
+            asked = len(fake.requests)
+            page.click("#tabSettings")
+            page.wait_for_selector("#settings .opt[data-set=density]", timeout=15000)
+            before = ed.get("/api/config")
+            cur = next(o["value"] for o in before["options"] if o["key"] == "density")
+            page.click(f"#settings .opt[data-set=density]:not([data-v='{cur}']) >> nth=0")
+            page.wait_for_function(
+                "fetch('/api/config').then(r => r.json()).then(c => "
+                f"c.options.find(o => o.key === 'density').value !== '{cur}')", timeout=15000)
+            job_done("the preview after a setting change")
+            assert len(fake.requests) == asked, "changing a setting called the model"
+            ok("a setting changed in the editor is saved and the preview follows, with no model call")
+
+            # 8. export: the cover PDF arrives as a download
+            page.wait_for_function("!document.getElementById('btnExport').disabled", timeout=30000)
+            with page.expect_download(timeout=180000) as dl:
+                page.click("#btnExport")
+                page.click("#exportList button[data-k=cover]")
+            got = tmp / "cover-download.pdf"
+            dl.value.save_as(str(got))
+            assert got.read_bytes()[:4] == b"%PDF", "the exported cover is not a PDF"
+            ok("export: the cover PDF downloads")
+
+            # 9. asking for a change in words makes a second version
+            page.goto(f"http://127.0.0.1:{ed.port}/")
+            page.wait_for_selector("#grid img", timeout=20000)
+            versions = len(ed.get("/api/album")["versions"])
+            page.click("#btnPlan")
+            page.wait_for_selector("#dlgRevise[open]", timeout=5000)
+            page.fill("#reviseText", "Seite 4 ist überladen")
+            page.click("#reviseGo")
+            ed.wait(lambda: len((ed.get("/api/album") or {}).get("versions", [])) > versions,
+                    180, "the revision made no new version")
+            job_done("the revision")
+            page.click("#tabBook")
+            page.wait_for_function(
+                "[...document.querySelectorAll('.vrow')].some(r => r.textContent.includes('Seite 4'))",
+                timeout=30000)
+            ok("a change asked for in words becomes a new version in the book")
+
+            # 10. the landmark status line reads as a sentence in each state
+            line = page.evaluate(
+                "placesLine({countries: {CH: 'ready', IT: 'downloading'}, osm: 'unavailable'})")
+            assert "CH ready" in line and "IT downloading" in line and "not answering" in line, line
+            assert "not needed yet" in page.evaluate("placesLine({countries: {}, osm: 'idle'})")
+            ok("landmark status line")
             browser.close()
     finally:
         ed.stop()

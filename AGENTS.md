@@ -18,9 +18,19 @@ Standing instructions from the repository owner. Follow them on every task.
 Same as CI (`.github/workflows/ci.yml`):
 
 ```bash
-pip install -r requirements.txt -r requirements-dev.txt
+pip install -r requirements.lock.txt -r requirements-dev.lock.txt
 pytest --cov      # everything, each check reported on its own, with coverage
 ruff check .      # mistakes the tests do not reach
+```
+
+CI installs from `requirements.lock.txt` and `requirements-dev.lock.txt`. After
+changing either requirements file, regenerate both:
+
+```bash
+pip install uv
+uv pip compile requirements.txt --universal --python-version 3.11 -o requirements.lock.txt
+uv pip compile requirements-dev.txt --universal --python-version 3.11 \
+    -c requirements.lock.txt -o requirements-dev.lock.txt
 ```
 
 Each file also runs alone, which is quicker while working on one area:

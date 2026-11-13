@@ -13,9 +13,14 @@ cd impaginai
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 
-pip install -r requirements.txt
+pip install -r requirements.lock.txt
 playwright install chromium        # ~150 MB browser download
 ```
+
+`requirements.lock.txt` is the exact set of versions the tests ran against, on
+Linux, macOS and Windows, Python 3.11 to 3.13. `requirements.txt` holds the
+oldest versions that are supported instead; install from it if you need to
+share an environment with something else, and expect the newest of everything.
 
 Python 3.11 or newer. The first time anything resolves GPS, the offline place
 database builds an index that takes a few seconds; warm it now so it does not

@@ -30,7 +30,10 @@ from versions import Store  # noqa: E402
 
 PHOTO_DIR = ROOT.parent / "phase0" / "photos"
 CAPTIONS = ROOT / "examples" / "captions.yaml"
-ALBUM = Path("/tmp/album_test")
+import tempfile as _tempfile  # noqa: E402
+
+# Not /tmp: that path does not exist on Windows.
+ALBUM = Path(_tempfile.gettempdir()) / "album_test"
 
 
 def good_layout(spread_count: int = 12, summary: str | None = None) -> dict:
@@ -251,7 +254,12 @@ def test_run_classification() -> None:
         rec = json.loads(files[0].read_text())
         assert rec["text"] == "nope" and rec["raw"] == {"id": "x"} and rec["kind"] == "plan"
     c, _ = script(Reply(good, u))
-    run(c, log_dir=Path("/proc/nope/logs"))
+    # a log folder that cannot be created (its parent is a file) must not
+    # stop the plan; /proc was used here, which only Linux has
+    with tempfile.TemporaryDirectory() as d:
+        blocker = Path(d) / "a-file"
+        blocker.write_text("x")
+        run(c, log_dir=blocker / "logs")
 
     # --- fallback model ---------------------------------------------------
     # transient budget exhausted -> switch once, succeed on the fallback

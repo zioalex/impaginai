@@ -33,7 +33,7 @@ The short version:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.lock.txt
 playwright install chromium
 
 python phase2/server.py
@@ -236,8 +236,10 @@ cannot show you. `RUNNING.md` has the cost table and recommended stacks.
 
 ## Dependencies and security
 
-`requirements.txt` uses floors rather than exact pins, so a fresh install picks
-up security releases without the file being edited. `pillow` and `pypdf` both
+`requirements.txt` holds floors (the oldest versions supported) and
+`requirements.lock.txt` the exact versions CI tested; install from the lock.
+Dependabot moves the lock forward, and a weekly CI job installs the newest
+versions the floors allow, so a release that breaks something is noticed. `pillow` and `pypdf` both
 parse untrusted binary input — photographs and PDFs — and are the two that must
 not lag; the first version of this file pinned them months behind and collected
 64 advisories.
@@ -247,7 +249,7 @@ pip install pip-audit && pip-audit -r requirements.txt
 ```
 
 CI runs that on every push and weekly, and Dependabot opens grouped update PRs.
-For byte-identical rebuilds, generate a lock file with `pip-compile`.
+`AGENTS.md` says how to regenerate the lock after changing a requirement.
 
 ## Licence
 

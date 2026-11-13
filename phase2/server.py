@@ -279,7 +279,8 @@ def start_job(kind: str) -> None:
     requests arriving together used to both find it free."""
     with JOB_LOCK:
         if JOB["running"]:
-            raise HTTPException(409, "busy — try again when the current job finishes")
+            # the words the editor looks for to try again by itself
+            raise HTTPException(409, "already working")
         JOB.update(running=True, step="Starting", progress=1, error=None, done=False,
                    kind=kind, cost=None, seconds=0.0, result=None, started=time.time())
 
