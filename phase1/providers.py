@@ -1066,7 +1066,7 @@ def load_model_config(path) -> dict:
     path = __import__("pathlib").Path(path)
     if not path.exists():
         return {}
-    raw = yaml.safe_load(path.read_text()) or {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return {k: (v or {}) for k, v in raw.items() if isinstance(v, dict) or v is None}
 
 

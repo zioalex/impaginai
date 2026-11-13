@@ -42,7 +42,7 @@ ASSETS = HERE / "assets"
 
 
 def load_lab(path: Path) -> dict:
-    return yaml.safe_load(path.read_text())
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 def geometry_for(lab: dict, fmt: str) -> Geometry:
@@ -687,7 +687,7 @@ def main() -> int:
     if args.allow_fold:
         lab.setdefault("safety", {})["allow_fold_crossing"] = True
         print("fold crossing permitted for this render (calibration only)\n")
-    raw = json.loads(args.layout.read_text())
+    raw = json.loads(args.layout.read_text(encoding="utf-8"))
     layout = Layout.model_validate(raw)          # schema failure = hard stop
     fmt = args.format or layout.meta.format
     g = geometry_for(lab, fmt)
@@ -704,7 +704,7 @@ def main() -> int:
         print("\nrefusing to render: fix the errors above")
         return 1
 
-    css = (ASSETS / "style.css").read_text()
+    css = (ASSETS / "style.css").read_text(encoding="utf-8")
     mode = "proof" if args.command == "proof" or (args.command == "jpeg" and args.dpi <= 150) else "print"
     print(f"\nbuilding {mode} derivatives...")
     photo_paths = build_derivatives(layout, photos, g, mode, args.out.resolve() / "derivatives")

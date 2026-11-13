@@ -63,7 +63,7 @@ def write_models(path: Path, url: str, model: str = "fake/model", **plan) -> Pat
         lines += [f"  {k}: {v}" for k, v in plan.items()]
         lines.append("revise:")
         lines += [f"  {k}: {v}" for k, v in plan.items()]
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
 
@@ -112,7 +112,7 @@ class Editor:
                 return json.loads(r.read())
         except Exception:
             if self.proc.poll() is not None:
-                raise AssertionError("the editor exited:\n" + self.log.read_text()[-3000:])
+                raise AssertionError("the editor exited:\n" + self.log.read_text(encoding="utf-8")[-3000:])
             return None
 
     def post(self, path: str, body: dict):
@@ -137,7 +137,7 @@ class Editor:
             if cond():
                 return
             time.sleep(0.3)
-        raise AssertionError(f"{what}\n--- editor log ---\n{self.log.read_text()[-3000:]}")
+        raise AssertionError(f"{what}\n--- editor log ---\n{self.log.read_text(encoding='utf-8')[-3000:]}")
 
     def send(self, method: str, path: str, body: dict):
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}",
@@ -244,7 +244,7 @@ def main() -> int:
             # 2c. leaving photographs out and writing a caption reach the book
             #     with no model call; bringing one back restores it
             album_dir = tmp / "album"
-            first = json.loads(sorted((album_dir / "layouts").glob("v001.json"))[0].read_text())
+            first = json.loads(sorted((album_dir / "layouts").glob("v001.json"))[0].read_text(encoding="utf-8"))
             placed = [s["photo_id"] for sp in first["spreads"] for s in sp["slots"]]
             drop, cap = placed[1], placed[0]
             fake.requests.clear()
@@ -253,7 +253,7 @@ def main() -> int:
             j = ed.job("/api/rerender")
             assert j.get("done") and not j.get("error"), j
             assert not fake.requests, "re-applying settings called the model"
-            cur = json.loads(sorted((album_dir / "layouts").glob("v0*[0-9].json"))[-1].read_text())
+            cur = json.loads(sorted((album_dir / "layouts").glob("v0*[0-9].json"))[-1].read_text(encoding="utf-8"))
             ids = [s["photo_id"] for sp in cur["spreads"] for s in sp["slots"]]
             assert drop not in ids, "the left-out photograph is still in the book"
             caps = [s.get("caption") for sp in cur["spreads"] for s in sp["slots"] if s["photo_id"] == cap]
@@ -304,7 +304,7 @@ def main() -> int:
             r = ed.send("PUT", "/api/config", {"gap_hours": 8})
             assert r["changed"] == ["gap_hours"] and r["needs"] == ["rerender"], r
             assert ed.get("/api/config")["options"][[o["key"] for o in cfg["options"]].index("gap_hours")]["value"] == 8
-            saved = json.loads((album_dir / "settings.json").read_text())
+            saved = json.loads((album_dir / "settings.json").read_text(encoding="utf-8"))
             assert saved["options"]["gap_hours"] == 8 and "geocode" not in saved["options"], saved
             fake.requests.clear()
             r = ed.send("PUT", "/api/config", {"captions": "none"})
@@ -312,7 +312,7 @@ def main() -> int:
             j = ed.job("/api/rerender")
             assert j.get("done") and not j.get("error"), j
             assert not fake.requests, "a settings change called the model"
-            cur = json.loads(sorted((album_dir / "layouts").glob("v0*[0-9].json"))[-1].read_text())
+            cur = json.loads(sorted((album_dir / "layouts").glob("v0*[0-9].json"))[-1].read_text(encoding="utf-8"))
             caps = {s.get("caption") for sp in cur["spreads"] for s in sp["slots"]} - {None}
             mine = {x["description"] or x["caption"] for x in ed.get("/api/photos")} - {None}
             assert caps and caps <= mine, caps - mine
@@ -336,7 +336,7 @@ def main() -> int:
             print("models locked by --models; key stored, environment key wins, never shown: ok")
             ed.send("PATCH", "/api/photos", {"ids": [drop], "exclude": False})
             ed.job("/api/rerender")
-            cur = json.loads(sorted((album_dir / "layouts").glob("v0*[0-9].json"))[-1].read_text())
+            cur = json.loads(sorted((album_dir / "layouts").glob("v0*[0-9].json"))[-1].read_text(encoding="utf-8"))
             assert drop in [s["photo_id"] for sp in cur["spreads"] for s in sp["slots"]], "could not bring it back"
             assert len(ed.get("/api/costs")["sessions"]) == 1, "a settings change was counted as a session"
             print("settings re-applied without the model, photograph left out and brought back: ok")
@@ -398,7 +398,7 @@ def main() -> int:
             a5 = tmp / "album5"
 
             def latest():
-                return json.loads(sorted((a5 / "layouts").glob("v0*[0-9].json"))[-1].read_text())
+                return json.loads(sorted((a5 / "layouts").glob("v0*[0-9].json"))[-1].read_text(encoding="utf-8"))
 
             ed5.send("PATCH", "/api/photos/p012", {"size": "full-page"})
             j = ed5.job("/api/rerender")
@@ -417,7 +417,7 @@ def main() -> int:
             phs = ed5.get("/api/photos")
             assert {x["id"] for x in phs if x["placed"]} == set(placed_layout), "placed does not match the layout"
             assert ed5.get("/api/album")["placed"] == placed_layout
-            assert "p012" in (a5 / "renders" / "inner-proof.html").read_text(), "p012 is not in the rendered book"
+            assert "p012" in (a5 / "renders" / "inner-proof.html").read_text(encoding="utf-8"), "p012 is not in the rendered book"
 
             # two pages: a high-resolution photograph spans the fold
             ed5.send("PATCH", "/api/photos/p004", {"size": "spread"})
@@ -426,7 +426,7 @@ def main() -> int:
             spans = [sp for sp in cur["spreads"] if sp["template"] == "user-spread"]
             assert len(spans) == 1 and spans[0]["slots"][0]["photo_id"] == "p004", spans
             import re
-            html = (a5 / "renders" / "inner-proof.html").read_text()
+            html = (a5 / "renders" / "inner-proof.html").read_text(encoding="utf-8")
             imgs = re.findall(r'<img [^>]*p004[^>]*style="([^"]*)"', html)
             # (the photograph may also sit on an ordinary page elsewhere)
             imgs = [x for x in imgs if float(re.search(r"width:([\d.]+)mm", x).group(1)) > 250]
@@ -477,7 +477,7 @@ def main() -> int:
                 raise AssertionError("High was accepted for revise")
             except urllib.error.HTTPError as exc:
                 assert exc.code == 400
-            saved = json.loads((tmp / "album2" / "settings.json").read_text())
+            saved = json.loads((tmp / "album2" / "settings.json").read_text(encoding="utf-8"))
             assert saved["models"]["plan"]["reasoning"] == "high" and saved["preset"] is None, saved
             assert ed2.get("/api/estimate")["high"] is True
             lst = ed2.get("/api/models/list?role=plan")
@@ -535,7 +535,7 @@ def main() -> int:
             assert [x["title"] for x in rec][:2] == ["Dropped", "Engadin 2026"], rec
             first = next(x for x in rec if x["title"] == "Engadin 2026")
             assert ed3.post("/api/albums", {"album": first["album"]})["photo_count"] == 5
-            saved = json.loads((Path(first["album"]) / "settings.json").read_text())
+            saved = json.loads((Path(first["album"]) / "settings.json").read_text(encoding="utf-8"))
             assert saved["photos_dir"] == str(trip.resolve()), saved
 
             # photographs added after the design are brought into the book at
@@ -545,7 +545,7 @@ def main() -> int:
             job = ed3.build()
             assert job.get("done") and not job.get("error"), job
             album3 = Path(first["album"])
-            v1 = json.loads(sorted((album3 / "layouts").glob("v0*[0-9].json"))[-1].read_text())
+            v1 = json.loads(sorted((album3 / "layouts").glob("v0*[0-9].json"))[-1].read_text(encoding="utf-8"))
             before = {s["photo_id"] for sp in v1["spreads"] for s in sp["slots"]}
             jpg2 = sorted(PHOTOS.glob("*.jpg"))[6].read_bytes()
             added = ed3.put_raw("/api/upload?name=added_later.jpg", jpg2)["id"]
@@ -554,7 +554,7 @@ def main() -> int:
             j = ed3.job("/api/rerender")
             assert j.get("done") and not j.get("error"), j
             assert not fake.requests, "bringing in an added photograph called the model"
-            cur = json.loads(sorted((album3 / "layouts").glob("v0*[0-9].json"))[-1].read_text())
+            cur = json.loads(sorted((album3 / "layouts").glob("v0*[0-9].json"))[-1].read_text(encoding="utf-8"))
             after = {s["photo_id"] for sp in cur["spreads"] for s in sp["slots"]}
             assert added in after and added not in before, (added, after)
             fake.requests.clear()
@@ -565,16 +565,16 @@ def main() -> int:
             # a design made before designs recorded what the model saw: a
             # photograph whose file is newer than the design counts as new
             for f in (album3 / "layouts").glob("v*.raw.json"):
-                d = json.loads(f.read_text())
+                d = json.loads(f.read_text(encoding="utf-8"))
                 d.pop("_seen_photos", None)
-                f.write_text(json.dumps(d))
+                f.write_text(json.dumps(d), encoding="utf-8")
             time.sleep(1.5)
             late = ed3.put_raw("/api/upload?name=added_much_later.jpg",
                                sorted(PHOTOS.glob("*.jpg"))[7].read_bytes())["id"]
             ed3.post("/api/photos/reload", {})
             j = ed3.job("/api/rerender")
             assert j.get("done") and not j.get("error"), j
-            cur = json.loads(sorted((album3 / "layouts").glob("v0*[0-9].json"))[-1].read_text())
+            cur = json.loads(sorted((album3 / "layouts").glob("v0*[0-9].json"))[-1].read_text(encoding="utf-8"))
             assert late in {s["photo_id"] for sp in cur["spreads"] for s in sp["slots"]}, \
                 "a photograph added after an older design was not brought in"
             # --- what another website, or a crafted request, must not get ---

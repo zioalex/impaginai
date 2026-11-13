@@ -53,7 +53,7 @@ def load_user_places(path: Path) -> list[NamedPlace]:
     """
     if not path.exists():
         return []
-    raw = yaml.safe_load(path.read_text()) or []
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or []
     out = []
     for item in raw:
         try:
@@ -82,7 +82,7 @@ class Geocoder:
         self.cache: dict[str, str | None] = {}
         if self.cache_path.exists():
             try:
-                self.cache = json.loads(self.cache_path.read_text())
+                self.cache = json.loads(self.cache_path.read_text(encoding="utf-8"))
             except Exception:
                 self.cache = {}
         self.offline_db = offline_db
@@ -165,7 +165,7 @@ class Geocoder:
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
             import safeio
 
-            safeio.write_text(self.cache_path, json.dumps(self.cache, ensure_ascii=False, indent=1))
+            safeio.write_text(self.cache_path, json.dumps(self.cache, ensure_ascii=False, indent=1), encoding="utf-8")
         except Exception:
             pass
 
@@ -293,7 +293,7 @@ class Features:
         self.cache: dict[str, list[dict]] = {}
         if self.path.exists():
             try:
-                self.cache = json.loads(self.path.read_text())
+                self.cache = json.loads(self.path.read_text(encoding="utf-8"))
             except Exception:
                 self.cache = {}
         self.failed = False
@@ -361,7 +361,7 @@ class Features:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             import safeio
 
-            safeio.write_text(self.path, json.dumps(self.cache, ensure_ascii=False, indent=1))
+            safeio.write_text(self.path, json.dumps(self.cache, ensure_ascii=False, indent=1), encoding="utf-8")
         except Exception:
             pass
 

@@ -118,7 +118,7 @@ def load(cc: str) -> bool:
         return True
     p = folder() / f"{cc}.json"
     try:
-        rows = json.loads(p.read_text())
+        rows = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
     _install(cc, rows)
@@ -131,7 +131,7 @@ def _fetch(cc: str, fetch) -> None:
         import safeio
 
         folder().mkdir(parents=True, exist_ok=True)
-        safeio.write_text(folder() / f"{cc}.json", json.dumps(rows, ensure_ascii=False))
+        safeio.write_text(folder() / f"{cc}.json", json.dumps(rows, ensure_ascii=False), encoding="utf-8")
         _install(cc, rows)
         print(f"  landmark names for {cc}: {len(rows)} kept on this machine")
     except Exception as exc:

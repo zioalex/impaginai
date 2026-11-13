@@ -49,7 +49,7 @@ class Store:
     def _index(self) -> list[dict]:
         if not self.index_path.exists():
             return []
-        return json.loads(self.index_path.read_text())
+        return json.loads(self.index_path.read_text(encoding="utf-8"))
 
     def versions(self) -> list[Version]:
         known = set(Version.__dataclass_fields__)
@@ -68,7 +68,7 @@ class Store:
         )
         if v is None:
             raise SystemExit(f"no version {version_no}")
-        return v, json.loads((self.layouts / v.filename).read_text())
+        return v, json.loads((self.layouts / v.filename).read_text(encoding="utf-8"))
 
     def add(
         self, layout: dict, *, parent: int | None,
@@ -100,12 +100,12 @@ class Store:
             kind=kind,
         )
         safeio.write_text(self.layouts / v.filename,
-                          json.dumps(layout, ensure_ascii=False, indent=2))
+                          json.dumps(layout, ensure_ascii=False, indent=2), encoding="utf-8")
         if raw is not None:
             safeio.write_text(self.layouts / v.raw_filename,
-                              json.dumps(raw, ensure_ascii=False, indent=2))
+                              json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
         safeio.write_text(self.index_path,
-                          json.dumps([asdict(x) for x in vs + [v]], ensure_ascii=False, indent=2))
+                          json.dumps([asdict(x) for x in vs + [v]], ensure_ascii=False, indent=2), encoding="utf-8")
         return v
 
     def rollback(self, to_version: int) -> Version:
@@ -129,7 +129,7 @@ class Store:
         except SystemExit:
             return None
         f = self.layouts / v.raw_filename
-        return json.loads(f.read_text()) if f.exists() else None
+        return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
 
     def history(self) -> str:
         lines = []

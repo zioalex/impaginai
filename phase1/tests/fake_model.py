@@ -184,7 +184,7 @@ def main() -> None:
     ap.add_argument("--layout", required=True, help="layout JSON the fake returns")
     ap.add_argument("--faults", default="", help="comma-separated, consumed in order")
     args = ap.parse_args()
-    with open(args.layout) as f:
+    with open(args.layout, encoding="utf-8") as f:
         layout = json.load(f)
     fake = FakeModel(layout, [x for x in args.faults.split(",") if x])
     url = fake.start(args.port)
