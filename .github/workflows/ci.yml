@@ -1,5 +1,5 @@
-# Two things, on every push: do the dependencies have known holes, and does the
-# print chain still work. The second matters because the Chromium scaling bug
+# Three things, on every push: do the dependencies have known holes, does the
+# code have mistakes a linter can see, and does the print chain still work. The second matters because the Chromium scaling bug
 # documented in phase0/README.md was invisible except in the rendered output.
 name: CI
 on:
@@ -19,6 +19,17 @@ jobs:
       - run: pip install pip-audit
       - run: pip-audit -r requirements.txt --strict
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      # Names that do not exist, unused imports, syntax errors: see pyproject.toml.
+      - run: ruff check .
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -27,16 +38,18 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: playwright install --with-deps chromium
       - name: Warm the offline geocoder
         run: python -c "import reverse_geocoder as rg; rg.search([(47.4, 8.6)])"
-      - name: Loop, validator, renderer and provider tests
-        run: python phase1/tests/test_loop.py
-      - name: Page repacker and crop guard
-        run: python phase1/tests/test_pages.py
-      - name: End to end against a fake model (mocked key, no network)
-        run: python phase1/tests/test_e2e.py
+      # Planner loop, page repacker, the editor over HTTP and in Chromium, all
+      # against a fake model (mocked key, no network). Each check is reported
+      # on its own, and the coverage table lands in the run's summary.
+      - name: Tests
+        run: pytest --cov --cov-report=term --cov-report=markdown:coverage.md
+      - name: Coverage summary
+        if: always()
+        run: test -f coverage.md && cat coverage.md >> "$GITHUB_STEP_SUMMARY" || true
       - name: Calibration book renders to spec
         run: |
           cd phase0

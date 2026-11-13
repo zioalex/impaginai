@@ -681,5 +681,9 @@ def main() -> int:
     return 0
 
 
+def test_end_to_end():
+    assert main() == 0
+
+
 if __name__ == "__main__":
     sys.exit(main())

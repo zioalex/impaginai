@@ -371,6 +371,7 @@ def test_openai_reply_shapes() -> None:
 def test_unplanned_and_spread_overrides():
     """What the editor shows as used is in the design, and a photograph can be
     set across two pages when it has the pixels."""
+    ensure_fixtures()
     import overrides as OV
     from schema import Layout
     from types import SimpleNamespace as NS
@@ -447,8 +448,15 @@ def test_unplanned_and_spread_overrides():
 def main() -> int:
     test_run_classification()
     test_openai_reply_shapes()
-    ensure_fixtures()
     test_unplanned_and_spread_overrides()
+    test_core_loop()
+    print("\nALL CHECKS PASSED")
+    return 0
+
+
+def test_core_loop() -> None:
+    """Plan, revise, roll back, cluster, annotate, overrides, cover, providers."""
+    ensure_fixtures()
     lab = R.load_lab(ROOT.parent / "phase0" / "labs" / "saal.yaml")
     g = R.geometry_for(lab, "21x21")
     ph = PH.load(PHOTO_DIR, CAPTIONS, g, lab["resolution"]["warn_below_dpi"])
@@ -827,9 +835,6 @@ def main() -> int:
         print("schema: simplified form accepts a real layout, no prefixItems or refs")
     except ImportError:
         print("schema: simplified, no prefixItems or refs (jsonschema not installed)")
-
-    print("\nALL CHECKS PASSED")
-    return 0
 
 
 if __name__ == "__main__":

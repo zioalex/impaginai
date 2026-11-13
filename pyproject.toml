@@ -1,0 +1,36 @@
+# Tool configuration only. The project is not packaged yet (see
+# docs/reviews/2026-11-11-project-review.md); this file exists so the test
+# runner, the linter and the coverage report agree on what the code is.
+
+[tool.pytest.ini_options]
+testpaths = ["phase1/tests"]
+pythonpath = ["phase0", "phase1", "phase2", "phase1/tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 110
+extend-exclude = ["albums", "phase0/photos"]
+
+[tool.ruff.lint]
+# Real mistakes only: names that do not exist, imports and variables nobody
+# uses, syntax errors, comparisons that are always true. Style is not checked.
+select = ["F", "E9", "E7", "PLE", "B006", "B008", "B018"]
+ignore = ["E731", "E741", "E701", "E702"]
+
+[tool.coverage.run]
+source = ["phase0", "phase1", "phase2"]
+omit = ["phase1/tests/*", "phase*/tools/*"]
+# The end-to-end and browser tests run the editor and the command line as
+# separate processes; without this their lines would count as never run.
+patch = ["subprocess"]
+parallel = true
+# The editor is stopped with SIGTERM; without this its data is never written.
+sigterm = true
+
+[tool.coverage.report]
+# 84% when this was added. The floor is there to notice a module losing its
+# tests, not as a target.
+fail_under = 80
+skip_empty = true
+sort = "cover"

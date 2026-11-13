@@ -58,7 +58,6 @@ import photos as PH
 import planner
 import providers
 import render as R
-import templates_lib
 from schema import Layout
 from validate import check, load_photos
 
