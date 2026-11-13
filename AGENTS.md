@@ -18,9 +18,18 @@ Standing instructions from the repository owner. Follow them on every task.
 Same as CI (`.github/workflows/ci.yml`):
 
 ```bash
+pip install -r requirements.txt -r requirements-dev.txt
+pytest --cov      # everything, each check reported on its own, with coverage
+ruff check .      # mistakes the tests do not reach
+```
+
+Each file also runs alone, which is quicker while working on one area:
+
+```bash
 python phase1/tests/test_loop.py    # planner loop, fixtures, rendering
 python phase1/tests/test_pages.py   # page repacker, front page, compositions
 python phase1/tests/test_e2e.py     # CLI + editor server against a fake model
+python phase1/tests/test_ui.py      # the editor in Chromium: load, describe, design, book, settings
 ```
 
 - `test_e2e.py` drives the phase-2 editor over HTTP; nothing calls a real model.
@@ -30,9 +39,9 @@ python phase1/tests/test_e2e.py     # CLI + editor server against a fake model
 - Rendering needs Playwright's Chromium. If `pip install -r requirements.txt`
   pulls a Playwright whose browser is not installed, pin the version that
   matches the installed browser instead of downloading another one.
-- For editor (`phase2/static/index.html`) changes, also check the page in a
-  real browser: the JS has no build step and no unit tests, so a syntax check
-  alone misses things like two elements sharing an id.
+- For editor (`phase2/static/index.html`) changes, `test_ui.py` loads the page
+  in Chromium and fails on any script error, failed request or duplicate id.
+  It covers the main path only; when you add a control, add a step for it.
 
 ## How the album is put together (where things live)
 

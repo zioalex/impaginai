@@ -39,13 +39,15 @@ def blank_pages(lay: dict) -> int:
     return n
 
 
-def main() -> int:
-    groups = [
+def _groups() -> list:
+    return [
         NS(id="g1", photo_ids=["p001", "p015", "p005", "p002", "p003"], place="Cala Gonone", date_label="3. Mai"),
         NS(id="g2", photo_ids=["p006", "p008", "p009", "p010", "p004"], place="Orosei", date_label="5. Mai"),
         NS(id="g3", photo_ids=["p011", "p012", "p014", "p007"], place="Nuoro", date_label="7. Mai"),
     ]
 
+
+def repack_and_crop_guard(groups):
     # 1. a book with photographs to spare: no empty page survives, no
     #    divider page survives past the opening, every location is stamped.
     lay = good_layout()
@@ -84,15 +86,37 @@ def main() -> int:
     assert fit_rect(sq, 1.1) is sq, "a mild crop should still fill the slot"
     print("crop guard: ok")
 
-    adaptive_pages()
-    fuller_pages()
-    compositions_survive(groups)
-    subjects_without_a_box()
-    user_spreads(groups)
-    gutter_and_bleed()
-    costs_and_places()
-    engadin_run_fixes(groups)
+
+# One entry per section, so pytest reports each on its own and a failure in
+# one no longer hides the rest. `python tests/test_pages.py` runs them in order.
+SECTIONS = ("repack_and_crop_guard", "adaptive_pages", "fuller_pages", "compositions_survive",
+            "subjects_without_a_box", "user_spreads", "gutter_and_bleed", "costs_and_places",
+            "engadin_run_fixes")
+
+
+def _run(name: str) -> None:
+    import inspect
+
+    fn = globals()[name]
+    fn(_groups()) if inspect.signature(fn).parameters else fn()
+
+
+def main() -> int:
+    test_loop_ensure()
+    for name in SECTIONS:
+        _run(name)
     return 0
+
+
+def test_repack_and_crop_guard(): _run("repack_and_crop_guard")
+def test_adaptive_pages(): _run("adaptive_pages")
+def test_fuller_pages(): _run("fuller_pages")
+def test_compositions_survive(): _run("compositions_survive")
+def test_subjects_without_a_box(): _run("subjects_without_a_box")
+def test_user_spreads(): _run("user_spreads")
+def test_gutter_and_bleed(): _run("gutter_and_bleed")
+def test_costs_and_places(): _run("costs_and_places")
+def test_settings_keys_places_and_ids(): _run("engadin_run_fixes")
 
 
 def engadin_run_fixes(groups):
@@ -765,7 +789,7 @@ def _dims() -> dict:
     return {f.stem: Image.open(f).size for f in PHOTO_DIR.glob("*.jpg")}
 
 
-def test_loop_ensure():
+def test_loop_ensure():      # also a fixture step: the placeholder photographs exist
     import test_loop
 
     test_loop.ensure_fixtures()

@@ -189,7 +189,6 @@ def size_capability(photos: list[Photo], g: Geometry, warn_dpi: float, block_dpi
       large     -> the feature slot of a composed page
       small     -> the smallest slot in the library
     """
-    import compose
 
     full = g.full_bleed("right")
     large = templates_lib.build("single-centered", g, {}).slots[0].rect

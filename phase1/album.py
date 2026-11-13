@@ -276,7 +276,7 @@ def do_proof(args) -> int:
     lab, g, fmt, _, groups, _, ov = setup(args)
     store = Store(args.album)
     v, data = store.get(args.version)
-    layout = Layout.model_validate(data)
+    Layout.model_validate(data)          # refuse a broken layout before rendering it
     tmp = args.album / f"layout-v{v.version_no:03d}.json"
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
     print(f"rendering proof of v{v.version_no:03d}")

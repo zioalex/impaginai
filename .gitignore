@@ -26,3 +26,8 @@ venv/
 # OS
 .DS_Store
 places_cache.json
+.coverage
+.coverage.*
+coverage.md
+.pytest_cache/
+.ruff_cache/
