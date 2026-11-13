@@ -1,6 +1,6 @@
 # What the tests and CI need on top of requirements.txt.
 #
-#     pip install -r requirements.txt -r requirements-dev.txt
+#     pip install -r requirements.lock.txt -r requirements-dev.lock.txt
 #     pytest                      # everything, each check reported on its own
 #     pytest --cov                # with a coverage table
 #     ruff check .                # mistakes the tests would not reach

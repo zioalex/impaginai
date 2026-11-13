@@ -618,7 +618,8 @@ def engadin_run_fixes(groups):
             os.environ["ALBUM_CONFIG_DIR"] = td
             keystore.set_key("openrouter", secret)
             mode = stat.S_IMODE(os.stat(Path(td) / "keys.json").st_mode)
-            assert mode == 0o600, oct(mode)
+            # Windows has no owner-only mode bits; the file sits in the user's profile there
+            assert mode == 0o600 or os.name == "nt", oct(mode)
             st = keystore.status("openrouter")
             assert st["source"] == "user" and secret not in json.dumps(st), st
             assert st["masked"].startswith("sk-or-") and st["masked"].endswith("9876")
@@ -668,7 +669,7 @@ def engadin_run_fixes(groups):
             assert not old.exists(), "the old folder is moved, not copied"
             assert keystore.stored("openrouter") == secret, "stored keys survive the rename"
             mode = stat.S_IMODE(os.stat(keystore.config_dir() / "keys.json").st_mode)
-            assert mode == 0o600, oct(mode)
+            assert mode == 0o600 or os.name == "nt", oct(mode)
             old.mkdir()
             (old / "keys.json").write_text(json.dumps({"openrouter": "sk-or-stale"}))
             assert keystore.stored("openrouter") == secret, "the new folder wins over a stale old one"
