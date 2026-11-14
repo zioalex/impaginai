@@ -30,7 +30,10 @@ from versions import Store  # noqa: E402
 
 PHOTO_DIR = ROOT.parent / "phase0" / "photos"
 CAPTIONS = ROOT / "examples" / "captions.yaml"
-ALBUM = Path("/tmp/album_test")
+import tempfile as _tempfile  # noqa: E402
+
+# Not /tmp: that path does not exist on Windows.
+ALBUM = Path(_tempfile.gettempdir()) / "album_test"
 
 
 def good_layout(spread_count: int = 12, summary: str | None = None) -> dict:
@@ -138,7 +141,9 @@ def ensure_fixtures() -> None:
     if not PHOTO_DIR.exists() or not any(PHOTO_DIR.glob("*.jpg")):
         gen = ROOT.parent / "phase0" / "tools" / "make_placeholder_photos.py"
         print(f"generating fixtures: {gen.name}")
-        subprocess.run([sys.executable, str(gen)], check=True, capture_output=True)
+        r = subprocess.run([sys.executable, str(gen)], capture_output=True, text=True)
+        # say why: a bare "exit status 1" hid a font path that only Linux has
+        assert r.returncode == 0, f"{gen.name} failed:\n{r.stderr[-2000:]}"
     demo = ROOT / "demo_photos"
     if not demo.exists() or not any(demo.glob("*.jpg")):
         gen = ROOT / "tools" / "make_demo_photos.py"
@@ -248,10 +253,15 @@ def test_run_classification() -> None:
             assert "the raw replies are in" in str(exc), exc
         files = sorted((Path(d) / "logs").glob("plan-*-attempt*.json"))
         assert len(files) == 3, files
-        rec = json.loads(files[0].read_text())
+        rec = json.loads(files[0].read_text(encoding="utf-8"))
         assert rec["text"] == "nope" and rec["raw"] == {"id": "x"} and rec["kind"] == "plan"
     c, _ = script(Reply(good, u))
-    run(c, log_dir=Path("/proc/nope/logs"))
+    # a log folder that cannot be created (its parent is a file) must not
+    # stop the plan; /proc was used here, which only Linux has
+    with tempfile.TemporaryDirectory() as d:
+        blocker = Path(d) / "a-file"
+        blocker.write_text("x", encoding="utf-8")
+        run(c, log_dir=blocker / "logs")
 
     # --- fallback model ---------------------------------------------------
     # transient budget exhausted -> switch once, succeed on the fallback
@@ -371,6 +381,7 @@ def test_openai_reply_shapes() -> None:
 def test_unplanned_and_spread_overrides():
     """What the editor shows as used is in the design, and a photograph can be
     set across two pages when it has the pixels."""
+    ensure_fixtures()
     import overrides as OV
     from schema import Layout
     from types import SimpleNamespace as NS
@@ -447,8 +458,15 @@ def test_unplanned_and_spread_overrides():
 def main() -> int:
     test_run_classification()
     test_openai_reply_shapes()
-    ensure_fixtures()
     test_unplanned_and_spread_overrides()
+    test_core_loop()
+    print("\nALL CHECKS PASSED")
+    return 0
+
+
+def test_core_loop() -> None:
+    """Plan, revise, roll back, cluster, annotate, overrides, cover, providers."""
+    ensure_fixtures()
     lab = R.load_lab(ROOT.parent / "phase0" / "labs" / "saal.yaml")
     g = R.geometry_for(lab, "21x21")
     ph = PH.load(PHOTO_DIR, CAPTIONS, g, lab["resolution"]["warn_below_dpi"])
@@ -584,7 +602,7 @@ def main() -> int:
     assert not rep.blocking, "planned layout failed print validation"
 
     tmp = ALBUM / "layout-v002.json"
-    tmp.write_text(json.dumps(store.get(2)[1], ensure_ascii=False, indent=2))
+    tmp.write_text(json.dumps(store.get(2)[1], ensure_ascii=False, indent=2), encoding="utf-8")
     argv = ["render.py", "proof", "--layout", str(tmp), "--photos", str(PHOTO_DIR),
             "--out", str(ALBUM / "renders"), "--format", "21x21"]
     saved, sys.argv = sys.argv, argv
@@ -598,7 +616,7 @@ def main() -> int:
     alb = ALBUM / "ovtest"
     alb.mkdir(parents=True, exist_ok=True)
     (alb / "places.yaml").write_text(
-        "- name: Testbucht\n  lat: 40.1150\n  lon: 9.6900\n  radius_m: 3000\n")
+        "- name: Testbucht\n  lat: 40.1150\n  lon: 9.6900\n  radius_m: 3000\n", encoding="utf-8")
     demo = ROOT / "demo_photos"
     if demo.exists():
         dph = PH.load(demo, ROOT / "examples" / "demo_captions.yaml", g, 200, 150)
@@ -682,7 +700,7 @@ def main() -> int:
     cfgf = ALBUM / "models.yaml"
     cfgf.write_text(
         "default:\n  base_url: http://remote.invalid/v1\n  model: planner\n"
-        "  api_key: k\nannotate:\n  base_url: ollama\n  model: visionmodel\n")
+        "  api_key: k\nannotate:\n  base_url: ollama\n  model: visionmodel\n", encoding="utf-8")
     roles = PR.resolve_all(config_path=cfgf)
     assert roles["annotate"].model == "visionmodel", "annotate did not take its override"
     assert roles["plan"].model == "planner", "plan did not inherit the default"
@@ -827,9 +845,6 @@ def main() -> int:
         print("schema: simplified form accepts a real layout, no prefixItems or refs")
     except ImportError:
         print("schema: simplified, no prefixItems or refs (jsonschema not installed)")
-
-    print("\nALL CHECKS PASSED")
-    return 0
 
 
 if __name__ == "__main__":

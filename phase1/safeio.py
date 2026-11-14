@@ -14,11 +14,11 @@ import os
 from pathlib import Path
 
 
-def write_text(path: Path, text: str) -> None:
+def write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
     path = Path(path)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
+        with open(tmp, "w", encoding=encoding) as f:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
@@ -26,3 +26,19 @@ def write_text(path: Path, text: str) -> None:
     finally:
         if tmp.exists():
             tmp.unlink()
+
+
+def safe_console() -> None:
+    """Never let a character the terminal cannot show stop the program.
+
+    A Windows console is often cp1252. Printing a place name or an arrow it
+    does not have raised UnicodeEncodeError in the middle of a job; now the
+    character is shown as "?" and the work carries on."""
+    import sys
+
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except (ValueError, OSError):
+                pass

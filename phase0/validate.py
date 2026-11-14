@@ -15,7 +15,7 @@ from PIL import Image
 
 import imaging  # registers HEIC/HEIF decoders on import
 import templates_lib
-from geometry import Geometry, Rect, effective_dpi
+from geometry import Geometry, effective_dpi
 from schema import Layout
 
 # The pixel limit is set once, in imaging.py.

@@ -167,7 +167,7 @@ def apply_captions(photos: list[Photo], captions_file: Path) -> None:
     The user's order is a hint to the planner, not an instruction — the whole
     premise is that the AI may resequence.
     """
-    data = yaml.safe_load(captions_file.read_text()) or {}
+    data = yaml.safe_load(captions_file.read_text(encoding="utf-8")) or {}
     order = data.pop("order", None) if isinstance(data, dict) else None
     by_id = {p.id: p for p in photos}
     for pid, caption in (data or {}).items():
@@ -189,7 +189,6 @@ def size_capability(photos: list[Photo], g: Geometry, warn_dpi: float, block_dpi
       large     -> the feature slot of a composed page
       small     -> the smallest slot in the library
     """
-    import compose
 
     full = g.full_bleed("right")
     large = templates_lib.build("single-centered", g, {}).slots[0].rect

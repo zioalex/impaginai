@@ -31,7 +31,7 @@ feature slot (always index 0) carries one, in the reserved band under the grid.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Literal
 
 from geometry import CROP_KEEP_MULTI, CROP_KEEP_SINGLE, Geometry, Rect
 

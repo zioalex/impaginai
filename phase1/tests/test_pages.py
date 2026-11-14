@@ -39,13 +39,15 @@ def blank_pages(lay: dict) -> int:
     return n
 
 
-def main() -> int:
-    groups = [
+def _groups() -> list:
+    return [
         NS(id="g1", photo_ids=["p001", "p015", "p005", "p002", "p003"], place="Cala Gonone", date_label="3. Mai"),
         NS(id="g2", photo_ids=["p006", "p008", "p009", "p010", "p004"], place="Orosei", date_label="5. Mai"),
         NS(id="g3", photo_ids=["p011", "p012", "p014", "p007"], place="Nuoro", date_label="7. Mai"),
     ]
 
+
+def repack_and_crop_guard(groups):
     # 1. a book with photographs to spare: no empty page survives, no
     #    divider page survives past the opening, every location is stamped.
     lay = good_layout()
@@ -84,15 +86,66 @@ def main() -> int:
     assert fit_rect(sq, 1.1) is sq, "a mild crop should still fill the slot"
     print("crop guard: ok")
 
-    adaptive_pages()
-    fuller_pages()
-    compositions_survive(groups)
-    subjects_without_a_box()
-    user_spreads(groups)
-    gutter_and_bleed()
-    costs_and_places()
-    engadin_run_fixes(groups)
+
+# One entry per section, so pytest reports each on its own and a failure in
+# one no longer hides the rest. `python tests/test_pages.py` runs them in order.
+SECTIONS = ("repack_and_crop_guard", "adaptive_pages", "fuller_pages", "compositions_survive",
+            "subjects_without_a_box", "user_spreads", "gutter_and_bleed", "costs_and_places",
+            "engadin_run_fixes")
+
+
+def _run(name: str) -> None:
+    import inspect
+
+    fn = globals()[name]
+    fn(_groups()) if inspect.signature(fn).parameters else fn()
+
+
+def main() -> int:
+    test_loop_ensure()
+    for name in SECTIONS:
+        _run(name)
     return 0
+
+
+def test_portable_dates_and_text():
+    """Two things that worked on Linux and failed on Windows: a date format
+    code only glibc has, and text files written in whatever the system's
+    encoding happened to be."""
+    import tempfile
+    from datetime import datetime
+
+    import cluster
+    import overrides as OV
+    import versions
+
+    day = lambda *a: NS(taken_at=datetime(*a))
+    assert cluster.date_range([day(2026, 8, 5, 9)]) == "5 August 2026"
+    assert cluster.date_range([day(2026, 8, 5, 9), day(2026, 8, 9, 9)]) == "5–9 August 2026"
+    assert cluster.date_range([day(2026, 7, 30, 9), day(2026, 8, 2, 9)]) == "30 Jul – 2 Aug 2026"
+    words = "Zürich · Lej da Segl → 山 “quoted”"
+    with tempfile.TemporaryDirectory() as td:
+        store = versions.Store(Path(td))
+        store.add({"meta": {"title": words}}, parent=None, user_comment=words)
+        assert store.versions()[0].user_comment == words
+        assert store.get()[1]["meta"]["title"] == words
+        assert words.encode("utf-8") in (Path(td) / "versions.json").read_bytes(), \
+            "state files must be UTF-8 on every system"
+        ov = OV.Overrides.load(Path(td))
+        ov.set("p001", description=words)
+        ov.save()
+        assert OV.Overrides.load(Path(td)).get("p001").description == words
+
+
+def test_repack_and_crop_guard(): _run("repack_and_crop_guard")
+def test_adaptive_pages(): _run("adaptive_pages")
+def test_fuller_pages(): _run("fuller_pages")
+def test_compositions_survive(): _run("compositions_survive")
+def test_subjects_without_a_box(): _run("subjects_without_a_box")
+def test_user_spreads(): _run("user_spreads")
+def test_gutter_and_bleed(): _run("gutter_and_bleed")
+def test_costs_and_places(): _run("costs_and_places")
+def test_settings_keys_places_and_ids(): _run("engadin_run_fixes")
 
 
 def engadin_run_fixes(groups):
@@ -154,6 +207,131 @@ def engadin_run_fixes(groups):
         assert pts[1].features, "the other places are named while one is backing off"
     geocode._DOWN_UNTIL = 0.0
     geocode._CELL_RETRY.clear()
+
+    # --- landmark names from the list kept on this machine -----------------
+    import gazetteer
+    import json
+    import os
+    import time
+
+    def row(name, code, lat, lon, cc="CH"):
+        return "\t".join(["1", name, name, "", str(lat), str(lon), "T", code, cc] + [""] * 10)
+
+    CH = [row("Vadret da Morteratsch", "GLCR", 46.405, 9.935), row("Munt Pers", "PK", 46.42, 9.955),
+          row("Lej Nair", "LK", 46.412, 9.99), row("Berninapass", "PASS", 46.4103, 10.0222),
+          row("Pontresina", "PPL", 46.4955, 9.9016), row("Hotel Morteratsch", "HTL", 46.435, 9.94),
+          row("far away lake", "LK", 47.3, 8.5), "broken line"]
+    IT = [row("Lago Bianco Sud", "LK", 46.39, 10.03, "IT")]
+    rows = gazetteer.parse(CH)
+    assert [r[0] for r in rows] == ["Vadret da Morteratsch", "Munt Pers", "Lej Nair",
+                                    "Berninapass", "far away lake"], rows
+    assert {r[1] for r in rows} == {"glacier", "peak", "lake", "mountain_pass"}
+    saved_cfg, saved_cf = os.environ.get("ALBUM_CONFIG_DIR"), gazetteer.countries_for
+    geocode._OSM_SAID = False
+    try:
+        with tempfile.TemporaryDirectory() as cfg, tempfile.TemporaryDirectory() as td:
+            os.environ["ALBUM_CONFIG_DIR"] = cfg
+            gazetteer.reset()
+            got = []
+
+            def fake_dl(cc):
+                got.append(cc)
+                if cc == "FR":
+                    raise TimeoutError("The read operation timed out")
+                return gazetteer.parse({"CH": CH, "IT": IT}[cc])
+
+            def never(lat, lon, lang):
+                raise AssertionError("near() and a cache-only apply() must not touch the network")
+
+            # a photograph on the glacier, close to the Italian border
+            gazetteer.countries_for = lambda pts, reach_m=2500.0: {"CH", "IT"}
+            pt = [NS(id="a", gps=(46.41, 9.94), place=None, features=[]),
+                  NS(id="b", gps=(46.392, 10.028), place=None, features=[])]
+            assert geocode.prefetch_gazetteer(pt, fetch=fake_dl) is True
+            assert sorted(got) == ["CH", "IT"] and (Path(cfg) / "gazetteer" / "CH.json").exists()
+            assert geocode.prefetch_gazetteer(pt, fetch=fake_dl) is False and len(got) == 2, \
+                "a country already on this machine was downloaded again"
+            geocode.apply(pt, Path(td), offline_db=False, online=False, fetch=never)
+            assert pt[0].place == "Vadret da Morteratsch", pt[0].place
+            assert "Vadret da Morteratsch (glacier" in pt[0].features[0], pt[0].features
+            assert not any("far away" in f or "Hotel" in f for f in pt[0].features)
+            assert pt[1].place == "Lago Bianco Sud", "a landmark across the border was not found"
+            # a new process: read from disk, no download
+            gazetteer.reset()
+            assert geocode.prefetch_gazetteer(pt, fetch=never) is True
+            # the option switched off leaves landmark names out
+            pt[0].place = None
+            geocode.apply(pt, Path(td), offline_db=False, online=False, landmarks=False)
+            assert pt[0].place is None and pt[0].features == []
+            # OpenStreetMap's answer for the same glacier replaces the list's, others are added
+            (Path(td) / "features_cache.json").write_text(json.dumps({"46.41,9.94": [
+                {"name": "Morteratschgletscher", "kind": "glacier", "lat": 46.4052, "lon": 9.9352},
+                {"name": "Aussichtspunkt", "kind": "viewpoint", "lat": 46.411, "lon": 9.941}]}), encoding="utf-8")
+            geocode.apply(pt, Path(td), offline_db=False, online=False, fetch=never)
+            names = [f.split(" (")[0] for f in pt[0].features]
+            assert names[0] == "Morteratschgletscher" and "Vadret da Morteratsch" not in names, names
+            assert "Aussichtspunkt" in names and "Munt Pers" in names, names
+            # a download that fails: said once, not retried during its pause, nothing breaks
+            gazetteer.countries_for = lambda pts, reach_m=2500.0: {"FR"}
+            fr = [NS(id="f", gps=(45.9, 6.9), place=None, features=[])]
+            assert geocode.prefetch_gazetteer(fr, fetch=fake_dl) is False
+            assert geocode.prefetch_gazetteer(fr, fetch=fake_dl) is False
+            assert got.count("FR") == 1 and gazetteer.status()["FR"] == "unavailable"
+            # a slow download is not waited for beyond the limit
+            gazetteer.countries_for = lambda pts, reach_m=2500.0: {"AT"}
+            import threading as _th
+            release = _th.Event()
+
+            def slow(cc):
+                release.wait(10)
+                return []
+
+            t0 = time.monotonic()
+            assert geocode.prefetch_gazetteer(fr, fetch=slow, wait_s=0.3) is False
+            assert time.monotonic() - t0 < 2 and gazetteer.status()["AT"] == "downloading"
+            release.set()
+            gazetteer._THREADS["AT"].join(5)
+            # OpenStreetMap failing says so once and never raises
+            calls.clear()
+            geocode._DOWN_UNTIL = 0.0
+            geocode._CELL_RETRY.clear()
+            assert geocode.prefetch_overpass(pt, Path(td) / "x", fetch=down) == 0 and len(calls) == 1
+            assert geocode.places_status()["osm"] == "unavailable"
+    finally:
+        gazetteer.countries_for = saved_cf
+        gazetteer.reset()
+        geocode._DOWN_UNTIL = 0.0
+        geocode._CELL_RETRY.clear()
+        if saved_cfg is None:
+            os.environ.pop("ALBUM_CONFIG_DIR", None)
+        else:
+            os.environ["ALBUM_CONFIG_DIR"] = saved_cfg
+    # Designing does not wait for OpenStreetMap: it is asked in the background.
+    sys.path.insert(0, str(ROOT.parent / "phase2"))
+    import server
+    saved = (dict(server.STATE), geocode.prefetch_overpass, geocode.prefetch_gazetteer)
+    started, release = _th.Event(), _th.Event()
+
+    def hangs(photos, album_dir, language=None, fetch=None):
+        started.set()
+        release.wait(20)
+        return 0
+
+    try:
+        server.STATE.update(online_places=True, all=[], album=Path("/nowhere"), language="de")
+        geocode.prefetch_overpass, geocode.prefetch_gazetteer = hangs, (lambda ph, wait_s=None, fetch=None: False)
+        t0 = time.monotonic()
+        server.prefetch_places([], wait_s=20)
+        assert time.monotonic() - t0 < 2, "the design waited for OpenStreetMap"
+        assert started.wait(5), "OpenStreetMap was not asked in the background"
+        server.prefetch_places([], wait_s=20)        # a second one does not pile up
+        release.set()
+    finally:
+        release.set()
+        server.STATE.clear()
+        server.STATE.update(saved[0])
+        geocode.prefetch_overpass, geocode.prefetch_gazetteer = saved[1], saved[2]
+    print("landmark names: offline list, across a border, merged with OpenStreetMap, quiet failures: ok")
     print("place lookup cooldown: ok")
 
     # a short book takes the photographs the design left out before blank paper,
@@ -469,7 +647,8 @@ def engadin_run_fixes(groups):
             os.environ["ALBUM_CONFIG_DIR"] = td
             keystore.set_key("openrouter", secret)
             mode = stat.S_IMODE(os.stat(Path(td) / "keys.json").st_mode)
-            assert mode == 0o600, oct(mode)
+            # Windows has no owner-only mode bits; the file sits in the user's profile there
+            assert mode == 0o600 or os.name == "nt", oct(mode)
             st = keystore.status("openrouter")
             assert st["source"] == "user" and secret not in json.dumps(st), st
             assert st["masked"].startswith("sk-or-") and st["masked"].endswith("9876")
@@ -499,32 +678,36 @@ def engadin_run_fixes(groups):
         import safeio
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "overrides.yaml"
-            safeio.write_text(f, "first")
+            safeio.write_text(f, "first", encoding="utf-8")
             try:
-                safeio.write_text(f, 12345)          # not text: the write fails
+                safeio.write_text(f, 12345, encoding="utf-8")          # not text: the write fails
             except TypeError:
                 pass
-            assert f.read_text() == "first" and list(Path(td).iterdir()) == [f]
+            assert f.read_text(encoding="utf-8") == "first" and list(Path(td).iterdir()) == [f]
         # The project was renamed: keys stored under the old folder name
         # follow it, permissions intact, and a folder under the new name wins.
-        saved_home = os.environ.get("HOME")
+        # Path.home() reads HOME on Linux and macOS, USERPROFILE on Windows
+        saved_home = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
         with tempfile.TemporaryDirectory() as home:
-            os.environ["HOME"] = home
+            os.environ["HOME"] = os.environ["USERPROFILE"] = home
             os.environ.pop("ALBUM_CONFIG_DIR", None)
             old = Path(home) / ".config" / keystore.OLD_APP_DIR
             old.mkdir(parents=True)
-            (old / "keys.json").write_text(json.dumps({"openrouter": secret}))
+            (old / "keys.json").write_text(json.dumps({"openrouter": secret}), encoding="utf-8")
             os.chmod(old / "keys.json", 0o600)
             assert keystore.config_dir() == Path(home) / ".config" / keystore.APP_DIR
             assert not old.exists(), "the old folder is moved, not copied"
             assert keystore.stored("openrouter") == secret, "stored keys survive the rename"
             mode = stat.S_IMODE(os.stat(keystore.config_dir() / "keys.json").st_mode)
-            assert mode == 0o600, oct(mode)
+            assert mode == 0o600 or os.name == "nt", oct(mode)
             old.mkdir()
-            (old / "keys.json").write_text(json.dumps({"openrouter": "sk-or-stale"}))
+            (old / "keys.json").write_text(json.dumps({"openrouter": "sk-or-stale"}), encoding="utf-8")
             assert keystore.stored("openrouter") == secret, "the new folder wins over a stale old one"
-        if saved_home is not None:
-            os.environ["HOME"] = saved_home
+        for k, v in saved_home.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
     finally:
         for k in ("OPENROUTER_API_KEY", "ALBUM_CONFIG_DIR"):
             os.environ.pop(k, None)
@@ -640,7 +823,7 @@ def _dims() -> dict:
     return {f.stem: Image.open(f).size for f in PHOTO_DIR.glob("*.jpg")}
 
 
-def test_loop_ensure():
+def test_loop_ensure():      # also a fixture step: the placeholder photographs exist
     import test_loop
 
     test_loop.ensure_fixtures()
@@ -930,7 +1113,7 @@ def gutter_and_bleed():
     layout = Layout.model_validate(lay)
     g = R.geometry_for(LAB, "21x21")
     paths = {pano: info[pano].path}
-    css = (ROOT.parent / "phase0" / "assets" / "style.css").read_text()
+    css = (ROOT.parent / "phase0" / "assets" / "style.css").read_text(encoding="utf-8")
     html, _ = R.build_inner_html(layout, g, paths, css)
     with tempfile.TemporaryDirectory() as td:
         files = R.render_jpegs(html, Path(td) / "x.html", Path(td) / "pages", dpi=40)

@@ -13,7 +13,24 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+# A bold sans from wherever this system keeps one. The path used to be the
+# Linux one only, so the script (and every test that needs these photographs)
+# failed on macOS and Windows. Pillow's own built-in font is the last resort.
+FONTS = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/Library/Fonts/Arial Bold.ttf",
+    "C:/Windows/Fonts/arialbd.ttf",
+)
+
+
+def font(size: int):
+    for path in FONTS:
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return ImageFont.load_default(size)
 
 SPECS = [
     ("p001", 6000, 2400, (38, 70, 92)),     # panorama
@@ -47,8 +64,8 @@ def make(pid: str, w: int, h: int, rgb: tuple[int, int, int], out: Path) -> None
     for x, y in ((0, 0), (w, 0), (0, h), (w, h)):
         d.ellipse([x - band, y - band, x + band, y + band], fill=(255, 255, 255))
 
-    f_big = ImageFont.truetype(FONT, int(min(w, h) * 0.3))
-    f_small = ImageFont.truetype(FONT, int(min(w, h) * 0.045))
+    f_big = font(int(min(w, h) * 0.3))
+    f_small = font(int(min(w, h) * 0.045))
     d.text((w / 2, h / 2), pid, font=f_big, fill=(255, 255, 255), anchor="mm")
     d.text((w / 2, h * 0.72), f"{w}x{h}", font=f_small, fill=(255, 255, 255), anchor="mm")
     d.line([(w / 2, 0), (w / 2, h)], fill=(255, 255, 255, 90), width=2)

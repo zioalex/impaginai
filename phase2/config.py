@@ -136,8 +136,10 @@ OPTIONS: list[Option] = [
            help="Names towns from the photographs' GPS, offline.",
            flag="--no-geocode"),
     Option("online_places", "places", "Named landmarks", True, "regroup", "bool",
-           help="Names lakes, glaciers and peaks. This sends photo coordinates to "
-                "overpass-api.de (OpenStreetMap).",
+           help="Names lakes, glaciers and peaks from a list downloaded once per country "
+                "from geonames.org and kept on this machine. Extra names come from "
+                "OpenStreetMap when it answers (this sends coordinates, rounded to "
+                "about a kilometre, to its public servers).",
            flag="--offline-places"),
 ]
 
