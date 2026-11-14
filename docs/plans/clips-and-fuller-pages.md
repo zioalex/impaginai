@@ -1,6 +1,6 @@
 # Plan: short videos as photographs, and fuller pages
 
-Status: **proposed, nothing built.** Decisions already taken by the owner are
+Status: **agreed; building in the order below. Nothing built yet.** Decisions already taken by the owner are
 under "Decided". Open points are at the end.
 
 Two requests:
@@ -18,6 +18,10 @@ Two requests:
 | Who picks the frame | The vision model, from a few sharp candidates. The user can override in the editor. |
 | White space | All four remedies: fill with photographs, maps and routes, typographic features, ornaments. |
 | The user's own words | **Styling only. Never rewritten.** |
+| First steps | Measure empty space (B0) and probe the real clips (A0). |
+| Paper tone | Later, and opt-in: not before a test print exists. |
+| Typography | A choice of three pairings. |
+| Dark pages | Allowed when a page's photographs are night scenes; the user can override per page. |
 
 Two rules the project already has, and both parts keep:
 
@@ -231,6 +235,3 @@ before-and-after page images, because these are judged by eye.
 ## Open points for the owner
 
 1. Run the A0 probe on the clip folder and share its output.
-2. Paper tone: allowed to be on by default, or opt-in until a test print exists?
-3. Typography: one restrained look, or a choice of two or three pairings?
-4. May a page be dark (ink background) when its photographs are night scenes?
