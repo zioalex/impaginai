@@ -232,6 +232,7 @@ textarea{min-height:76px;resize:vertical;font-family:Georgia,"Iowan Old Style",s
 .spread img{width:50%;display:block;aspect-ratio:var(--ar,1);object-fit:cover;background:#fff}
 .spread img+img{border-left:1px solid #0002}
 .slabel{font-size:12px;color:var(--soft);margin-top:6px;text-align:center}
+.emptynote{font-size:12px;color:var(--soft);margin-top:4px;line-height:1.35}
 .removed{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0}
 .removed .rm{display:flex;flex-direction:column;gap:6px;align-items:center}
 .removed .rm img{width:96px;height:72px;object-fit:cover;border-radius:4px;background:#ddd}
@@ -1239,11 +1240,12 @@ function renderBook(){
   const ar=album.formats[album.format]?(()=>{const m=album.formats[album.format].match(/([\d.]+) × ([\d.]+)/);return m?m[1]/m[2]:1;})():1;
   const low=pages.low_res||{}; const nLow=Object.keys(low).length;
   let h=`<div class="bookhead"><b>Version ${pages.version}</b><span class="sub">${pages.count} pages · ${album.formats[album.format]}. Click a spread to see it large.</span>
+    ${pages.empty_average!=null?`<span class="sub" id="emptyAvg" title="The share of a page that no photograph or text covers. A page with ordinary margins is about a third empty.">${pages.empty_average}% of a page empty on average${Object.keys(pages.empty||{}).length?`, ${Object.keys(pages.empty).length} more than half`:""}</span>`:""}
     ${nLow?`<span class="lowres" title="Photographs without enough pixels for the space they were given">⚠ ${nLow} page${nLow>1?"s":""} with low-resolution photos</span>`:""}
     <div class="grow" style="flex:1"></div><button class="small" onclick="window.open('/proof.pdf','_blank')">Open preview PDF</button></div><div class="spreads">`;
   for(let i=1;i<=pages.count;i+=2){
     h+=`<div><div class="spread" data-i="${i}" style="--ar:${ar}"><img loading="lazy" src="/pages/${i}.jpg${bust}">${i+1<=pages.count?`<img loading="lazy" src="/pages/${i+1}.jpg${bust}">`:""}</div>
-      <div class="slabel">pages ${i}–${i+1}</div>${lowNote(low,i)}</div>`;
+      <div class="slabel">pages ${i}–${i+1}</div>${lowNote(low,i)}${emptyNote(pages.empty||{},i)}</div>`;
   }
   h+=`</div><div class="versions"><h3>Versions</h3>`+album.versions.slice().reverse().map(v=>`<div class="vrow">
       <span><b>v${v.version_no}</b></span><span class="what">${esc(v.user_comment||v.change_summary||"")}
@@ -1255,6 +1257,11 @@ function renderBook(){
   b.querySelectorAll(".spread").forEach(s=>s.onclick=()=>openSpread(Number(s.dataset.i)));
   b.querySelectorAll("[data-rb]").forEach(x=>x.onclick=async()=>{
     try{await send("POST","/api/rollback",{to:Number(x.dataset.rb)});}catch(e){note(e.message,"err");return;} poll(true);});
+}
+// A page more than half empty, and what causes it.
+function emptyNote(bare,i){
+  const items=[i,i+1].filter(n=>bare[n]).map(n=>`▫ page ${n} is ${bare[n].percent}% empty — ${esc(bare[n].why)}`);
+  return items.length?`<div class="emptynote">${items.join("<br>")}</div>`:"";
 }
 function lowNote(low,i){
   const items=[...(low[i]||[]),...(low[i+1]||[])]; if(!items.length)return "";
