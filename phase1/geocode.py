@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,7 +53,7 @@ def load_user_places(path: Path) -> list[NamedPlace]:
     """
     if not path.exists():
         return []
-    raw = yaml.safe_load(path.read_text()) or []
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or []
     out = []
     for item in raw:
         try:
@@ -81,7 +82,7 @@ class Geocoder:
         self.cache: dict[str, str | None] = {}
         if self.cache_path.exists():
             try:
-                self.cache = json.loads(self.cache_path.read_text())
+                self.cache = json.loads(self.cache_path.read_text(encoding="utf-8"))
             except Exception:
                 self.cache = {}
         self.offline_db = offline_db
@@ -164,7 +165,7 @@ class Geocoder:
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
             import safeio
 
-            safeio.write_text(self.cache_path, json.dumps(self.cache, ensure_ascii=False, indent=1))
+            safeio.write_text(self.cache_path, json.dumps(self.cache, ensure_ascii=False, indent=1), encoding="utf-8")
         except Exception:
             pass
 
@@ -173,15 +174,23 @@ class Geocoder:
 #
 # A settlement database says "Pontresina". Nobody who stood on the ice calls
 # it that: it was the Morteratsch glacier. OpenStreetMap knows the names of
-# glaciers, lakes, peaks, passes, rivers and viewpoints, so the coordinates of
-# each place (rounded to about a kilometre) are sent to the public Overpass API
-# once and the answer cached in `features_cache.json`. This is the only
-# network call in the place pipeline; `online=False` (--offline-places) skips it.
+# glaciers, lakes, peaks, passes, rivers and viewpoints.
+#
+# The first source is `gazetteer.py`: a per-country landmark list downloaded
+# once and kept on this machine. It always answers. The public Overpass API,
+# below, is the second: asked once per place (rounded to about a kilometre),
+# cached in `features_cache.json`, and only ever from the background, because
+# its servers are shared and time out often. It adds viewpoints and names in
+# the album's language when it answers and costs nothing when it does not.
 
 # The public instances are busy; one answers when the other is overloaded.
 OVERPASS_URLS = ["https://overpass-api.de/api/interpreter",
                  "https://overpass.private.coffee/api/interpreter",
                  "https://overpass.kumi.systems/api/interpreter"]
+# ALBUM_OVERPASS_URL replaces them, comma separated: your own Overpass server,
+# which answers when the public ones do not.
+if os.environ.get("ALBUM_OVERPASS_URL"):
+    OVERPASS_URLS = [u.strip() for u in os.environ["ALBUM_OVERPASS_URL"].split(",") if u.strip()]
 FEATURE_RADIUS_M = 2500
 # Longer than the 15 s the query allows the server: giving up first (it was
 # 12 s) threw away answers that were on their way.
@@ -194,6 +203,8 @@ _DOWN_UNTIL = 0.0
 # round starts with the others instead of the same slow one.
 CELL_COOLDOWN_S = 2 * 60 * 60
 _CELL_RETRY: dict[str, float] = {}
+_OSM_STATE = "idle"                  # idle | ok | unavailable, for the editor
+_OSM_SAID = False
 
 # kind of feature -> how strongly it names a place (lower wins at equal distance)
 _KINDS = {
@@ -262,44 +273,79 @@ def _overpass(lat: float, lon: float, language: str | None, timeout: float = TIM
 
 
 class Features:
-    """Named geographic features near each photograph, cached per album."""
+    """Named geographic features near each photograph.
+
+    Two sources, merged. The landmark list kept on this machine
+    (`gazetteer.py`) answers at once and always. OpenStreetMap's answers, where
+    its public servers gave one, add viewpoints and names in the album's
+    language; they are cached per album in `features_cache.json`.
+
+    `near()` never touches the network. `fetch_missing()` is the only thing
+    here that does, and nothing waits on it."""
 
     def __init__(self, album_dir: Path, online: bool = True, language: str | None = None,
-                 fetch=None):
+                 fetch=None, landmarks: bool = True):
         self.path = album_dir / "features_cache.json"
         self.online = online
         self.language = language
+        self.landmarks = landmarks
         self.fetch = fetch or _overpass
         self.cache: dict[str, list[dict]] = {}
         if self.path.exists():
             try:
-                self.cache = json.loads(self.path.read_text())
+                self.cache = json.loads(self.path.read_text(encoding="utf-8"))
             except Exception:
                 self.cache = {}
         self.failed = False
 
-    def near(self, gps: tuple[float, float]) -> list[dict]:
-        global _DOWN_UNTIL
-        k = _feature_key(gps)
-        if k not in self.cache:
+    def fetch_missing(self, points) -> int:
+        """Ask OpenStreetMap about every cell not answered yet. Returns how
+        many answered. Quiet: one line per session when it is unavailable."""
+        global _DOWN_UNTIL, _OSM_STATE, _OSM_SAID
+        answered = 0
+        for gps in points:
+            if gps is None:
+                continue
+            k = _feature_key(gps)
             now = time.monotonic()
-            if (not self.online or self.failed or now < _DOWN_UNTIL
+            if (k in self.cache or not self.online or self.failed or now < _DOWN_UNTIL
                     or now < _CELL_RETRY.get(k, 0.0)):
-                return []
+                continue
             try:
                 # An empty answer is cached too: "nothing named here" is an
                 # answer, and asking again would only cost another wait.
                 self.cache[k] = self.fetch(round(gps[0], 2), round(gps[1], 2), self.language)
-            except Exception as exc:  # no network, rate limited: carry on without
-                print(f"  place lookup unavailable ({str(exc)[:80]}); using town names only, "
-                      f"trying again in {COOLDOWN_S // 60} minutes")
+            except Exception as exc:  # no network, overloaded, rate limited
+                if not _OSM_SAID:
+                    _OSM_SAID = True
+                    print(f"  extra names from OpenStreetMap unavailable ({str(exc)[:60]}); "
+                          f"using the landmark list on this machine")
                 self.failed = True
+                _OSM_STATE = "unavailable"
                 _DOWN_UNTIL = time.monotonic() + COOLDOWN_S
                 _CELL_RETRY[k] = time.monotonic() + CELL_COOLDOWN_S
-                return []
+                break
+            answered += 1
+            _OSM_STATE = "ok"
             self._save()
+        return answered
+
+    def near(self, gps: tuple[float, float]) -> list[dict]:
+        if not self.landmarks:
+            return []
+        osm = self.cache.get(_feature_key(gps)) or []
+        rows = list(osm)
+        import gazetteer
+
+        for f in gazetteer.near(gps, FEATURE_RADIUS_M):
+            # The same lake from both sources: keep OpenStreetMap's, which
+            # carries the name in the album's language.
+            if any(o["kind"] == f["kind"] and (o["name"] == f["name"] or
+                   _haversine_m((o["lat"], o["lon"]), (f["lat"], f["lon"])) < 400) for o in osm):
+                continue
+            rows.append(f)
         found = []
-        for f in self.cache[k]:
+        for f in rows:
             d = _haversine_m(gps, (f["lat"], f["lon"]))
             found.append({**f, "distance_m": round(d)})
         found.sort(key=lambda f: (f["distance_m"] + 600 * _KINDS.get(f["kind"], 5)))
@@ -315,24 +361,32 @@ class Features:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             import safeio
 
-            safeio.write_text(self.path, json.dumps(self.cache, ensure_ascii=False, indent=1))
+            safeio.write_text(self.path, json.dumps(self.cache, ensure_ascii=False, indent=1), encoding="utf-8")
         except Exception:
             pass
 
 
-def prefetch(photos, album_dir: Path, language: str | None = None, fetch=None) -> int:
-    """Look up the named places for every photograph's cell that is not cached
-    yet. Returns how many cells were asked. Safe to call often: cached cells and
-    the cooldown after a failure make it cheap."""
+def prefetch_gazetteer(photos, wait_s: float | None = None, fetch=None) -> bool:
+    """Have the landmark lists for these photographs' countries on this
+    machine. True when one became available that was not before."""
+    import gazetteer
+
+    return gazetteer.prepare([p.gps for p in photos], fetch=fetch, wait_s=wait_s)
+
+
+def prefetch_overpass(photos, album_dir: Path, language: str | None = None, fetch=None) -> int:
+    """Ask OpenStreetMap about every photograph's cell not answered yet.
+    Returns how many cells answered. Meant for a background thread: it can
+    take a minute and nothing should wait for it."""
     feats = Features(album_dir, online=True, language=language, fetch=fetch)
-    asked = 0
-    for p in photos:
-        if p.gps is None:
-            continue
-        if _feature_key(p.gps) not in feats.cache and not feats.failed:
-            asked += 1
-        feats.near(p.gps)
-    return asked
+    return feats.fetch_missing([p.gps for p in photos])
+
+
+def places_status() -> dict:
+    """For the editor: where landmark names are coming from right now."""
+    import gazetteer
+
+    return {"countries": gazetteer.status(), "osm": _OSM_STATE}
 
 
 def _short_town(label: str) -> str:
@@ -340,17 +394,28 @@ def _short_town(label: str) -> str:
 
 
 def apply(photos, album_dir: Path, offline_db: bool = True, online: bool = False,
-          language: str | None = None, fetch=None) -> int:
+          language: str | None = None, fetch=None, landmarks: bool = True) -> int:
     """Fill photo.place for every photo that has GPS. Returns how many were named.
 
-    With `online`, also fill photo.features (named glaciers, lakes, peaks... in
-    reach, nearest first) and lead the place with the nearest strong one:
+    Also fills photo.features (named glaciers, lakes, peaks... in reach,
+    nearest first) and leads the place with the nearest strong one:
     "Morteratschgletscher · Pontresina" rather than "Pontresina, Grisons". A
     name the user gave in places.yaml is never overridden.
+
+    Without `online` nothing is fetched: only what is already on this machine
+    is used, so the editor can call this on every reload. With it (the command
+    line, which has no background to work in) the landmark lists are downloaded
+    if missing and OpenStreetMap is asked, here and now. `landmarks=False`
+    leaves landmark names out altogether.
     """
     gc = Geocoder(album_dir, offline_db)
     names = gc.resolve([p.gps for p in photos])
-    feats = Features(album_dir, online=online, language=language, fetch=fetch)
+    feats = Features(album_dir, online=online, language=language, fetch=fetch,
+                     landmarks=landmarks)
+    if online and landmarks:
+        if offline_db:
+            prefetch_gazetteer(photos)
+        feats.fetch_missing([p.gps for p in photos])
     user_named = {pl.name for pl in gc.user_places}
     n = 0
     for p, name in zip(photos, names):
@@ -366,3 +431,47 @@ def apply(photos, album_dir: Path, offline_db: bool = True, online: bool = False
             p.place = name
             n += 1
     return n
+
+
+def _check(lat: float, lon: float) -> None:
+    """`python phase1/geocode.py check <lat> <lon>`: which source answers, how
+    fast, and with what. For finding out why a place has no landmark name."""
+    import gazetteer
+
+    gps = (lat, lon)
+    t = time.monotonic()
+    ccs = gazetteer.countries_for([gps])
+    print(f"countries in reach: {', '.join(sorted(ccs)) or 'none (is reverse_geocoder installed?)'}")
+    gazetteer.prepare([gps])
+    print(f"landmark list ({time.monotonic() - t:.1f}s, kept in {gazetteer.folder()}): "
+          f"{gazetteer.status() or 'nothing loaded'}")
+    t = time.monotonic()
+    rows = gazetteer.near(gps, FEATURE_RADIUS_M)
+    print(f"  {len(rows)} landmarks within {FEATURE_RADIUS_M} m, "
+          f"found in {(time.monotonic() - t) * 1000:.0f} ms")
+    for url in list(OVERPASS_URLS):
+        t = time.monotonic()
+        saved = list(OVERPASS_URLS)
+        OVERPASS_URLS[:] = [url]
+        try:
+            n = len(_overpass(round(lat, 2), round(lon, 2), None))
+            print(f"OpenStreetMap {url.split('/')[2]}: {n} names in {time.monotonic() - t:.1f}s")
+        except Exception as exc:
+            print(f"OpenStreetMap {url.split('/')[2]}: failed after "
+                  f"{time.monotonic() - t:.1f}s ({str(exc)[:70]})")
+        OVERPASS_URLS[:] = saved
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        feats = Features(Path(td), online=False)
+        for f in feats.near(gps)[:8]:
+            print(f"  {f['name']} ({f['kind']}, {f['distance_m'] / 1000:.1f} km)")
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) == 4 and sys.argv[1] == "check":
+        _check(float(sys.argv[2]), float(sys.argv[3]))
+    else:
+        raise SystemExit("usage: python phase1/geocode.py check <lat> <lon>")

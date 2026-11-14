@@ -139,7 +139,7 @@ def do_plan(args) -> int:
                                    args.language, ph, args.spreads, groups)
         out = args.album / "prompt-plan.txt"
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(f"=== SYSTEM ===\n{sysmsg}\n\n=== USER ===\n{user}\n")
+        out.write_text(f"=== SYSTEM ===\n{sysmsg}\n\n=== USER ===\n{user}\n", encoding="utf-8")
         print(f"dry run — prompt written to {out} ({len(sysmsg) + len(user):,} chars, "
               f"{'thumbnails attached' if args.with_thumbnails else 'text only'})")
         return 0
@@ -276,9 +276,9 @@ def do_proof(args) -> int:
     lab, g, fmt, _, groups, _, ov = setup(args)
     store = Store(args.album)
     v, data = store.get(args.version)
-    layout = Layout.model_validate(data)
+    Layout.model_validate(data)          # refuse a broken layout before rendering it
     tmp = args.album / f"layout-v{v.version_no:03d}.json"
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"rendering proof of v{v.version_no:03d}")
     argv = ["proof", "--layout", str(tmp), "--photos", str(args.photos),
             "--lab", str(args.lab), "--out", str(args.album / "renders"),
@@ -307,6 +307,9 @@ def do_rollback(args) -> int:
 
 
 def main() -> int:
+    import safeio
+
+    safeio.safe_console()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 

@@ -98,10 +98,10 @@ def date_range(members: list[Photo]) -> str | None:
         return None
     lo, hi = min(times), max(times)
     if lo.date() == hi.date():
-        return lo.strftime("%-d %B %Y")
+        return f"{lo.day} {lo:%B %Y}"
     if (lo.year, lo.month) == (hi.year, hi.month):
-        return f"{lo.strftime('%-d')}–{hi.strftime('%-d %B %Y')}"
-    return f"{lo.strftime('%-d %b')} – {hi.strftime('%-d %b %Y')}"
+        return f"{lo.day}–{hi.day} {hi:%B %Y}"
+    return f"{lo.day} {lo:%b} – {hi.day} {hi:%b %Y}"
 
 
 def describe(members: list[Photo]) -> str:

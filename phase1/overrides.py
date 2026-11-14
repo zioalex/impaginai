@@ -106,7 +106,7 @@ class Overrides:
         p = album_dir / "overrides.yaml"
         if not p.exists():
             return cls({}, p)
-        raw = yaml.safe_load(p.read_text()) or {}
+        raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         out = {}
         for pid, item in raw.items():
             if not isinstance(item, dict):
@@ -138,7 +138,7 @@ class Overrides:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         import safeio
 
-        safeio.write_text(self.path, yaml.safe_dump(data, allow_unicode=True, sort_keys=True))
+        safeio.write_text(self.path, yaml.safe_dump(data, allow_unicode=True, sort_keys=True), encoding="utf-8")
 
     def get(self, pid: str) -> Override:
         return self.by_id.get(pid, Override())

@@ -33,7 +33,7 @@ The short version:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.lock.txt
 playwright install chromium
 
 python phase2/server.py
@@ -141,7 +141,8 @@ time and caches subject, people, scene, focal point and a strength rating to
 schema retries cost nothing extra.
 
 **Place names come from an offline database.** GPS resolves to a settlement
-without a network or an API key, and `places.yaml` lets the user override any
+without a network or an API key, lakes, glaciers and peaks come from a
+per-country list downloaded once and kept on the machine, and `places.yaml` lets the user override any
 of them — the beach below Baunei is "Cala Goloritzé" to anyone who went there.
 The place and date are stamped on each chapter opening by the system, once per
 group, rather than left to the model.
@@ -235,8 +236,10 @@ cannot show you. `RUNNING.md` has the cost table and recommended stacks.
 
 ## Dependencies and security
 
-`requirements.txt` uses floors rather than exact pins, so a fresh install picks
-up security releases without the file being edited. `pillow` and `pypdf` both
+`requirements.txt` holds floors (the oldest versions supported) and
+`requirements.lock.txt` the exact versions CI tested; install from the lock.
+Dependabot moves the lock forward, and a weekly CI job installs the newest
+versions the floors allow, so a release that breaks something is noticed. `pillow` and `pypdf` both
 parse untrusted binary input — photographs and PDFs — and are the two that must
 not lag; the first version of this file pinned them months behind and collected
 64 advisories.
@@ -246,8 +249,11 @@ pip install pip-audit && pip-audit -r requirements.txt
 ```
 
 CI runs that on every push and weekly, and Dependabot opens grouped update PRs.
-For byte-identical rebuilds, generate a lock file with `pip-compile`.
+`AGENTS.md` says how to regenerate the lock after changing a requirement.
 
 ## Licence
 
 Apache 2.0 — see `LICENSE`.
+
+Landmark names come from [GeoNames](https://www.geonames.org) (CC BY 4.0) and,
+when its servers answer, © OpenStreetMap contributors (ODbL).

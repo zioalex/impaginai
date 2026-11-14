@@ -58,7 +58,6 @@ import photos as PH
 import planner
 import providers
 import render as R
-import templates_lib
 from schema import Layout
 from validate import check, load_photos
 
@@ -172,7 +171,7 @@ def run_one(model: str, args, ph, g, lab, groups) -> Score:
         out = Path(args.save) / f"{model.replace('/', '_')}.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(res.layout.model_dump(mode="json"),
-                                  ensure_ascii=False, indent=1))
+                                  ensure_ascii=False, indent=1), encoding="utf-8")
     return sc
 
 

@@ -109,7 +109,7 @@ def _is(host: str, domain: str) -> bool:
 
 def _load() -> dict[str, str]:
     try:
-        raw = json.loads(_path().read_text())
+        raw = json.loads(_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     return {k: v for k, v in raw.items() if k in SLOTS and isinstance(v, str) and v}
@@ -150,7 +150,7 @@ def _write(data: dict) -> None:
     # Created 0600 from the start: never readable by anyone else, not even
     # for the moment between writing and chmod.
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(data, fh)
     os.replace(tmp, p)
     os.chmod(p, 0o600)

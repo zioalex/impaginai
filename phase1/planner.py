@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -262,7 +261,7 @@ def _write_log(log_dir: Path | None, kind: str, n: int, diagnosis: str,
         # A model's error text can echo a request, and a request can carry a
         # key: nothing reaches the log directory unredacted.
         path.write_text(keystore.redact(json.dumps(body, ensure_ascii=False, indent=2,
-                                                   default=str)))
+                                                   default=str)), encoding="utf-8")
         return str(path)
     except Exception:
         return None

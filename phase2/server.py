@@ -148,7 +148,7 @@ def reload_photos():
     # Cache only: editing must never wait on the network. The named-places
     # lookup runs in prefetch_places(), at startup and before each design.
     geocode.apply(ph, a, offline_db=STATE["geocode"], online=False,
-                  language=STATE["language"])
+                  language=STATE["language"], landmarks=bool(STATE.get("online_places")))
     ov = OV.Overrides.load(a)
     # Keep excluded photographs visible in the UI — the user has to be able to
     # bring one back. Exclusion is applied when building, not when listing.
@@ -172,18 +172,38 @@ def reload_photos():
     return ph
 
 
-def prefetch_places(photos=None) -> None:
-    """Fill the named-places cache (glaciers, lakes, peaks) from OpenStreetMap.
-    Bounded: cached cells are not asked again, and a failure pauses lookups."""
+OSM_LOCK = threading.Lock()
+
+
+def prefetch_places(photos=None, wait_s: float | None = None) -> None:
+    """Have landmark names (glaciers, lakes, peaks) for these photographs.
+
+    The list kept on this machine is loaded, or downloaded once per country,
+    waiting at most `wait_s` for a download. OpenStreetMap is asked from a
+    background thread and never waited for: its public servers time out often,
+    and designing an album used to sit through that."""
     if not STATE.get("online_places"):
         return
+    photos = photos if photos is not None else STATE["all"]
+    album, language = STATE["album"], STATE["language"]
     try:
-        asked = geocode.prefetch(photos if photos is not None else STATE["all"], STATE["album"],
-                                 language=STATE["language"])
-        if asked:
+        if geocode.prefetch_gazetteer(photos, wait_s=wait_s):
             reload_photos()
     except Exception as exc:  # never let the place lookup break the editor
-        print(f"  place lookup failed: {exc}")
+        print(f"  landmark names failed: {exc}")
+
+    def osm():
+        try:
+            if (geocode.prefetch_overpass(photos, album, language=language)
+                    and STATE.get("album") == album and not JOB["running"]):
+                reload_photos()
+        except Exception:
+            pass
+        finally:
+            OSM_LOCK.release()
+
+    if OSM_LOCK.acquire(blocking=False):
+        threading.Thread(target=osm, daemon=True).start()
 
 
 def thumb_dir() -> Path:
@@ -259,7 +279,8 @@ def start_job(kind: str) -> None:
     requests arriving together used to both find it free."""
     with JOB_LOCK:
         if JOB["running"]:
-            raise HTTPException(409, "busy — try again when the current job finishes")
+            # the words the editor looks for to try again by itself
+            raise HTTPException(409, "already working")
         JOB.update(running=True, step="Starting", progress=1, error=None, done=False,
                    kind=kind, cost=None, seconds=0.0, result=None, started=time.time())
 
@@ -344,7 +365,7 @@ def save_settings() -> None:
         data["preset"] = STATE.get("model_preset")
     elif "saved_models" in STATE:
         data["models"], data["preset"] = STATE["saved_models"]
-    safeio.write_text(settings_path(), json.dumps(data, ensure_ascii=False, indent=2))
+    safeio.write_text(settings_path(), json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def apply_options() -> None:
@@ -518,14 +539,14 @@ def finish_layout(raw: dict, usable) -> dict:
 def render_proof(store: Store, v, data: dict) -> None:
     a = STATE["album"]
     tmp = a / f"layout-v{v.version_no:03d}.json"
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     run_render("proof", tmp, a / "renders")
     # Small page images for the editor's Book view, from the same HTML.
     html = a / "renders" / "inner-proof.html"
     if html.exists():
         R.render_jpegs(html.read_text(encoding="utf-8"), html, a / "renders" / "pages-thumb",
                        thumb_px=520)
-        (a / "renders" / "pages-thumb" / "version.txt").write_text(str(v.version_no))
+        (a / "renders" / "pages-thumb" / "version.txt").write_text(str(v.version_no), encoding="utf-8")
 
 
 def run_render(command: str, layout_path: Path, out: Path, *extra: str) -> int:
@@ -559,6 +580,7 @@ def _album_info():
         for g in STATE.get("groups", [])
     ]
     return {
+        "places": geocode.places_status() if STATE.get("online_places") else None,
         "title": STATE["title"],
         "subtitle": STATE["subtitle"],
         "format": STATE["fmt"],
@@ -724,7 +746,7 @@ def load_album_settings(album: Path) -> dict:
     sp = album / "settings.json"
     if sp.exists():
         try:
-            return json.loads(sp.read_text())
+            return json.loads(sp.read_text(encoding="utf-8"))
         except ValueError:
             return {}
     return {}
@@ -1064,7 +1086,7 @@ def _alias(url: str | None) -> str:
 
 def user_config() -> dict:
     try:
-        return json.loads((keystore.config_dir() / "config.json").read_text())
+        return json.loads((keystore.config_dir() / "config.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
@@ -1072,7 +1094,7 @@ def user_config() -> dict:
 def save_user_config(data: dict) -> None:
     d = keystore.config_dir()
     d.mkdir(parents=True, exist_ok=True)
-    safeio.write_text(d / "config.json", json.dumps(data, ensure_ascii=False, indent=2))
+    safeio.write_text(d / "config.json", json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def apply_models(check: bool = True) -> None:
@@ -1558,7 +1580,7 @@ def _build(do_plan: bool, comment: str | None):
 
         set_job("Preparing photographs", 5)
         ensure_thumbs(usable)
-        prefetch_places(ph)
+        prefetch_places(ph, wait_s=20)
         ph = STATE["all"]
         usable = [p for p in ph if not STATE["ov"].get(p.id).exclude]
 
@@ -1694,7 +1716,7 @@ def _export(kind: str, dpi: int):
         v, data = store.get()
         out = a / "exports"
         tmp = a / f"layout-v{v.version_no:03d}.json"
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         set_job(f"Exporting: {EXPORTS[kind][0]}", 30)
         if kind == "jpeg":
             code = run_render("jpeg", tmp, out, "--dpi", str(dpi))
@@ -1823,7 +1845,7 @@ def low_res_pages(data: dict) -> dict[int, list[dict]]:
 def api_pages():
     d = STATE["album"] / "renders" / "pages-thumb"
     files = sorted(d.glob("page-*.jpg")) if d.exists() else []
-    ver = (d / "version.txt").read_text() if (d / "version.txt").exists() else None
+    ver = (d / "version.txt").read_text(encoding="utf-8") if (d / "version.txt").exists() else None
     low = {}
     if ver and files:
         try:
@@ -1907,7 +1929,7 @@ def api_proof():
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return (HERE / "static" / "index.html").read_text()
+    return (HERE / "static" / "index.html").read_text(encoding="utf-8")
 
 
 def main():
@@ -1946,6 +1968,7 @@ def main():
                          "(default: your home folder)")
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
+    safeio.safe_console()
     # Nothing printed — a log line, a traceback — may carry an API key.
     sys.stdout = keystore.RedactingStream(sys.stdout)
     sys.stderr = keystore.RedactingStream(sys.stderr)
