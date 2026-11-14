@@ -73,6 +73,11 @@ class Override:
     # over the planner and over the page-count arithmetic of the repacker; it
     # does not stop other photographs being composed too.
     compose: bool = False
+    # Taken out of the album altogether: not shown among the photographs, not
+    # in any design. The file itself is never touched, so it can be brought
+    # back. Always set together with `exclude`, so every place that already
+    # skips left-out photographs skips these too.
+    removed: bool = False
 
     def is_empty(self) -> bool:
         return (
@@ -81,6 +86,7 @@ class Override:
             and self.treatment == "none"
             and not self.exclude
             and not self.compose
+            and not self.removed
         )
 
     def summary(self) -> str:
@@ -117,8 +123,9 @@ class Overrides:
                 description=(str(item["description"]) if item.get("description") else None),
                 size=size if size in SIZES else "auto",
                 treatment=treat if treat in TREATMENTS else "none",
-                exclude=bool(item.get("exclude", False)),
+                exclude=bool(item.get("exclude", False)) or bool(item.get("removed", False)),
                 compose=bool(item.get("compose", False)),
+                removed=bool(item.get("removed", False)),
             )
         return cls(out, p)
 
@@ -131,6 +138,7 @@ class Overrides:
                   and not (k == "treatment" and v == "none")
                   and not (k == "exclude" and v is False)
                   and not (k == "compose" and v is False)
+                  and not (k == "removed" and v is False)
                   and not (k == "description" and v is None)}
             for pid, o in sorted(self.by_id.items())
             if not o.is_empty()
