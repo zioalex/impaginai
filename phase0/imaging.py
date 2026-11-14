@@ -37,6 +37,11 @@ EXTENSIONS = {
 
 HEIF_EXTENSIONS = {".heic", ".heif", ".avif"}
 
+# Videos that may be photographs taken with "live" or "motion" on. Not loaded
+# as photographs yet: phase1/clips.py probes them, and the frame picker that
+# turns one into a photograph is the next step of docs/plans/clips-and-fuller-pages.md.
+CLIP_EXTENSIONS = {".mp4", ".mov", ".m4v", ".3gp"}
+
 _registered = False
 _heif_ok = False
 

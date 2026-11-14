@@ -100,7 +100,11 @@ def main() -> int:
             page.wait_for_function(
                 "[...document.querySelectorAll('#book .spread img')].slice(0, 2)"
                 ".every(i => i.complete && i.naturalWidth > 0)", timeout=30000)
-            ok(f"design from the button, book tab ({spreads} spreads, page images load)")
+            info = ed.get("/api/pages")
+            assert isinstance(info.get("empty_average"), int) and 0 <= info["empty_average"] <= 100, info
+            assert f"{info['empty_average']}% of a page empty" in page.inner_text("#emptyAvg")
+            ok(f"design from the button, book tab ({spreads} spreads, page images load, "
+               f"{info['empty_average']}% empty on average)")
 
             # 4. a spread opens large and closes again
             page.click("#book .spread >> nth=1")

@@ -212,6 +212,29 @@ python album.py plan --album ../albums/sardinien --photos ~/Pictures/sardinien \
 `phase1/examples/demo_captions.yaml`. A description set in the editor wins over
 one in that file.
 
+## How full are the pages
+
+The **Book** tab says what share of a page is empty on average, and marks each
+page that is more than half empty with the reason: nothing on it, text only, a
+photograph shown whole inside a slot of another shape (its subject would have
+been cut), a photograph with too few pixels printed smaller, or simply the
+margins of that layout. A page with ordinary margins is about a third empty,
+so 30–40% is a normal average; the marked pages are the ones worth a look.
+`python phase0/render.py check …` prints the same summary.
+
+## Short videos
+
+Phones with "live" or "motion" photos save three seconds of video where you
+meant to take a picture. They are not used as photographs yet. To see what
+yours contain — length, size, date, place, HDR, and whether a photograph of
+the same name sits beside each — run:
+
+```bash
+python phase1/clips.py probe ~/Pictures/engadin
+```
+
+It only reads. Its summary says how large each could be printed.
+
 ## Getting the print files
 
 The editor produces a proof — low resolution, small file, for looking at. When

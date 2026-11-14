@@ -57,11 +57,14 @@ python phase1/tests/test_ui.py      # the editor in Chromium: load, describe, de
 
 - `phase0/` renderer, geometry, template library (`templates_lib.py`), page
   compositions (`compose.py`), lab specs (`labs/saal.yaml`, which sets the
-  24-page minimum).
+  24-page minimum), and `fullness.py`, which measures how empty each page is
+  from the rectangles the renderer draws.
 - `phase1/` planning: prompt, planner, user overrides (`overrides.py`), and the
   page repacker (`pages.py`), which runs after the model on every version
   (front page, no empty pages, place stamps, photos the user marked
   "in a composition").
+- `phase1/clips.py` short videos that are really photographs: today only the
+  probe; `docs/plans/clips-and-fuller-pages.md` has the steps that follow.
 - `phase2/` the editor: `server.py` (FastAPI) and `static/index.html`.
 - The user's choices always beat the model's: they live in
   `overrides.yaml` and `settings.json` in the album directory, and
