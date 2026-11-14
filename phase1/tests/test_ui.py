@@ -186,7 +186,9 @@ def main() -> int:
             page.click("#optRemove")
             page.wait_for_function(
                 f"document.querySelectorAll('#grid img').length === {before - 1}", timeout=20000)
-            assert len(ed.get("/api/photos")) == before - 1
+            # waited for, not assumed: the list is rebuilt after the change is saved
+            ed.wait(lambda: len(ed.get("/api/photos") or []) == before - 1, 30,
+                    "the removed photograph is still listed")
             gone = ed.get("/api/photos/removed")
             assert len(gone) == 1, gone
             job_done("the preview after removing a photograph")
@@ -202,7 +204,8 @@ def main() -> int:
             page.wait_for_function(
                 "fetch('/api/photos/removed').then(r => r.json()).then(a => a.length === 0)",
                 timeout=15000)
-            assert len(ed.get("/api/photos")) == before
+            ed.wait(lambda: len(ed.get("/api/photos") or []) == before, 30,
+                    "the photograph brought back is not listed again")
             job_done("the preview after bringing a photograph back")
             ok("a photograph is removed from the album and brought back")
 
