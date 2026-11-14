@@ -508,6 +508,12 @@ def main() -> int:
                 raise AssertionError("an album endpoint answered with no album open")
             except urllib.error.HTTPError as exc:
                 assert exc.code == 409
+            # a tab left open from before a restart asks for a thumbnail: refused, not a crash
+            try:
+                ed3.get_raw("/thumb/anything.jpg")
+                raise AssertionError("a thumbnail was served with no album open")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 409, exc.code
             fs = ed3.get("/api/fs?path=Pictures")
             assert [(d["name"], d["photos"]) for d in fs["dirs"]] == [("trip", 4)], fs
             for bad in ("/etc", "../..", str(tmp)):

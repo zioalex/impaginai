@@ -232,6 +232,9 @@ textarea{min-height:76px;resize:vertical;font-family:Georgia,"Iowan Old Style",s
 .spread img{width:50%;display:block;aspect-ratio:var(--ar,1);object-fit:cover;background:#fff}
 .spread img+img{border-left:1px solid #0002}
 .slabel{font-size:12px;color:var(--soft);margin-top:6px;text-align:center}
+.removed{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0}
+.removed .rm{display:flex;flex-direction:column;gap:6px;align-items:center}
+.removed .rm img{width:96px;height:72px;object-fit:cover;border-radius:4px;background:#ddd}
 .versions{margin-top:26px}
 .versions h3{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--soft);margin-bottom:8px}
 .vrow{display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px}
@@ -311,6 +314,7 @@ kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:
           <div class="opt" id="optIn" role="button" tabindex="0" aria-pressed="true">Include</div>
           <div class="opt" id="optOut" role="button" tabindex="0" aria-pressed="false">Leave out</div>
         </div>
+        <div class="hint"><a href="#" id="optRemove">Remove from this album…</a> It disappears from this list too. The file is not deleted, and Settings → Album can bring it back.</div>
 
         <label class="fld">Front page</label>
         <div class="opts">
@@ -358,6 +362,7 @@ kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:
   <button class="small" data-bulkcomp="1" title="Always on a page with other photographs">▦ Compose</button>
   <button class="small ghost" data-bulkcomp="0" title="Let the album decide">Uncompose</button>
   <select id="bulkSize" class="small"><option value="">Size…</option></select>
+  <button class="small ghost" id="bulkRemove" title="Take these photographs out of the album. Files are not deleted.">Remove…</button>
   <button class="small ghost" data-bulk="clear">Clear</button>
 </div>
 
@@ -685,6 +690,19 @@ function rotateSel(d){if(!sel)return;const p=photos.find(x=>x.id===sel);patch([s
 $("rotL").onclick=()=>rotateSel(-90); $("rotR").onclick=()=>rotateSel(90);
 $("optComp").onclick=()=>{if(!sel)return;const p=photos.find(x=>x.id===sel);patch([sel],{compose:!p.compose});};
 $("optOut").onclick=()=>sel&&patch([sel],{exclude:true});
+// Out of the album altogether, not only out of the design.
+async function removePhotos(ids){
+  if(!ids.length)return;
+  const what=ids.length===1?"this photograph":`these ${ids.length} photographs`;
+  if(!confirm(`Remove ${what} from the album?\n\nNo file is deleted. You can bring ${ids.length===1?"it":"them"} back under Settings → Album.`))return;
+  try{await send("POST","/api/photos/remove",{ids});}catch(e){note(e.message,"err");return;}
+  ids.forEach(id=>picked.delete(id));
+  if(ids.includes(sel)){sel=null;document.body.classList.remove("picked");$("editor").style.display="none";$("noSel").style.display="";}
+  await load(); scheduleRerender();
+  note(`${ids.length} photograph${ids.length===1?"":"s"} removed from the album.`);
+}
+$("optRemove").onclick=e=>{e.preventDefault();if(sel)removePhotos([sel]);};
+$("bulkRemove").onclick=()=>removePhotos([...picked]);
 $("optFront").onclick=async()=>{
   if(!sel)return;
   const front=album.front_photo===sel?"":sel;
@@ -969,6 +987,9 @@ function albumSection(){
       <button class="small" id="addPh2">＋ Add photos</button>
       <div class="grow"></div><button class="small" id="otherAlbum">Open or make another album…</button></div>
       <div class="hint">Photos you add are copied into the photo folder. Changing the folder keeps the album's design and settings; photographs that are no longer there drop out of the book.</div></div>
+    <div class="setrow" id="removedRow" style="display:none"><div class="albumrow"><b id="removedN"></b> removed from this album. The files are untouched.</div>
+      <div class="removed" id="removedList"></div>
+      <div class="navrow"><button class="small" id="restoreAll">Bring all back</button></div></div>
     <div class="setrow"><div class="albumrow">New albums are made in <code id="libPath">…</code></div>
       <div class="navrow"><button class="small" id="chLibrary">Change…</button></div></div></div>`;
 }
@@ -977,6 +998,16 @@ function wireAlbum(host){
     try{await send("PUT","/api/albums/photos",{photos:p.path});}catch(e){note(e.message,"err");return;}
     await load(); scheduleRerender(); renderSettings();});
   const a2=$("addPh2"); if(a2)a2.onclick=()=>$("fileAdd").click();
+  get("/api/photos/removed").then(list=>{
+    const row=$("removedRow"); if(!row||!list.length)return;
+    row.style.display="";
+    $("removedN").textContent=`${list.length} photograph${list.length===1?"":"s"}`;
+    $("removedList").innerHTML=list.map(p=>`<div class="rm"><img loading="lazy" src="/thumb/${encodeURIComponent(p.id)}.jpg" alt=""><button class="small" data-restore="${esc(p.id)}">Bring back</button></div>`).join("");
+    const back=async ids=>{try{await send("POST","/api/photos/restore",{ids});}catch(e){note(e.message,"err");return;}
+      await load(); scheduleRerender(); renderSettings();};
+    $("removedList").querySelectorAll("[data-restore]").forEach(b=>b.onclick=()=>back([b.dataset.restore]));
+    $("restoreAll").onclick=()=>back(list.map(p=>p.id));
+  }).catch(()=>{});
   const o=$("otherAlbum"); if(o)o.onclick=()=>showWelcome(true);
   get("/api/albums").then(a=>{const l=$("libPath"); if(l)l.textContent=a.library;}).catch(()=>{});
   const cl=$("chLibrary"); if(cl)cl.onclick=()=>chooseFolder(async p=>{
