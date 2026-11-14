@@ -2011,6 +2011,9 @@ def main():
             print("  no API key — editing works, designing the album does not")
     else:
         print("\n  no album given — choose or create one in the editor")
+    if not R.browser_ready():
+        # Said now, at the start, and not as a failed job after the first design.
+        print("\n  " + R.BROWSER_MISSING.replace("\n", "\n  "))
     print(f"\n  Open  http://{args.host}:{args.port}\n")
 
     import uvicorn

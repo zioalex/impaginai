@@ -529,6 +529,37 @@ def build_cover_html(layout: Layout, g: Geometry, lab: dict, photo_paths: dict[s
 # --------------------------------------------------------------------------
 
 
+BROWSER_MISSING = (
+    "The page renderer's browser is missing or out of date. Run\n\n"
+    "    playwright install chromium\n\n"
+    "in the same environment, then try again. (This is needed once after "
+    "installing, and again after every update: each Playwright version uses "
+    "its own browser download.)")
+
+
+def launch_browser(p):
+    """Chromium, or a sentence saying how to get it. The raw error was a
+    forty-line traceback ending in a box that says 'playwright install',
+    which reads as if the project had not been set up at all."""
+    try:
+        return p.chromium.launch(args=["--font-render-hinting=none"])
+    except Exception as exc:
+        if "Executable doesn't exist" in str(exc) or "playwright install" in str(exc):
+            raise RuntimeError(BROWSER_MISSING) from None
+        raise
+
+
+def browser_ready() -> bool:
+    """Whether the renderer can start, without rendering anything."""
+    from playwright.sync_api import sync_playwright
+
+    try:
+        with sync_playwright() as p:
+            return Path(p.chromium.executable_path).exists()
+    except Exception:
+        return False
+
+
 def render_pdf(html: str, html_path: Path, pdf_path: Path) -> None:
     from playwright.sync_api import sync_playwright
 
@@ -537,7 +568,7 @@ def render_pdf(html: str, html_path: Path, pdf_path: Path) -> None:
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(args=["--font-render-hinting=none"])
+        browser = launch_browser(p)
         page = browser.new_page()
         page.goto(html_path.resolve().as_uri(), wait_until="load")
         page.wait_for_function(
@@ -565,7 +596,7 @@ def render_jpegs(html: str, html_path: Path, out_dir: Path, dpi: int = 150,
         old.unlink()
     files: list[Path] = []
     with sync_playwright() as p:
-        browser = p.chromium.launch(args=["--font-render-hinting=none"])
+        browser = launch_browser(p)
         if thumb_px:
             scale = 1.0
         else:
