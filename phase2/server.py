@@ -75,6 +75,7 @@ from versions import Store
 app = FastAPI(title="Album editor")
 
 # Endpoints that work before any album is open: the welcome screen uses them.
+ALBUM_PATHS = ("/api/", "/thumb/", "/photo/", "/pages/", "/export/", "/proof.pdf")
 NO_ALBUM_OK = {"/api/album", "/api/albums", "/api/fs", "/api/job", "/api/library"}
 
 
@@ -125,7 +126,10 @@ async def same_site_only(request, call_next):
 @app.middleware("http")
 async def need_album(request, call_next):
     path = request.url.path
-    if (STATE.get("album") is None and path.startswith("/api/")
+    # Thumbnails, pages and exports belong to an album too. A tab left open
+    # from before a restart asks for them with no album open, and that used
+    # to be a server error with a page-long traceback.
+    if (STATE.get("album") is None and path.startswith(ALBUM_PATHS)
             and path not in NO_ALBUM_OK):
         return JSONResponse({"detail": "no album is open — choose or create one first"},
                             status_code=409)
@@ -150,6 +154,9 @@ def reload_photos():
     geocode.apply(ph, a, offline_db=STATE["geocode"], online=False,
                   language=STATE["language"], landmarks=bool(STATE.get("online_places")))
     ov = OV.Overrides.load(a)
+    # Removed photographs are gone from the album's view altogether (their
+    # files stay where they are); /api/photos/removed lists them.
+    ph = [p for p in ph if not ov.get(p.id).removed]
     # Keep excluded photographs visible in the UI — the user has to be able to
     # bring one back. Exclusion is applied when building, not when listing.
     for p in ph:
@@ -1449,6 +1456,45 @@ class BulkIn(OverrideIn):
     ids: list[str]
 
 
+class IdsIn(BaseModel):
+    ids: list[str]
+
+
+@app.post("/api/photos/remove")
+def api_photos_remove(body: IdsIn):
+    """Take photographs out of the album. Unlike "leave out", they disappear
+    from the photo list too. No file is deleted or moved: the album only
+    remembers not to show them, so they can be brought back."""
+    known = {p.id for p in STATE["all"]}
+    n = 0
+    for pid in body.ids:
+        if pid in known:
+            STATE["ov"].set(pid, removed=True, exclude=True)
+            n += 1
+    STATE["ov"].save()
+    reload_photos()
+    return {"ok": True, "removed": n}
+
+
+@app.get("/api/photos/removed")
+def api_photos_removed():
+    return [{"id": pid} for pid, o in sorted(OV.Overrides.load(STATE["album"]).by_id.items())
+            if o.removed]
+
+
+@app.post("/api/photos/restore")
+def api_photos_restore(body: IdsIn):
+    ov = OV.Overrides.load(STATE["album"])
+    n = 0
+    for pid in body.ids:
+        if ov.get(pid).removed:
+            ov.set(pid, removed=False, exclude=False)
+            n += 1
+    ov.save()
+    reload_photos()
+    return {"ok": True, "restored": n}
+
+
 @app.patch("/api/photos")
 def api_patch_many(body: BulkIn):
     """The same change to several photographs at once (leave out a whole
@@ -2011,6 +2057,9 @@ def main():
             print("  no API key — editing works, designing the album does not")
     else:
         print("\n  no album given — choose or create one in the editor")
+    if not R.browser_ready():
+        # Said now, at the start, and not as a failed job after the first design.
+        print("\n  " + R.BROWSER_MISSING.replace("\n", "\n  "))
     print(f"\n  Open  http://{args.host}:{args.port}\n")
 
     import uvicorn

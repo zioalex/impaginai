@@ -137,6 +137,36 @@ def test_portable_dates_and_text():
         assert OV.Overrides.load(Path(td)).get("p001").description == words
 
 
+def test_missing_browser_is_a_sentence():
+    """After an update the renderer's browser is the wrong version. That must
+    read as one instruction, not as a traceback."""
+    class NoBrowser:
+        class chromium:
+            @staticmethod
+            def launch(**kw):
+                raise Exception("BrowserType.launch: Executable doesn't exist at /x/chrome\n"
+                                "Looks like Playwright was just installed or updated.")
+
+    try:
+        R.launch_browser(NoBrowser)
+        raise AssertionError("no error for a missing browser")
+    except RuntimeError as exc:
+        assert "playwright install chromium" in str(exc) and "Traceback" not in str(exc)
+
+    class Other:
+        class chromium:
+            @staticmethod
+            def launch(**kw):
+                raise ValueError("something else")
+
+    try:
+        R.launch_browser(Other)
+        raise AssertionError("another error was swallowed")
+    except ValueError:
+        pass
+    assert R.browser_ready() is True
+
+
 def test_repack_and_crop_guard(): _run("repack_and_crop_guard")
 def test_adaptive_pages(): _run("adaptive_pages")
 def test_fuller_pages(): _run("fuller_pages")

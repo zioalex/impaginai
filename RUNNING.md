@@ -22,6 +22,18 @@ Linux, macOS and Windows, Python 3.11 to 3.13. `requirements.txt` holds the
 oldest versions that are supported instead; install from it if you need to
 share an environment with something else, and expect the newest of everything.
 
+### Updating
+
+After `git pull`, bring the environment up to date, both lines:
+
+```bash
+pip install -r requirements.lock.txt
+playwright install chromium        # each Playwright version has its own browser
+```
+
+Skip the second line and the editor starts, but nothing renders: it says the
+renderer's browser is missing or out of date, and names this command.
+
 Python 3.11 or newer. The first time anything resolves GPS, the offline place
 database builds an index that takes a few seconds; warm it now so it does not
 happen mid-album:

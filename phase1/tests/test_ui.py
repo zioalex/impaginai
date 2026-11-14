@@ -176,7 +176,40 @@ def main() -> int:
                 timeout=30000)
             ok("a change asked for in words becomes a new version in the book")
 
-            # 10. the landmark status line reads as a sentence in each state
+            # 10. a photograph removed from the album leaves the list, and comes back
+            page.click("#tabPhotos")
+            page.wait_for_selector("#grid img", timeout=10000)
+            before = len(ed.get("/api/photos"))
+            page.once("dialog", lambda d: d.accept())
+            page.click("#grid img >> nth=2")
+            page.wait_for_selector("#editor", state="visible", timeout=5000)
+            page.click("#optRemove")
+            page.wait_for_function(
+                f"document.querySelectorAll('#grid img').length === {before - 1}", timeout=20000)
+            # waited for, not assumed: the list is rebuilt after the change is saved
+            ed.wait(lambda: len(ed.get("/api/photos") or []) == before - 1, 30,
+                    "the removed photograph is still listed")
+            gone = ed.get("/api/photos/removed")
+            assert len(gone) == 1, gone
+            job_done("the preview after removing a photograph")
+            import json
+
+            latest = sorted((tmp / "album" / "layouts").glob("v0*[0-9].json"))[-1]
+            cur = json.loads(latest.read_text(encoding="utf-8"))
+            placed = {s["photo_id"] for sp in cur.get("spreads", []) for s in sp["slots"]}
+            assert gone[0]["id"] not in placed, "a removed photograph is still in the book"
+            page.click("#tabSettings")
+            page.wait_for_selector("#removedList [data-restore]", timeout=15000)
+            page.click("#removedList [data-restore]")
+            page.wait_for_function(
+                "fetch('/api/photos/removed').then(r => r.json()).then(a => a.length === 0)",
+                timeout=15000)
+            ed.wait(lambda: len(ed.get("/api/photos") or []) == before, 30,
+                    "the photograph brought back is not listed again")
+            job_done("the preview after bringing a photograph back")
+            ok("a photograph is removed from the album and brought back")
+
+            # 11. the landmark status line reads as a sentence in each state
             line = page.evaluate(
                 "placesLine({countries: {CH: 'ready', IT: 'downloading'}, osm: 'unavailable'})")
             assert "CH ready" in line and "IT downloading" in line and "not answering" in line, line
