@@ -182,6 +182,22 @@ def main() -> int:
             assert "CH ready" in line and "IT downloading" in line and "not answering" in line, line
             assert "not needed yet" in page.evaluate("placesLine({countries: {}, osm: 'idle'})")
             ok("landmark status line")
+
+            # 11. precise town names: the server box saves, the refresh button
+            #     shows with the option on (locked off here by --no-geocode)
+            page.click("#tabSettings")
+            page.wait_for_selector("#opt-nominatim_url", timeout=15000)
+            page.fill("#opt-nominatim_url", "http://127.0.0.1:9")
+            page.dispatch_event("#opt-nominatim_url", "change")
+            ed.wait(lambda: next(o["value"] for o in ed.get("/api/config")["options"]
+                                 if o["key"] == "nominatim_url") == "http://127.0.0.1:9",
+                    15, "the Nominatim server address was not saved")
+            row = page.evaluate("optionRow({key: 'precise_places', label: 'x', kind: 'bool', value: true, "
+                                "effect: 'regroup', help: ''})")
+            assert 'id="placesRefreshBtn"' in row, row
+            assert "not answering" in page.evaluate("preciseLine({precise: 'unavailable'})")
+            assert page.locator("#placesRefreshBtn").count() == 0, "refresh offered with the option off"
+            ok("precise town names: server address, refresh button, status line")
             browser.close()
     finally:
         ed.stop()

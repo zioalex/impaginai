@@ -1013,6 +1013,8 @@ async function renderSettings(){
     inp.oninput=()=>{const v=$("val-"+k); if(v)v.textContent=fmtVal(cfg.options.find(o=>o.key===k),inp.value); previewGroups();};
     inp.onchange=()=>setOption(k,Number(inp.value));
   });
+  host.querySelectorAll("input[data-url]").forEach(inp=>{inp.onchange=()=>setOption(inp.dataset.url,inp.value.trim());});
+  const prb=$("placesRefreshBtn"); if(prb)prb.onclick=refreshPlaces;
   const auto=$("lenAuto"); if(auto)auto.onclick=()=>setOption("length",0);
   wireModels(host); wireAlbum(host);
   const rl=$("relookBtn"); if(rl)rl.onclick=async()=>{
@@ -1026,6 +1028,22 @@ function placesLine(p){
   const list=cs.length?"Landmark list: "+cs.map(([c,s])=>`${c} ${say[s]||s}`).join(", ")+".":"Landmark list: not needed yet (no photographs with a location).";
   const osm={ok:" OpenStreetMap is answering.",unavailable:" OpenStreetMap is not answering; the list above is used.",idle:""}[p.osm]||"";
   return list+osm;
+}
+// Where precise town names stand, in a sentence.
+function preciseLine(p){
+  return {ok:"Nominatim is answering; new names are looked up in the background.",
+    unavailable:"Nominatim is not answering; town names come from the database on this machine.",
+    idle:"Nominatim has not been asked yet."}[p.precise]||"";
+}
+async function refreshPlaces(){
+  if(!confirm("Use the precise place names that arrived after the first design? Place names, and so the groups and pages, can change."))return;
+  let r;
+  try{r=await send("POST","/api/places/refresh");}catch(e){note(e.message,"err");return;}
+  album=await get("/api/album"); photos=await get("/api/photos"); setHeader(); renderGrid();
+  if(r.needs.includes("rerender"))scheduleRerender();
+  status(r.adopted?`${r.adopted} place name(s) updated${r.asking?"; more are being looked up":""}`
+    :r.asking?"Looking up place names in the background":"Place names are up to date");
+  renderSettings();
 }
 function fmtVal(o,v){
   if(o.key==="length")return Number(v)?`${v} pages`:"Automatic";
@@ -1046,6 +1064,8 @@ function optionRow(o){
   }else if(o.kind==="bool"){
     h+=`<div class="opts">`+[["true","On"],["false","Off"]].map(([v,l])=>
       `<div class="opt" role="button" tabindex="0" data-set="${o.key}" data-kind="bool" data-v="${v}" aria-pressed="${String(String(o.value)===v)}">${l}</div>`).join("")+`</div>`;
+  }else if(o.kind==="url"){
+    h+=`<div class="numrow"><input type="url" id="opt-${o.key}" data-url="${o.key}" value="${esc(o.value||"")}" placeholder="https://nominatim.openstreetmap.org" style="flex:1;min-width:0" aria-label="${esc(o.label)}"${o.locked?" disabled":""}></div>`;
   }else if(o.key==="length"){
     const lo=cfg.lab.pages.min, hi=cfg.lab.pages.max;
     h+=`<div class="numrow"><div class="opt" role="button" tabindex="0" id="lenAuto" aria-pressed="${String(!o.value)}">Automatic</div>
@@ -1056,6 +1076,11 @@ function optionRow(o){
   }
   h+=`<div class="hint">${esc(o.help)}</div>`;
   if(o.key==="online_places"&&album&&album.places)h+=`<div class="hint">${esc(placesLine(album.places))}</div>`;
+  if(o.key==="precise_places"&&o.value){
+    if(album&&album.places)h+=`<div class="hint">${esc(preciseLine(album.places))}</div>`;
+    h+=`<div style="margin-top:6px"><button class="small" id="placesRefreshBtn">Refresh place names</button></div>
+      <div class="hint">Uses every precise name that has arrived, also those that came after the first design. Place names, and so the groups and the pages, can change.</div>`;
+  }
   if(o.locked)h+=`<div class="locked">🔒 ${esc(o.locked_by||"set when the editor was started")}</div>`;
   return h+`</div>`;
 }
@@ -1183,7 +1208,7 @@ async function setOption(k,v){
   try{r=await send("PUT","/api/config",{[k]:v});}catch(e){note(e.message,"err");renderSettings();return;}
   if(!r.changed.length){renderSettings();return;}
   if(r.changed.includes("lab")||r.changed.includes("gap_hours")||r.changed.includes("radius_m")
-     ||r.changed.includes("geocode")||r.changed.includes("online_places")){
+     ||r.changed.includes("geocode")||r.changed.includes("online_places")||r.changed.includes("precise_places")){
     album=await get("/api/album"); photos=await get("/api/photos");
     const fs=$("fmtSel"); fs.innerHTML="";
     Object.entries(album.formats).forEach(([kk,vv])=>{const o=document.createElement("option");o.value=kk;o.textContent=vv;fs.appendChild(o);});
