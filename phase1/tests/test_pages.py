@@ -167,6 +167,139 @@ def test_missing_browser_is_a_sentence():
     assert R.browser_ready() is True
 
 
+def _write_clip(path, seconds=3.0, size=(320, 180), **meta):
+    """A small video written with PyAV, so no video file lives in the repository."""
+    import av
+    import numpy as np
+
+    with av.open(str(path), "w") as c:
+        s = c.add_stream("h264", rate=30)
+        s.width, s.height = size
+        s.pix_fmt = "yuv420p"
+        for k, v in meta.items():
+            c.metadata[k] = v
+        for i in range(int(seconds * 30)):
+            a = np.zeros((size[1], size[0], 3), np.uint8)
+            a[:, :, 1] = (i * 2) % 255
+            a[40:100, (i * 3) % 200:(i * 3) % 200 + 60] = 255
+            for p in s.encode(av.VideoFrame.from_ndarray(a, format="rgb24")):
+                c.mux(p)
+        for p in s.encode():
+            c.mux(p)
+
+
+def test_clips_probe():
+    """What a short video carries: length, size, date, place, and whether a
+    photograph of the same name sits beside it. Reports, never raises."""
+    import shutil
+    import tempfile
+    from datetime import datetime
+
+    import clips
+
+    assert clips.parse_location("+46.4100+009.9400/") == (46.41, 9.94)
+    assert clips.parse_location("-33.8568+151.2153+010.000/") == (-33.8568, 151.2153)
+    assert clips.parse_location("") is None and clips.parse_location("somewhere") is None
+    assert clips.parse_location("+146.0+009.0/") is None, "a latitude past the pole"
+
+    # the phone's own local time wins over everything
+    when, how = clips.taken_at({"com.apple.quicktime.creationdate": "2026-08-05T11:12:33+0200",
+                                "creation_time": "2026-08-05T09:12:33.000000Z"}, "IMG_0001.MOV")
+    assert when == datetime(2026, 8, 5, 11, 12, 33) and "reliable" in how, (when, how)
+    # only UTC: used, and said to be possibly hours off
+    when, how = clips.taken_at({"creation_time": "2026-08-05T09:12:33.000000Z"}, "clip.mp4")
+    assert when == datetime(2026, 8, 5, 9, 12, 33) and "UTC" in how, (when, how)
+    # a file name written in local time, close to the UTC stamp, is the clock to trust
+    when, how = clips.taken_at({"creation_time": "2026-08-05T09:12:33.000000Z"},
+                               "VID_20260805_111233.mp4")
+    assert when == datetime(2026, 8, 5, 11, 12, 33) and "file name" in how, (when, how)
+    # a messenger's name carries a day and nothing else
+    when, how = clips.taken_at({}, "VID-20260805-WA0019.mp4")
+    assert when.date() == datetime(2026, 8, 5).date() and "no time of day" in how, (when, how)
+    assert clips.taken_at({"creation_time": "1970-01-01T00:00:00Z"}, "x.mp4") == (None, "no date")
+
+    test_loop_ensure()
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        _write_clip(d / "alone.mp4", creation_time="2026-08-05T09:12:33.000000Z",
+                    location="+46.4100+009.9400/")
+        shutil.copy(d / "alone.mp4", d / "IMG_0001.MOV")
+        shutil.copy(PHOTO_DIR / "p002.jpg", d / "img_0001.jpg")      # same stem, other case
+        _write_clip(d / "long.mp4", seconds=8.0)
+        (d / "broken.mp4").write_bytes(b"not a video at all")
+        (d / "notes.txt").write_text("ignored", encoding="utf-8")
+        rows = {r["file"]: r for r in (clips.probe(p) for p in clips.find(d))}
+        assert set(rows) == {"alone.mp4", "IMG_0001.MOV", "long.mp4", "broken.mp4"}, set(rows)
+        a = rows["alone.mp4"]
+        assert a["ok"] and a["clip"] and a["decodes"], a
+        assert (a["width"], a["height"]) == (320, 180) and abs(a["seconds"] - 3.0) < 0.2, a
+        assert a["gps"] == (46.41, 9.94) and a["taken_at"] == "2026-08-05 09:12:33", a
+        assert a["photo_beside"] is None and a["hdr"] is None and a["rotation"] == 0, a
+        assert rows["IMG_0001.MOV"]["photo_beside"] == "img_0001.jpg"
+        assert rows["long.mp4"]["ok"] and not rows["long.mp4"]["clip"]
+        assert not rows["broken.mp4"]["ok"] and rows["broken.mp4"]["error"]
+        text = clips.report(list(rows.values()))
+        assert "4 video file(s): 2 short enough to be a photograph, 1 longer, 1 unreadable" in text, text
+        assert "1 have a photograph of the same name" in text and "320×180" in text, text
+        assert "broken.mp4: cannot be read" in text
+    assert "No videos here" in clips.report([])
+    print("clips probe: length, size, date and its source, place, pairing, unreadable files: ok")
+
+
+def test_page_coverage():
+    """How empty each page is, and why: measured from the rectangles the
+    renderer draws, so the number describes the printed page."""
+    import fullness
+    from templates_lib import attach_aspects
+
+    g = R.geometry_for(LAB, "21x21")
+    dims = _dims()
+    lay = good_layout()
+    PG.repack(lay, _groups(), LAB)
+    attach_aspects(lay["spreads"], dims)
+    model = Layout.model_validate(lay)
+    pages = fullness.measure(model, dims, g)
+    assert len(pages) == 2 * len(model.spreads)
+    for p in pages:
+        assert 0.0 <= p["photo"] <= 1.0 and 0.0 <= p["empty"] <= 1.0, p
+        assert abs(p["photo"] + p["text"] + p["empty"] - 1.0) < 0.01, p
+        assert p["cause"] in fullness.CAUSES
+    # what is measured is what is drawn: the same rectangles as the page's HTML
+    checked = 0
+    for n, sp in enumerate(model.spreads):
+        rendered = T.build(sp.template, g, sp.options)
+        for side in ("left", "right"):
+            mine = [r for _, r in R.photo_rects(sp, rendered, g, g.page_window(side), dims)]
+            drawn = _img_rects(_page_html(g, lay["spreads"][n], side, dims))
+            assert len(mine) == len(drawn), (sp.template, side, mine, drawn)
+            for a, b in zip(sorted(mine, key=lambda r: (r.y, r.x)), sorted(drawn, key=lambda r: (r.y, r.x))):
+                assert abs(a.x - b.x) < 0.1 and abs(a.w - b.w) < 0.1 and abs(a.h - b.h) < 0.1, (a, b)
+                checked += 1
+    assert checked >= 10, checked
+
+    def one(template, ids, options=None):
+        sp = {"index": 1, "template": template, "options": options or {}, "text": None,
+              "section_id": None, "slots": [{"photo_id": i, "focal": [0.5, 0.5], "caption": None}
+                                            for i in ids]}
+        base = dict(lay, spreads=[sp])
+        base["meta"] = dict(lay["meta"], spread_count=1)
+        return fullness.measure(Layout.model_validate(base), dims, g)
+
+    left, right = one("full-bleed-single", ["p004"])
+    full, bare = (left, right) if left["photo"] > right["photo"] else (right, left)
+    assert full["empty"] == 0.0 and full["photo"] == 1.0, full
+    assert bare["cause"] == "nothing" and bare["empty"] > 0.95, \
+        f"the sliver a facing bleed runs past the fold was counted as a photograph: {bare}"
+    assert fullness.flagged([full, bare]) == [bare]
+    # a wide panorama in near-square slots is shown whole: the page says why it is empty
+    a, b = one("two-up-equal", ["p001", "p001"])
+    assert a["cause"] == "fitted" and a["fitted"] > 0.2, a
+    text = fullness.summary([full, bare, a, b])
+    assert "more than half empty" in text and "nothing on the page: page 2" in text, text
+    assert "no page is more than half empty" in fullness.summary([full])
+    print("page coverage: measured from the drawn rectangles, causes named: ok")
+
+
 def test_repack_and_crop_guard(): _run("repack_and_crop_guard")
 def test_adaptive_pages(): _run("adaptive_pages")
 def test_fuller_pages(): _run("fuller_pages")

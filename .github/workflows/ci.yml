@@ -48,7 +48,9 @@ jobs:
           - { os: ubuntu-latest, python: "3.11" }
           - { os: ubuntu-latest, python: "3.12", summary: true }
           - { os: ubuntu-latest, python: "3.13" }
-          - { os: macos-latest, python: "3.12" }
+          # macOS and Windows are paused to save runner minutes (macOS bills
+          # at 10x). Put the line back / remove the `if: false` below to resume.
+          # - { os: macos-latest, python: "3.12" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -86,6 +88,7 @@ jobs:
   # piece of work. So the editor itself is NOT tested on Windows yet.
   test-windows:
     name: test (windows-latest, 3.12, engine only)
+    if: false        # paused to save runner minutes; remove this line to resume
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
