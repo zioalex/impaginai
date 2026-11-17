@@ -174,6 +174,11 @@ def main() -> int:
             ed.wait(lambda: len((ed.get("/api/album") or {}).get("versions", [])) > versions,
                     180, "the revision made no new version")
             job_done("the revision")
+            # the editor finishes in the background (more fetches, then it switches
+            # to the Book tab itself): let that happen before clicking on
+            page.wait_for_function(
+                "document.getElementById('msgText').textContent.includes('Revised in')",
+                timeout=60000)
             page.click("#tabBook")
             page.wait_for_function(
                 "[...document.querySelectorAll('.vrow')].some(r => r.textContent.includes('Seite 4'))",
@@ -184,12 +189,6 @@ def main() -> int:
             page.click("#tabPhotos")
             page.wait_for_selector("#grid img", timeout=10000)
             before = len(ed.get("/api/photos"))
-            # thumbnails load lazily and have no size until they do: wait for the
-            # one to be clicked, or the click sees it as "not visible"
-            page.wait_for_function(
-                "(() => { const i = document.querySelectorAll('#grid img')[2];"
-                " if (!i) return false; i.scrollIntoView();"
-                " return i.complete && i.naturalWidth > 0; })()", timeout=20000)
             page.once("dialog", lambda d: d.accept())
             page.click("#grid img >> nth=2")
             page.wait_for_selector("#editor", state="visible", timeout=5000)
