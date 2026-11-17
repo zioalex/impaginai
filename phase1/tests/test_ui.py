@@ -184,6 +184,12 @@ def main() -> int:
             page.click("#tabPhotos")
             page.wait_for_selector("#grid img", timeout=10000)
             before = len(ed.get("/api/photos"))
+            # thumbnails load lazily and have no size until they do: wait for the
+            # one to be clicked, or the click sees it as "not visible"
+            page.wait_for_function(
+                "(() => { const i = document.querySelectorAll('#grid img')[2];"
+                " if (!i) return false; i.scrollIntoView();"
+                " return i.complete && i.naturalWidth > 0; })()", timeout=20000)
             page.once("dialog", lambda d: d.accept())
             page.click("#grid img >> nth=2")
             page.wait_for_selector("#editor", state="visible", timeout=5000)
