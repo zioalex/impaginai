@@ -1,0 +1,78 @@
+# The checks that run before a commit leaves the machine.
+#
+#     pip install pre-commit
+#     pre-commit install && pre-commit install --hook-type pre-push
+#     pre-commit run --all-files        # once, to see where you stand
+#
+# Nothing here is new policy: `ruff` is the linter CI already runs, with the
+# selection from pyproject.toml, and the rest are the mistakes that are cheap
+# to catch and expensive to find later. The split matters:
+#
+#   pre-commit  — instant, and about the commit you are making
+#   pre-push    — slower, and about what the world is going to see
+#
+# A hook is pinned to a tag, and `pre-commit autoupdate` moves the pins.
+# Deliberately NOT here yet:
+#   * ruff-format — the tree has never been formatted, so adding it now would
+#     bury the next change under whitespace. It belongs in the commit that
+#     formats everything once (see docs/plans/software-hardening.md, W7).
+#   * yamllint and markdownlint — both have hundreds of opinions about files
+#     that are hand-written on purpose. A failing markdown lint must never be
+#     able to block a security fix.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        stages: [pre-commit]
+        # Two trailing spaces are a line break in Markdown.
+        args: ["--markdown-linebreak-ext=md"]
+      - id: end-of-file-fixer
+        stages: [pre-commit]
+      - id: check-yaml
+        stages: [pre-commit]
+      - id: check-json
+        stages: [pre-commit]
+      - id: check-toml
+        stages: [pre-commit]
+      - id: check-merge-conflict
+        stages: [pre-commit]
+      # A repository that is cloned on Linux, macOS and Windows: two files
+      # differing only in case break one of the three.
+      - id: check-case-conflict
+        stages: [pre-commit]
+      - id: mixed-line-ending
+        stages: [pre-commit]
+        args: ["--fix=lf"]
+      # The album's own photographs are never committed (.gitignore); the 22
+      # synthetic demo photographs are, and the largest is 564 KB.
+      - id: check-added-large-files
+        stages: [pre-commit]
+        args: ["--maxkb=1000"]
+      - id: detect-private-key
+        stages: [pre-commit]
+
+  # The same linter and the same rules as CI, so a push cannot be red for
+  # something that was green locally.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.5
+    hooks:
+      - id: ruff-check
+        stages: [pre-commit]
+
+  # This project handles other people's API keys. The baseline records the
+  # strings that are known not to be secrets — the fake keys in
+  # phase1/tests/test_pages.py — so anything new has to be looked at:
+  #
+  #     detect-secrets scan --baseline .secrets.baseline
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        stages: [pre-push]
+        args: ["--baseline", ".secrets.baseline"]
+        exclude: ^(requirements.*\.lock\.txt|phase1/demo_photos/)
+
+default_language_version:
+  python: python3

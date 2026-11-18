@@ -7,10 +7,23 @@ lab specifications.
    gives to your first pull request. It lets the project be offered under
    the AGPL-3.0 and under commercial licences; you keep your copyright. We
    cannot merge code without it.
-2. **Set up and test the way CI does.** The commands are in
-   [`AGENTS.md`](AGENTS.md) (`pytest --cov` and `ruff check .`).
-3. Keep a pull request to one change, say what you ran, and update the
-   docs when behaviour changes.
+2. **Install the hooks.** They are the same checks CI runs, so a push is
+   not red for something that was green locally:
+
+   ```bash
+   pip install pre-commit
+   pre-commit install && pre-commit install --hook-type pre-push
+   ```
+
+3. **Set up and test the way CI does.** The commands are in
+   [`AGENTS.md`](AGENTS.md) (`pytest --cov` and `ruff check .`). The one
+   optional dependency, offline place names, installs on its own line
+   (`requirements-geo.lock.txt`) and the rest of the suite runs without it.
+4. Keep a pull request to one change, say what you ran — including anything
+   that could not run, and why — and update the docs when behaviour changes.
+   The pull request template asks for exactly this.
+5. **Security problems do not go in a pull request or an issue.** See
+   [`SECURITY.md`](SECURITY.md) for the private channel.
 
 ## Licences in this repository
 
