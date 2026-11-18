@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Generated output. Everything here is reproducible from the source and a
 # photo directory, and the PDFs are large — keep them out of history.
 out/

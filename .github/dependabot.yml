@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Dependabot keeps requirements.txt current on its own, so a security release
 # does not wait for someone to notice. Grouped into one PR a week: pillow and
 # pypdf both parse untrusted binary input and are the two that matter most.
