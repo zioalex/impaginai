@@ -457,7 +457,12 @@ const EXPORTS=[["proof","Preview PDF","Small and quick, for looking through"],
  ["jpeg:300","Page images · 300 DPI","One JPEG per page, zipped — for printing elsewhere"]];
 
 let photos=[], album=null, sel=null, picked=new Set(), lastClicked=null, polling=null,
-    designed=false, dirty=false, broughtBack=new Set(), rerenderTimer=null, view="photos", pages={count:0};
+    designed=false, dirty=false, broughtBack=new Set(), rerenderTimer=null, view="photos", pages={count:0},
+    // Counts the tab changes the USER asked for. A job that finishes shows
+    // the book, but finished() does two requests before it gets there, and
+    // the user can pick another tab while they are in flight. Comparing this
+    // before and after is how the later, explicit choice wins.
+    navSeq=0;
 const $=id=>document.getElementById(id);
 const usd=v=>v==null?"—":(v<0.01&&v>0?"<$0.01":"$"+v.toFixed(2));
 
@@ -795,6 +800,7 @@ function lockButtons(on){$("btnPlan").disabled=on;$("fmtSel").disabled=on;}
 
 async function finished(j){
   const r=j.result||{};
+  const navAtStart=navSeq;      // see navSeq, above
   album=await get("/api/album"); photos=await get("/api/photos");
   designed=album.versions.length>0; setHeader(); renderGrid(); if(sel)select(sel,false);
   await refreshPages();
@@ -806,7 +812,11 @@ async function finished(j){
     const cost=r.usd!=null?` · this session cost ${usd(r.usd)}${r.estimated?" (estimated)":""}`:"";
     note(`${j.kind==="design"?"Designed":"Revised"} in ${took}${cost}. ${rep.pages} pages`
       +(bad?` — ${bad} problem(s) to fix before printing.`:`, ${rep.min_dpi} DPI at the smallest.`));
-    showView("book");
+    // The finished book is what you want to see — unless you have chosen
+    // another tab in the second or two this function spent fetching the
+    // pages and the report. Then you chose last, and you keep what you
+    // chose; the note above already says the book is ready.
+    if(navSeq===navAtStart)showView("book");
   }else if(j.kind==="rerender"){
     status("Preview up to date");
     const back=(r.not_placed||[]).filter(id=>broughtBack.has(id));
@@ -890,9 +900,9 @@ function showView(v){
   if(v==="book")renderBook();
   if(v==="settings")renderSettings();
 }
-$("tabPhotos").onclick=()=>showView("photos");
-$("tabBook").onclick=()=>showView("book");
-$("tabSettings").onclick=()=>showView("settings");
+$("tabPhotos").onclick=()=>{navSeq++;showView("photos");};
+$("tabBook").onclick=()=>{navSeq++;showView("book");};
+$("tabSettings").onclick=()=>{navSeq++;showView("settings");};
 
 // --- Settings ------------------------------------------------------------
 const EFFECT={instant:["Applies now · free","Re-applied to the current design at once, no model call."],

@@ -177,8 +177,25 @@ def main() -> int:
             ok("a change asked for in words becomes a new version in the book")
 
             # 10. a photograph removed from the album leaves the list, and comes back
+            #
+            # Wait for the note the revision prints before touching a tab.
+            # job_done() returns when the SERVER says the job is over, but the
+            # page then fetches the pages and the report before it shows the
+            # book, and that took seconds on a loaded runner. Switching to the
+            # photos tab inside that window used to end with the book tab
+            # pulled back over the grid and a thirty-second wait for a
+            # photograph that would never be visible again — CI caught it on
+            # macOS and on Linux, from the same commit that passed elsewhere.
+            # The editor now keeps the tab the user picked last; this waits for
+            # the window to close so the test does not depend on that race at
+            # all, and then checks the tab really is the one that was asked for.
+            page.wait_for_function(
+                "document.getElementById('msgText').textContent.includes('Revised in')",
+                timeout=60000)
             page.click("#tabPhotos")
             page.wait_for_selector("#grid img", timeout=10000)
+            assert page.eval_on_selector("#main", "m => m.className") == "", \
+                "the editor left the photographs tab on its own after the revision"
             before = len(ed.get("/api/photos"))
             page.once("dialog", lambda d: d.accept())
             page.click("#grid img >> nth=2")
