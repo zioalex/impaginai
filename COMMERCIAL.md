@@ -1,6 +1,7 @@
 # Commercial licence
 
-This software is free under the **GNU AGPL-3.0**: you may use, change and
+This software is free under the **GNU AGPL-3.0-only** (version 3 exactly, not
+"or any later version"): you may use, change and
 share it, and if you offer it to others as a network service you must publish
 your modified source under the same licence.
 

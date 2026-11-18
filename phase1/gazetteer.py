@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Named landmarks near a photograph, from a list kept on this machine.
 
 The lake, the glacier and the peak used to be asked of the public OpenStreetMap

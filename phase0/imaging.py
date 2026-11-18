@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Image formats: what counts as a photograph, and teaching Pillow to open it.
 
 Importing this module registers every decoder the project needs. Six modules

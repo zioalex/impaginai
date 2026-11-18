@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Phase 1 — the core loop, CLI only.
 
     export ANTHROPIC_API_KEY=...

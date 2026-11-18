@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Writing the files a user cannot afford to lose.
 
 `Path.write_text` empties the file before it writes. A crash, a full disk or a

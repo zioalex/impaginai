@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Calibration pages for the Phase 0 test book.
 
 These pages are the whole point of spending money at the lab. A proof PDF on

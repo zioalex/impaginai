@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Layout version history on the filesystem.
 
 Deliberately mirrors the `layout_version` table from PLAN.md — version_no,
