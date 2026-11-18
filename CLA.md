@@ -1,9 +1,7 @@
 # Contributor Licence Agreement (CLA)
 
-> **DRAFT: have a lawyer review this before you rely on it.** Replace
-> `[OWNER]` with the legal name of the person or company that owns the project
-> (the "Project Owner") and `[CONTACT]` with a contact address, then delete this
-> note.
+> **DRAFT: have a lawyer review this before you rely on it.** The Project
+> Owner is an individual; if that changes, update the name below.
 
 Thank you for contributing. This agreement lets the Project Owner distribute
 your contribution under the project's open-source licence (AGPL-3.0) **and**
@@ -14,7 +12,8 @@ work over.
 "You" is the person, or the legal entity, that submits a Contribution.
 "Contribution" is any code, documentation, template, design or other work that
 You intentionally submit to the project, for example in a pull request.
-"Project" is this repository and the software built from it.
+"Project Owner" is the individual who owns this repository, the GitHub user
+[zioalex](https://github.com/zioalex), or their successor. "Project" is this repository and the software built from it.
 
 ## 1. Copyright licence
 
@@ -74,10 +73,11 @@ condition.
 
 ## 7. General
 
-This agreement is governed by the law of `[JURISDICTION]` and its courts have
-exclusive jurisdiction. If a clause is unenforceable, the rest still applies.
+This agreement is governed by Swiss law, excluding its conflict-of-law rules.
+The courts at the Project Owner's place of residence in Switzerland have
+exclusive jurisdiction, unless mandatory law provides otherwise. If a clause is unenforceable, the rest still applies.
 The agreement covers all Your Contributions to the Project, past and future,
-until You tell `[CONTACT]` in writing that You stop contributing; the licences
+until You tell the Project Owner in writing (see `COMMERCIAL.md`) that You stop contributing; the licences
 already granted for earlier Contributions stay in force.
 
 ## How to sign
