@@ -50,6 +50,30 @@ FIXTURE_MARKERS = (
     b"xxxxxxxx",
 )
 
+# Blobs that have been read and are known not to hold a key, named by content
+# rather than by path.
+#
+# A path exemption would be a standing hole in the scanner, and it would sit
+# exactly where the key shapes are. A blob hash cannot grow one: git names a
+# blob by its contents, so this entry can only ever refer to these exact
+# bytes. Change one character of that file and the hash changes and the new
+# version is scanned like anything else.
+#
+# The entry below exists because this scanner's own test must feed it real key
+# shapes, and the first commit of that test wrote them as literals. The test
+# now assembles them from fragments at import, so no later commit of it will
+# need an entry here — but that first blob is in history for good, and
+# rewriting a pushed branch to remove a string that was never a secret is a
+# worse trade than naming it.
+KNOWN_BLOBS = {
+    # tools/test_scan_history_for_secrets.py as first committed, in 25219ef.
+    # Its key shapes are the test's own inputs: a made-up Anthropic, AWS,
+    # GitHub and Slack shape, each written to match a pattern and nothing
+    # else. Read the blob if you want to check: `git cat-file -p <hash>`.
+    "6d4f35de7ebfad8e4a3e5b09d81aa5f9d170ae34":  # pragma: allowlist secret
+        "this scanner's own test, first commit: its key shapes are test inputs",
+}
+
 MAX_BLOB = 4_000_000          # a photograph is not a key
 
 
@@ -75,6 +99,7 @@ def main() -> int:
 
     real: list[tuple[str, str, str, str]] = []
     fixtures: collections.Counter = collections.Counter()
+    known: list[str] = []
     scanned = at = 0
     while at < len(batch):
         end = batch.index(b"\n", at)
@@ -85,6 +110,9 @@ def main() -> int:
         sha, kind, size = header[0], header[1], int(header[2])
         body, at = batch[at:at + size], at + size + 1
         if kind != "blob" or size > MAX_BLOB:
+            continue
+        if sha in KNOWN_BLOBS:
+            known.append(sha)
             continue
         scanned += 1
         for name, rx in PATTERNS.items():
@@ -99,6 +127,13 @@ def main() -> int:
     print(f"objects in history: {len(paths)}, blobs scanned: {scanned}")
     for (name, path), n in sorted(fixtures.items()):
         print(f"  allowed: {n:3} {name} in {path} (a test fixture)")
+    # Never silent about what it did not look at.
+    for sha in known:
+        print(f"  skipped: blob {sha[:10]} — {KNOWN_BLOBS[sha]}")
+    for sha in KNOWN_BLOBS:
+        if sha not in known:
+            print(f"  note: KNOWN_BLOBS lists {sha[:10]}, which is no longer in "
+                  f"history — the entry can go")
 
     if real:
         print(f"\n{len(real)} string(s) shaped like a real key:")
