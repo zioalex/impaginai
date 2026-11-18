@@ -14,7 +14,13 @@
 # means it is covered the moment it exists.
 name: CI
 on:
+  # `push` is main only, and `pull_request` covers everything else. A bare
+  # `push:` next to `pull_request:` ran the whole matrix TWICE for every
+  # commit on a branch with a pull request open — two runs of four test legs
+  # plus Windows, for one push. Work on a branch is tested through its pull
+  # request, which is where it is read.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -181,9 +187,23 @@ jobs:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
           echo "results: $RESULTS"
+          bad=0
           for r in $RESULTS; do
-            if [ "$r" != "success" ]; then
-              echo "::error::a required job ended as '$r'"
-              exit 1
-            fi
+            case "$r" in
+              success) ;;
+              cancelled)
+                # Not a pass: a cancelled job is a job whose answer nobody
+                # knows, and this check exists to refuse exactly that. In
+                # practice it means a newer push superseded this run, in
+                # which case this commit is no longer the head and the newer
+                # run is the one that decides the pull request.
+                echo "::error::a required job was cancelled — if a newer commit was pushed, that run is the one that counts; otherwise re-run this one"
+                bad=1
+                ;;
+              *)
+                echo "::error::a required job ended as '$r'"
+                bad=1
+                ;;
+            esac
           done
+          exit "$bad"
