@@ -1,6 +1,6 @@
 # Contributor Licence Agreement (CLA)
 
-> **DRAFT: have a lawyer review this before you rely on it.** The Project
+> **DRAFT** The Project
 > Owner is an individual; if that changes (for example a company is formed),
 > update the name below.
 
