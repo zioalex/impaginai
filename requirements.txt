@@ -37,10 +37,15 @@ fastapi>=0.162.2              # verified 0.162.2
 uvicorn>=0.54.0               # verified 0.54.0
 
 # --- optional ---
-# Offline place names from GPS. ~8 MB of bundled settlement data, no network,
-# no API key. Without it the album simply has no place names; with it you can
-# still override any name in places.yaml. Pulls in numpy and scipy.
-reverse-geocoder>=1.5.1       # verified 1.5.1 (numpy 2.5.3, scipy 1.18.1)
+# Offline place names from GPS live in requirements-geo.txt, not here.
+# reverse-geocoder has no wheel for some platforms and builds from source;
+# where that build fails, pip abandons the whole resolution and NOTHING is
+# installed — so listing an optional dependency here made every install as
+# fragile as its least portable member. Install it separately:
+#
+#     pip install -r requirements-geo.lock.txt
+#
+# Without it the album simply has no place names.
 
 # Writing EXIF, needed only by the demo photo generator.
 piexif>=1.1.3
