@@ -3,7 +3,9 @@
 # runner, the linter and the coverage report agree on what the code is.
 
 [tool.pytest.ini_options]
-testpaths = ["phase1/tests"]
+# tools/ holds the repository's own small tools and their tests (the history
+# secret scanner, for one): they are part of the suite, not a side project.
+testpaths = ["phase1/tests", "tools"]
 pythonpath = ["phase0", "phase1", "phase2", "phase1/tests"]
 addopts = "-ra"
 
