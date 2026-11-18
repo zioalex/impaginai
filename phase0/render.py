@@ -21,6 +21,7 @@ import io
 import json
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 import yaml
 from PIL import Image, ImageCms, ImageOps
@@ -140,6 +141,26 @@ def build_derivatives(
 # --------------------------------------------------------------------------
 # HTML
 # --------------------------------------------------------------------------
+
+
+def src_url(path: Path) -> str:
+    """A file path as a URL, safe inside an HTML attribute.
+
+    The page is loaded from a `file://` URI and every `<img>` points at a
+    derivative on disk, so the attribute holds a path — and a path is not a
+    URL. `Sommer #3.jpg` truncates at the fragment and the photograph renders
+    blank, which the browser reports as a 30-second wait for an image that
+    never loads; `100%.jpg` is an invalid escape; and a path containing a
+    double quote ends the attribute early and injects whatever follows into a
+    page Chromium then runs. None of this is exotic: a photograph's id is its
+    filename stem (`phase1/photos.py`, `phase0/validate.py`), the album
+    directory is named by the user, and both end up in this attribute.
+
+    Percent-encoding leaves `/` and a Windows drive's `:` alone, so an
+    ordinary path is unchanged, and removes every character that could end
+    the attribute or the URL.
+    """
+    return quote(path.as_posix(), safe="/:")
 
 
 def esc(s: str | None) -> str:
@@ -346,7 +367,7 @@ def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window:
         if first_on_page is None or (rect.y, rect.x) < (first_on_page.y, first_on_page.x):
             first_on_page = rect
         parts.append(
-            f'<img class="{cls}" src="{src.as_posix()}" '
+            f'<img class="{cls}" src="{src_url(src)}" '
             f'style="{rect_style(rect)}object-position:{posx:.1f}% {posy:.1f}%;">'
         )
         if not slot.caption or box.caption_style == "none" or slot.caption_position == "none":
@@ -477,7 +498,7 @@ def build_cover_html(layout: Layout, g: Geometry, lab: dict, photo_paths: dict[s
         _, cx, cy = place_photo(area, _aspect(photo_paths[cover.front_photo_id]),
                                 tuple(cover.front_focal), fkeep, True)
         parts.append(
-            f'<img class="slot abs" src="{photo_paths[cover.front_photo_id].as_posix()}" '
+            f'<img class="slot abs" src="{src_url(photo_paths[cover.front_photo_id])}" '
             f'style="left:{front_x:.2f}mm;top:0;width:{total_w - front_x:.2f}mm;height:{total_h:.2f}mm;'
             f"object-position:{cx:.1f}% {cy:.1f}%;\">"
         )
