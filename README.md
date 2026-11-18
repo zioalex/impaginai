@@ -253,7 +253,10 @@ CI runs that on every push and weekly, and Dependabot opens grouped update PRs.
 
 ## Licence
 
-Apache 2.0 — see `LICENSE`.
+GNU AGPL-3.0 — see `LICENSE` — with a commercial licence available for use
+that the AGPL does not allow: see `COMMERCIAL.md`. The lab specification files
+in `phase0/labs/` are Apache-2.0. To contribute, read `CONTRIBUTING.md` and
+`CLA.md`.
 
 Landmark names come from [GeoNames](https://www.geonames.org) (CC BY 4.0) and,
 when its servers answer, © OpenStreetMap contributors (ODbL).
