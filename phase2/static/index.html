@@ -553,7 +553,7 @@ function tile(p){
   const d=document.createElement("div");
   d.className="tile"+(p.exclude?" off":"")+(sel===p.id?" sel":"")+(picked.has(p.id)?" multi":"");
   d.tabIndex=0; d.dataset.id=p.id;
-  d.innerHTML=`<div class="ph"><img loading="lazy" src="/thumb/${p.id}.jpg?r=${p.rotate||0}" alt="${p.id}"><div class="badges"></div>
+  d.innerHTML=`<div class="ph"><img loading="lazy" src="/thumb/${encodeURIComponent(p.id)}.jpg?r=${p.rotate||0}" alt="${esc(p.id)}"><div class="badges"></div>
     <div class="qa"><button class="eye ${p.exclude?"":"on"}" title="${p.exclude?"Bring back into the album (X)":"Leave out of the album (X)"}">${p.exclude?"🚫":"👁"}</button>
     <button class="pen" title="Write the caption (Enter)">✎</button>
     <button class="zoom" title="See it bigger (Space)">⤢</button></div></div><div class="cap"></div>`;
@@ -598,7 +598,7 @@ function select(id,scroll=true){
   sel=id; document.body.classList.add("picked");
   const p=photos.find(x=>x.id===id); if(!p)return;
   $("noSel").style.display="none"; $("editor").style.display="block";
-  $("preview").src=`/thumb/${id}.jpg?r=${p.rotate||0}`;
+  $("preview").src=`/thumb/${encodeURIComponent(id)}.jpg?r=${p.rotate||0}`;
   const bits=[];
   if(p.place)bits.push(`<b>${esc(p.place)}</b>`);
   if(p.taken_at)bits.push(esc(p.taken_at));
@@ -717,8 +717,8 @@ function openLightbox(id){
   lbId=id;
   const img=$("lbImg");
   const r=p.rotate||0;
-  img.src=`/thumb/${id}.jpg?r=${r}`;           // at once, then the large copy
-  const big=new Image(); big.onload=()=>{if(lbId===id)img.src=big.src;}; big.src=`/photo/${id}.jpg?r=${r}`;
+  img.src=`/thumb/${encodeURIComponent(id)}.jpg?r=${r}`;           // at once, then the large copy
+  const big=new Image(); big.onload=()=>{if(lbId===id)img.src=big.src;}; big.src=`/photo/${encodeURIComponent(id)}.jpg?r=${r}`;
   $("lbCap").textContent=p.description||p.caption||p.landmark||p.place||"";
   $("lbMeta").textContent=[p.taken_at,`${p.width}×${p.height}`].filter(Boolean).join(" · ");
   $("photoView").classList.add("on");
