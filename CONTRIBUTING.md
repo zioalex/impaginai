@@ -3,10 +3,11 @@
 Contributions are welcome: bug reports, fixes, templates, translations and
 lab specifications.
 
-1. **Sign the CLA once.** Read [`CLA.md`](CLA.md) and add the sentence it
-   gives to your first pull request. It lets the project be offered under
-   the AGPL-3.0-only and under commercial licences; you keep your copyright. We
-   cannot merge code without it.
+1. **Sign the CLA once.** Read [`CLA.md`](CLA.md) and add the sentence from its
+   "How to sign" section to your first pull request. It lets the project be
+   offered under the AGPL-3.0-only and under commercial licences; you keep your
+   copyright. We cannot merge code without it. If your change was written with
+   an AI assistant, say so in the pull request (`CLA.md` section 4.4).
 2. **Set up and test the way CI does.** The commands are in
    [`AGENTS.md`](AGENTS.md) (`pytest --cov` and `ruff check .`).
 3. Keep a pull request to one change, say what you ran, and update the
