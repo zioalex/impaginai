@@ -1,7 +1,8 @@
 # Contributor Licence Agreement (CLA)
 
 > **DRAFT: have a lawyer review this before you rely on it.** The Project
-> Owner is an individual; if that changes, update the name below.
+> Owner is an individual; if that changes (for example a company is formed),
+> update the name below.
 
 Thank you for contributing. This agreement lets the Project Owner distribute
 your contribution under the project's open-source licence (AGPL-3.0) **and**
@@ -12,8 +13,8 @@ work over.
 "You" is the person, or the legal entity, that submits a Contribution.
 "Contribution" is any code, documentation, template, design or other work that
 You intentionally submit to the project, for example in a pull request.
-"Project Owner" is the individual who owns this repository, the GitHub user
-[zioalex](https://github.com/zioalex), or their successor. "Project" is this repository and the software built from it.
+"Project Owner" is Alessandro Surace (GitHub: [zioalex](https://github.com/zioalex)),
+the individual who owns this repository, or their successor. "Project" is this repository and the software built from it.
 
 ## 1. Copyright licence
 
