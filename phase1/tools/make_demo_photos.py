@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Synthetic 'photographs' with real EXIF, for demonstrating the pipeline.
 
 These are not pretty pictures and are not meant to be. They exist so the demo

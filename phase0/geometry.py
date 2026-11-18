@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Page geometry for a layflat book exported as single pages.
 
 The whole renderer rests on one idea: templates are authored on a SPREAD CANVAS,

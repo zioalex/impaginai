@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Close up the empty pages the planner leaves, and stamp each location.
 
 The planner thinks in spreads, and many of its templates spend one page of the

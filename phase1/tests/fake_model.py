@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """A fake OpenAI-compatible model endpoint, for end-to-end tests without a key.
 
 The unit tests swap the completer for a script and never touch HTTP. That

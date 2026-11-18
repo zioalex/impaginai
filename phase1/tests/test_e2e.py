@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """End to end, with a mocked key and a fake model endpoint: no network, no cost.
 
     python phase1/tests/test_e2e.py

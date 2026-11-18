@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Score a model on the job this project actually needs doing.
 
 Published benchmarks measure OCR, chart reading and exam questions. None of

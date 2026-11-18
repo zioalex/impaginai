@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Every editor setting that is not a photograph, in one place.
 
 Each option knows its default, what values it accepts, which group of the
