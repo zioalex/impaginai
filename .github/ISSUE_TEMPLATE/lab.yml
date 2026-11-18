@@ -1,0 +1,52 @@
+name: A print lab's specification
+description: Add or correct a lab, format or paper (phase0/labs/*.yaml).
+labels: [lab-spec]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Lab specification files are Apache-2.0 (`phase0/labs/LICENSE`) so they
+        can be shared freely. Each number needs a source: a measurement, or
+        the lab's own documentation. A guessed spine width prints a ruined
+        book.
+  - type: input
+    id: lab
+    attributes:
+      label: The lab
+      placeholder: CEWE, WhiteWall, ifolor, Blurb, Bookfactory …
+    validations:
+      required: true
+  - type: input
+    id: product
+    attributes:
+      label: The product and format
+      placeholder: 30 × 30 cm hardcover, lay-flat, matte
+    validations:
+      required: true
+  - type: textarea
+    id: numbers
+    attributes:
+      label: The numbers
+      description: >
+        Trim size, bleed, safe margin, gutter loss, spine width per page,
+        minimum and maximum page count, required DPI, colour profile, file
+        format.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Where each number comes from
+      description: >
+        A link to the lab's specification, a PDF template, or "measured with a
+        ruler on a printed book" — which is the best source there is.
+    validations:
+      required: true
+  - type: checkboxes
+    id: printed
+    attributes:
+      label: Has a book been printed to this specification?
+      options:
+        - label: Yes, and the measurements above come from it
+        - label: No — these are from the lab's documentation only

@@ -5,6 +5,15 @@ trust it, install it, break it and have the pipeline tell them so". Security,
 tests, auditing, badges and automation, in the order that buys the most safety
 per hour.
 
+> **Status, 18 November.** Block 1 is built and is in the same pull request
+> as this plan: the pipeline gates (`permissions`, `concurrency`, per-job
+> timeouts, SHA-pinned actions, a single required `ci-ok` check), pre-commit
+> with a secrets baseline, a weekly scan of the whole history, a weekly
+> fresh-clone install job, and fixes for H1, H6 and a new finding H7. The
+> history scan found no real key has ever been committed. What Block 1 still
+> needs is four settings only a repository admin can change, listed at the end
+> of §3 under W1. Everything else below is unchanged.
+
 This is the software-engineering companion to
 [`docs/reviews/2026-11-11-project-review.md`](../reviews/2026-11-11-project-review.md).
 That review asked whether the project can become a product; this plan asks
@@ -143,6 +152,23 @@ it runs; it is unhardened about *how*.
 
 **Done when** a pull request with a deliberately broken test cannot be merged,
 and a 60-second-stale run is cancelled automatically.
+
+**What only an admin can do** (the four settings the workflows cannot set for
+themselves; everything else in W1 is in the repository):
+
+1. **Settings → Branches → add a rule for `main`**: require `ci-ok`, require a
+   linear history, require conversation resolution, no force-push, no
+   deletion, and apply it to administrators too — a rule the owner can push
+   past is a reminder, not a gate.
+2. **Settings → Code security → Secret scanning**, and **Push protection**
+   with it. Free on public repositories, and it refuses the push rather than
+   reporting it afterwards.
+3. **Settings → Code security → Private vulnerability reporting.**
+   `SECURITY.md` now tells people to use it, so it has to exist.
+4. **Settings → Actions → Workflow permissions → Read repository contents**,
+   with "Allow GitHub Actions to create and approve pull requests" off. The
+   workflows already declare `permissions: contents: read` for themselves;
+   this stops a workflow added later from inheriting write by default.
 
 ### W2 — One installable package, one command (3 half-days)
 

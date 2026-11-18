@@ -1,0 +1,61 @@
+name: Something is wrong
+description: The album, the editor or the PDF did not do what it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If this is a security problem, do not file it here — see
+        [SECURITY.md](https://github.com/zioalex/impaginai/blob/main/SECURITY.md).
+
+        Never paste an API key. The editor and the logs redact keys; a bug
+        report written by hand does not.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected instead
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: The steps that get there
+      placeholder: |
+        1. python phase2/server.py --album ... --photos ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Which commit
+      description: "`git rev-parse --short HEAD`"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Linux, macOS, Windows, "In a container"]
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: "`python3 -V`"
+  - type: textarea
+    id: output
+    attributes:
+      label: What the terminal said
+      description: The whole error, not a summary of it. Keys are redacted; check anyway.
+      render: text
+  - type: textarea
+    id: photos
+    attributes:
+      label: The photographs, if they matter
+      description: >
+        How many, which format (JPEG, HEIC), roughly what size, and whether
+        they have GPS. Do not attach your own photographs unless you mean to
+        publish them — the demo set in `phase1/demo_photos` is often enough to
+        reproduce a problem.
