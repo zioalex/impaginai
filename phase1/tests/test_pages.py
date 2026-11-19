@@ -91,7 +91,7 @@ def repack_and_crop_guard(groups):
 # one no longer hides the rest. `python tests/test_pages.py` runs them in order.
 SECTIONS = ("repack_and_crop_guard", "adaptive_pages", "fuller_pages", "compositions_survive",
             "subjects_without_a_box", "user_spreads", "gutter_and_bleed", "costs_and_places",
-            "engadin_run_fixes")
+            "precise_places", "engadin_run_fixes")
 
 
 def _run(name: str) -> None:
@@ -308,6 +308,7 @@ def test_subjects_without_a_box(): _run("subjects_without_a_box")
 def test_user_spreads(): _run("user_spreads")
 def test_gutter_and_bleed(): _run("gutter_and_bleed")
 def test_costs_and_places(): _run("costs_and_places")
+def test_precise_places(): _run("precise_places")
 def test_settings_keys_places_and_ids(): _run("engadin_run_fixes")
 
 
@@ -1335,6 +1336,126 @@ def costs_and_places():
         geocode.apply(ph, Path(td), offline_db=False, online=False)
         assert ph[0].features, "cached features should still be used offline"
     print("cost pricing and named places: ok")
+
+
+def precise_places():
+    """Precise town names from Nominatim: off unless asked for, one request
+    per ~500 m cell and language, used at once only before the first layout
+    (or after a refresh), never over the user's own names, quiet when the
+    server is down, and at most one request a second."""
+    import json
+    import tempfile
+    import time
+    import urllib.request
+
+    import geocode
+
+    # the label: the most specific settlement, then the region
+    lab = geocode.nominatim_label
+    assert lab({"hamlet": "Isenfluh", "village": "Lauterbrunnen", "state": "Bern"}) == "Isenfluh, Bern"
+    assert lab({"city": "Zürich", "suburb": "Kreis 1", "state": "Zürich"}) == "Zürich"
+    assert lab({"town": "Baunei", "county": "Ogliastra"}) == "Baunei, Ogliastra"
+    assert lab({"road": "SS125", "state": "Sardegna"}) is None, "no settlement is not a name"
+    assert geocode.nominatim_base("https://geo.example.org/reverse/") == "https://geo.example.org"
+    assert geocode.nominatim_base(None).startswith("https://"), geocode.nominatim_base(None)
+
+    asked = []
+
+    def fake(lat, lon, lang):
+        asked.append((lat, lon, lang))
+        return {"en": "Isenfluh, Bern"}.get(lang, "Isenfluh, BE")
+
+    ph = [NS(id="a", gps=(46.6201, 7.8902), place=None, features=[]),
+          NS(id="b", gps=(46.6203, 7.8904), place=None, features=[]),   # same cell
+          NS(id="c", gps=(46.70, 7.90), place=None, features=[]),
+          NS(id="d", gps=None, place=None, features=[])]
+
+    def run(td, **kw):
+        geocode.apply(ph, Path(td), landmarks=False, precise_fetch=fake, **kw)
+        return [p.place for p in ph]
+
+    geocode._NOM_DOWN_UNTIL = 0.0
+    with tempfile.TemporaryDirectory() as td:
+        # the offline database's answers, as if reverse_geocoder had given them
+        (Path(td) / "places_cache.json").write_text(json.dumps(
+            {"46.620,7.890": "Lauterbrunnen, Bern", "46.700,7.900": "Interlaken, Bern"}), encoding="utf-8")
+        assert run(td) == ["Lauterbrunnen, Bern", "Lauterbrunnen, Bern", "Interlaken, Bern", None]
+        assert not asked and not (Path(td) / "places_online.json").exists(), "asked although off"
+
+        # before the first layout: asked once per cell, used at once
+        assert run(td, precise=True, online=True, language="en", adopt=lambda: True)[:2] \
+            == ["Isenfluh, Bern"] * 2
+        assert len(asked) == 2, f"one request per ~500 m cell: {asked}"
+        assert {(round(a[0], 3), round(a[1], 3)) for a in asked} == {(46.62, 7.89), (46.7, 7.9)}, \
+            "the cell is asked, not the photograph's exact point"
+        assert run(td, precise=True, online=True, language="en")[0] == "Isenfluh, Bern"
+        assert len(asked) == 2, "the cache was not used"
+        assert run(td, precise=True, language="en")[0] == "Isenfluh, Bern", "editor reload, offline"
+        assert run(td, language="en")[0] == "Lauterbrunnen, Bern", "turned off: the offline name again"
+
+        # after the first layout: a new answer waits for a refresh
+        assert run(td, precise=True, online=True, language="de", adopt=lambda: False)[0] \
+            == "Lauterbrunnen, Bern", "a late answer changed a book already made"
+        assert len(asked) == 4, "another language is another question"
+        assert geocode.refresh_precise(Path(td), "de") == 2
+        assert run(td, precise=True, language="de")[0] == "Isenfluh, BE"
+
+        # the user's own names always win
+        (Path(td) / "places.yaml").write_text(
+            "- name: Unser Chalet\n  lat: 46.6202\n  lon: 7.8903\n  radius_m: 300\n", encoding="utf-8")
+        assert run(td, precise=True, language="de")[:3] == ["Unser Chalet", "Unser Chalet", "Isenfluh, BE"]
+
+    # a server that does not answer: one try, then quiet for the cooldown
+    calls = []
+
+    def down(lat, lon, lang):
+        calls.append(1)
+        raise TimeoutError("The read operation timed out")
+
+    geocode._NOM_DOWN_UNTIL, geocode._NOM_SAID = 0.0, False
+    with tempfile.TemporaryDirectory() as td:
+        pr = geocode.Precise(Path(td), fetch=down)
+        assert pr.fetch_missing([p.gps for p in ph]) == 0
+        assert pr.fetch_missing([p.gps for p in ph]) == 0
+        assert len(calls) == 1, f"asked {len(calls)} times during the cooldown"
+        assert geocode.places_status()["precise"] == "unavailable"
+        assert not pr.cache, "a failure is not an answer"
+    geocode._NOM_DOWN_UNTIL = 0.0
+
+    # the real request: the right parameters, and one a second at most
+    urls, saved = [], (urllib.request.urlopen, geocode.NOM_INTERVAL_S)
+
+    class Answer:
+        def __init__(self, body):
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return self.body
+
+    def fake_open(req, timeout=None):
+        urls.append((time.monotonic(), req.full_url, req.get_header("User-agent")))
+        if "lat=0.0000" in req.full_url:
+            return Answer(b'{"error": "Unable to geocode"}')
+        return Answer(json.dumps({"address": {"village": "Wengen", "state": "Bern"}}).encode())
+
+    try:
+        urllib.request.urlopen, geocode.NOM_INTERVAL_S = fake_open, 0.3
+        assert geocode._nominatim(46.605, 7.92, "de", "https://geo.example.org/") == "Wengen, Bern"
+        assert geocode._nominatim(0.0, 0.0, None, "https://geo.example.org") is None
+    finally:
+        urllib.request.urlopen, geocode.NOM_INTERVAL_S = saved
+    (t1, u1, ua), (t2, u2, _) = urls
+    assert u1.startswith("https://geo.example.org/reverse?") and "accept-language=de" in u1, u1
+    assert "zoom=14" in u1 and "addressdetails=1" in u1 and "accept-language" not in u2, (u1, u2)
+    assert ua and "impaginai" in ua, "the usage policy asks for an identifying User-Agent"
+    assert t2 - t1 >= 0.29, f"two requests {t2 - t1:.2f}s apart"
+    print("precise place names: ok")
 
 
 if __name__ == "__main__":
