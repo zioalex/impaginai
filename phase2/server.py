@@ -1850,6 +1850,22 @@ def _sharp_cm(p) -> list[float]:
     return [round(p.width / dpi * 2.54, 1), round(p.height / dpi * 2.54, 1)]
 
 
+def empty_pages(data: dict) -> tuple[dict[int, dict], int | None]:
+    """Page number -> how empty it is and why, for pages more than half
+    empty; and the average empty share of a page, in percent."""
+    import fullness
+    from schema import Layout
+
+    dims = {p.id: (p.width, p.height) for p in STATE["all"]}
+    pages = fullness.measure(Layout.model_validate(data), dims, STATE["g"])
+    if not pages:
+        return {}, None
+    flagged = {p["page"]: {"percent": round(100 * p["empty"]), "cause": p["cause"],
+                           "why": fullness.CAUSES[p["cause"]]}
+               for p in fullness.flagged(pages)}
+    return flagged, round(100 * sum(p["empty"] for p in pages) / len(pages))
+
+
 def low_res_pages(data: dict) -> dict[int, list[dict]]:
     """Page number -> photographs on it that resolution held back: printed
     below the lab's warning DPI ("soft"), or set smaller than the layout
@@ -1892,14 +1908,16 @@ def api_pages():
     d = STATE["album"] / "renders" / "pages-thumb"
     files = sorted(d.glob("page-*.jpg")) if d.exists() else []
     ver = (d / "version.txt").read_text(encoding="utf-8") if (d / "version.txt").exists() else None
-    low = {}
+    low, bare, avg = {}, {}, None
     if ver and files:
         try:
             _, data = Store(STATE["album"]).get(int(ver))
             low = low_res_pages(data)
+            bare, avg = empty_pages(data)
         except Exception:
             traceback.print_exc()
-    return {"version": ver, "count": len(files), "low_res": low}
+    return {"version": ver, "count": len(files), "low_res": low,
+            "empty": bare, "empty_average": avg}
 
 
 @app.get("/pages/{n}.jpg")
