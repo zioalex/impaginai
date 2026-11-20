@@ -154,7 +154,8 @@ def reload_photos():
     # Cache only: editing must never wait on the network. The named-places
     # lookup runs in prefetch_places(), at startup and before each design.
     geocode.apply(ph, a, offline_db=STATE["geocode"], online=False,
-                  language=STATE["language"], landmarks=bool(STATE.get("online_places")))
+                  language=STATE["language"], landmarks=bool(STATE.get("online_places")),
+                  precise=bool(STATE.get("precise_places")))
     ov = OV.Overrides.load(a)
     # Removed photographs are gone from the album's view altogether (their
     # files stay where they are); /api/photos/removed lists them.
@@ -182,6 +183,40 @@ def reload_photos():
 
 
 OSM_LOCK = threading.Lock()
+PRECISE_LOCK = threading.Lock()
+
+
+def prefetch_precise(photos=None) -> bool:
+    """Ask Nominatim for precise town names, from a background thread; never
+    waited for. A new answer is used at once only while the album has no layout
+    and none is being designed, or after "Refresh place names" until this
+    round of lookups ends; otherwise it waits for the next refresh. False when
+    a lookup was already running (it carries on, and follows a refresh too)."""
+    if not STATE.get("precise_places"):
+        return False
+    photos = photos if photos is not None else STATE["all"]
+    album, language, url = STATE["album"], STATE["language"], STATE.get("nominatim_url") or None
+
+    def adopt() -> bool:
+        return (STATE.get("precise_refresh") == album
+                or (not JOB["running"] and not Store(album).versions()))
+
+    def run():
+        try:
+            if (geocode.prefetch_precise(photos, album, language=language, base_url=url, adopt=adopt)
+                    and STATE.get("album") == album and not JOB["running"]):
+                reload_photos()
+        except Exception:
+            pass
+        finally:
+            if STATE.get("precise_refresh") == album:
+                STATE.pop("precise_refresh", None)
+            PRECISE_LOCK.release()
+
+    if not PRECISE_LOCK.acquire(blocking=False):
+        return False
+    threading.Thread(target=run, daemon=True).start()
+    return True
 
 
 def prefetch_places(photos=None, wait_s: float | None = None) -> None:
@@ -191,6 +226,7 @@ def prefetch_places(photos=None, wait_s: float | None = None) -> None:
     waiting at most `wait_s` for a download. OpenStreetMap is asked from a
     background thread and never waited for: its public servers time out often,
     and designing an album used to sit through that."""
+    prefetch_precise(photos)
     if not STATE.get("online_places"):
         return
     photos = photos if photos is not None else STATE["all"]
@@ -392,6 +428,8 @@ def apply_options() -> None:
     STATE["radius_m"] = float(o["radius_m"])
     STATE["geocode"] = bool(o["geocode"])
     STATE["online_places"] = bool(o["geocode"] and o["online_places"])
+    STATE["precise_places"] = bool(o["geocode"] and o["precise_places"])
+    STATE["nominatim_url"] = o["nominatim_url"]
     STATE["vision_px"] = int(o["vision_px"])
 
 
@@ -589,7 +627,8 @@ def _album_info():
         for g in STATE.get("groups", [])
     ]
     return {
-        "places": geocode.places_status() if STATE.get("online_places") else None,
+        "places": (geocode.places_status()
+                   if STATE.get("online_places") or STATE.get("precise_places") else None),
         "title": STATE["title"],
         "subtitle": STATE["subtitle"],
         "format": STATE["fmt"],
@@ -723,8 +762,27 @@ def api_config_put(body: dict):
         apply_options()
         save_settings()
         reload_photos()
+        if "precise_places" in changed or "nominatim_url" in changed:
+            prefetch_precise()
     return {"ok": True, "changed": changed, "needs": CFG.needs(changed),
             "group_count": len(STATE["groups"]), "format": STATE["fmt"]}
+
+
+@app.post("/api/places/refresh")
+def api_places_refresh():
+    """Use every precise town name Nominatim has given, including those that
+    arrived after the first layout, and ask about places not answered yet.
+    The names, and so the groups, can change: the preview is redrawn."""
+    if JOB["running"]:
+        raise HTTPException(409, "busy — try again when the current job finishes")
+    if not STATE.get("precise_places"):
+        raise HTTPException(409, "turn on Precise town names first")
+    n = geocode.refresh_precise(STATE["album"], language=STATE["language"])
+    STATE["precise_refresh"] = STATE["album"]
+    asking = prefetch_precise() or PRECISE_LOCK.locked()
+    reload_photos()
+    return {"ok": True, "adopted": n, "asking": asking, "needs": ["rerender"],
+            "group_count": len(STATE["groups"])}
 
 
 @app.get("/api/groups/preview")
@@ -1852,6 +1910,22 @@ def _sharp_cm(p) -> list[float]:
     return [round(p.width / dpi * 2.54, 1), round(p.height / dpi * 2.54, 1)]
 
 
+def empty_pages(data: dict) -> tuple[dict[int, dict], int | None]:
+    """Page number -> how empty it is and why, for pages more than half
+    empty; and the average empty share of a page, in percent."""
+    import fullness
+    from schema import Layout
+
+    dims = {p.id: (p.width, p.height) for p in STATE["all"]}
+    pages = fullness.measure(Layout.model_validate(data), dims, STATE["g"])
+    if not pages:
+        return {}, None
+    flagged = {p["page"]: {"percent": round(100 * p["empty"]), "cause": p["cause"],
+                           "why": fullness.CAUSES[p["cause"]]}
+               for p in fullness.flagged(pages)}
+    return flagged, round(100 * sum(p["empty"] for p in pages) / len(pages))
+
+
 def low_res_pages(data: dict) -> dict[int, list[dict]]:
     """Page number -> photographs on it that resolution held back: printed
     below the lab's warning DPI ("soft"), or set smaller than the layout
@@ -1894,14 +1968,16 @@ def api_pages():
     d = STATE["album"] / "renders" / "pages-thumb"
     files = sorted(d.glob("page-*.jpg")) if d.exists() else []
     ver = (d / "version.txt").read_text(encoding="utf-8") if (d / "version.txt").exists() else None
-    low = {}
+    low, bare, avg = {}, {}, None
     if ver and files:
         try:
             _, data = Store(STATE["album"]).get(int(ver))
             low = low_res_pages(data)
+            bare, avg = empty_pages(data)
         except Exception:
             traceback.print_exc()
-    return {"version": ver, "count": len(files), "low_res": low}
+    return {"version": ver, "count": len(files), "low_res": low,
+            "empty": bare, "empty_average": avg}
 
 
 @app.get("/pages/{n}.jpg")
@@ -2001,8 +2077,8 @@ def main():
     ap.add_argument("--radius-m", type=float, default=None)
     ap.add_argument("--no-geocode", action="store_true")
     ap.add_argument("--offline-places", action="store_true",
-                    help="do not look up glacier, lake and peak names on OpenStreetMap "
-                         "(that lookup sends photo coordinates to overpass-api.de)")
+                    help="nothing about places is looked up online: no glacier, lake and peak "
+                         "names from OpenStreetMap, no precise town names from Nominatim")
     ap.add_argument("--vision-px", type=int, default=None,
                     help=f"long edge sent to the vision model (default {annotate.VISION_PX})")
     ap.add_argument("--no-preflight", action="store_true",
@@ -2036,8 +2112,10 @@ def main():
     if args.no_geocode:
         pinned["geocode"] = False
         pinned["online_places"] = False
+        pinned["precise_places"] = False
     elif args.offline_places:
         pinned["online_places"] = False
+        pinned["precise_places"] = False
     local = args.host in ("127.0.0.1", "localhost", "::1")
     STATE.update(args=args, pinned=pinned, lab_paths=lab_paths, album=None,
                  models_locked_by=models_locked_by(args),

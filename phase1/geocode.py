@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -384,11 +385,187 @@ def prefetch_overpass(photos, album_dir: Path, language: str | None = None, fetc
     return feats.fetch_missing([p.gps for p in photos])
 
 
+# --- precise town names: Nominatim, optional and online --------------------
+#
+# The offline database names the nearest town CENTRE from a list of towns of a
+# thousand people or more. Near a boundary that is the neighbouring town, and
+# in the countryside it is a town several kilometres away. Nominatim
+# (OpenStreetMap's reverse geocoder) answers with the village, hamlet or
+# district the point is actually inside, in the album's language.
+#
+# It sends coordinates (rounded to about 500 m) to a server, so it is off unless
+# the user turns it on. Its answers are kept in `places_online.json`, each
+# marked whether it is in use ("adopted"). An answer is adopted when it arrives
+# before the album's first layout, or when the user asks for the place names to
+# be refreshed. Otherwise a name that arrived late would change a book the user
+# has already seen, and regroup its pages.
+
+NOMINATIM_URL = "https://nominatim.openstreetmap.org"
+NOM_CELL_DEG = 0.005                 # about 500 m: one request per cell
+# The public server's usage policy: at most one request per second, cached.
+NOM_INTERVAL_S = 1.0
+NOM_TIMEOUT_S = 15.0
+NOM_ZOOM = 14                        # village, hamlet or district; not the street
+# Which part of the address names the place, most specific first. A hamlet
+# inside a village's territory is what the people there call it.
+NOM_ORDER = ("hamlet", "village", "town", "city", "municipality", "suburb")
+_NOM_LOCK = threading.Lock()
+_NOM_LAST = 0.0
+_NOM_DOWN_UNTIL = 0.0
+_NOM_STATE = "idle"                  # idle | ok | unavailable, for the editor
+_NOM_SAID = False
+
+
+def nominatim_base(url: str | None = None) -> str:
+    """The server to ask: the setting, else ALBUM_NOMINATIM_URL, else the
+    public one. A pasted ".../reverse" is accepted too."""
+    base = (url or os.environ.get("ALBUM_NOMINATIM_URL") or NOMINATIM_URL).strip().rstrip("/")
+    return base[: -len("/reverse")] if base.endswith("/reverse") else base
+
+
+def _nom_cell(gps: tuple[float, float]) -> tuple[float, float]:
+    return (round(round(gps[0] / NOM_CELL_DEG) * NOM_CELL_DEG, 3),
+            round(round(gps[1] / NOM_CELL_DEG) * NOM_CELL_DEG, 3))
+
+
+def _nom_key(gps: tuple[float, float], language: str | None) -> str:
+    lat, lon = _nom_cell(gps)
+    return f"{language or ''}|{lat:.3f},{lon:.3f}"
+
+
+def nominatim_label(address: dict) -> str | None:
+    """"Wengen, Bern" from Nominatim's address parts; None where no settlement
+    is named (open sea, a glacier far from any village)."""
+    name = next((str(address[k]).strip() for k in NOM_ORDER if address.get(k)), "")
+    if not name:
+        return None
+    region = str(address.get("state") or address.get("county") or "").strip()
+    return f"{name}, {region}" if region and region != name else name
+
+
+def _nominatim(lat: float, lon: float, language: str | None, base_url: str | None = None,
+               timeout: float = NOM_TIMEOUT_S) -> str | None:
+    """One reverse lookup, at most one per second from this process."""
+    import urllib.parse
+    import urllib.request
+
+    global _NOM_LAST
+    q = {"lat": f"{lat:.4f}", "lon": f"{lon:.4f}", "format": "jsonv2",
+         "zoom": str(NOM_ZOOM), "addressdetails": "1"}
+    if language:
+        q["accept-language"] = language
+    req = urllib.request.Request(f"{nominatim_base(base_url)}/reverse?{urllib.parse.urlencode(q)}",
+                                 headers={"User-Agent": "impaginai (self-hosted)"})
+    with _NOM_LOCK:
+        wait = _NOM_LAST + NOM_INTERVAL_S - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = json.loads(r.read().decode("utf-8"))
+        finally:
+            _NOM_LAST = time.monotonic()
+    if not isinstance(data, dict) or ("error" in data and "address" not in data):
+        return None                  # "Unable to geocode": nothing named here
+    return nominatim_label(data.get("address") or {})
+
+
+class Precise:
+    """Nominatim's answers for one album (`places_online.json`).
+
+    `names()` never touches the network. `fetch_missing()` is the only thing
+    here that does, and the editor calls it from a background thread."""
+
+    def __init__(self, album_dir: Path, language: str | None = None, base_url: str | None = None,
+                 fetch=None):
+        self.path = album_dir / "places_online.json"
+        self.language = language
+        self.base_url = base_url
+        self.fetch = fetch or (lambda lat, lon, lang: _nominatim(lat, lon, lang, self.base_url))
+        self.cache: dict[str, dict] = {}
+        if self.path.exists():
+            try:
+                self.cache = json.loads(self.path.read_text(encoding="utf-8"))
+            except Exception:
+                self.cache = {}
+
+    def name(self, gps: tuple[float, float]) -> str | None:
+        """The adopted name for this point, or None (not asked yet, not
+        adopted, or nothing named there)."""
+        e = self.cache.get(_nom_key(gps, self.language))
+        return e["name"] if e and e.get("adopted") and e.get("name") else None
+
+    def fetch_missing(self, points, adopt=True) -> int:
+        """Ask about every cell not answered yet. `adopt` (a bool, or a
+        function asked as each answer arrives) says whether a new answer is
+        used at once. Returns how many answers were adopted."""
+        global _NOM_DOWN_UNTIL, _NOM_STATE, _NOM_SAID
+        adopted = 0
+        for gps in points:
+            if gps is None:
+                continue
+            k = _nom_key(gps, self.language)
+            if k in self.cache or time.monotonic() < _NOM_DOWN_UNTIL:
+                continue
+            lat, lon = _nom_cell(gps)
+            try:
+                name = self.fetch(lat, lon, self.language)
+            except Exception as exc:  # no network, overloaded, rate limited
+                if not _NOM_SAID:
+                    _NOM_SAID = True
+                    print(f"  precise place names unavailable ({str(exc)[:60]}); "
+                          f"using the town database on this machine")
+                _NOM_STATE = "unavailable"
+                _NOM_DOWN_UNTIL = time.monotonic() + COOLDOWN_S
+                break
+            use = bool(adopt() if callable(adopt) else adopt)
+            # "Nothing named here" is an answer too, and is not asked again.
+            self.cache[k] = {"name": name, "adopted": use}
+            adopted += int(use and bool(name))
+            _NOM_STATE = "ok"
+            self._save()
+        return adopted
+
+    def adopt_all(self) -> int:
+        """Use every answer kept, including those that arrived after the first
+        layout. Returns how many names that brought in."""
+        n = 0
+        for e in self.cache.values():
+            if not e.get("adopted"):
+                e["adopted"] = True
+                n += int(bool(e.get("name")))
+        self._save()
+        return n
+
+    def _save(self) -> None:
+        try:
+            import safeio
+
+            safeio.write_text(self.path, json.dumps(self.cache, ensure_ascii=False, indent=1),
+                              encoding="utf-8")
+        except Exception:
+            pass
+
+
+def prefetch_precise(photos, album_dir: Path, language: str | None = None,
+                     base_url: str | None = None, adopt=True, fetch=None) -> int:
+    """Ask Nominatim about every photograph's cell not answered yet. Meant for
+    a background thread: at one request a second it can take minutes."""
+    pr = Precise(album_dir, language=language, base_url=base_url, fetch=fetch)
+    return pr.fetch_missing([p.gps for p in photos], adopt=adopt)
+
+
+def refresh_precise(album_dir: Path, language: str | None = None) -> int:
+    """The user asked for the place names to be refreshed: every answer kept
+    is used, whenever it arrived."""
+    return Precise(album_dir, language=language).adopt_all()
+
+
 def places_status() -> dict:
-    """For the editor: where landmark names are coming from right now."""
+    """For the editor: where landmark and town names are coming from right now."""
     import gazetteer
 
-    return {"countries": gazetteer.status(), "osm": _OSM_STATE}
+    return {"countries": gazetteer.status(), "osm": _OSM_STATE, "precise": _NOM_STATE}
 
 
 def _short_town(label: str) -> str:
@@ -396,8 +573,14 @@ def _short_town(label: str) -> str:
 
 
 def apply(photos, album_dir: Path, offline_db: bool = True, online: bool = False,
-          language: str | None = None, fetch=None, landmarks: bool = True) -> int:
+          language: str | None = None, fetch=None, landmarks: bool = True,
+          precise: bool = False, precise_url: str | None = None, adopt=True,
+          precise_fetch=None) -> int:
     """Fill photo.place for every photo that has GPS. Returns how many were named.
+
+    With `precise`, a town name Nominatim gave (and that is in use, see
+    `Precise`) replaces the offline database's. With `online` too, Nominatim is
+    asked here and now, and `adopt` says whether its new answers are used.
 
     Also fills photo.features (named glaciers, lakes, peaks... in reach,
     nearest first) and leads the place with the nearest strong one:
@@ -412,13 +595,19 @@ def apply(photos, album_dir: Path, offline_db: bool = True, online: bool = False
     """
     gc = Geocoder(album_dir, offline_db)
     names = gc.resolve([p.gps for p in photos])
+    user_named = {pl.name for pl in gc.user_places}
+    if precise and offline_db:
+        pr = Precise(album_dir, language=language, base_url=precise_url, fetch=precise_fetch)
+        if online:
+            pr.fetch_missing([p.gps for p in photos], adopt=adopt)
+        names = [n if p.gps is None or n in user_named else (pr.name(p.gps) or n)
+                 for p, n in zip(photos, names)]
     feats = Features(album_dir, online=online, language=language, fetch=fetch,
                      landmarks=landmarks)
     if online and landmarks:
         if offline_db:
             prefetch_gazetteer(photos)
         feats.fetch_missing([p.gps for p in photos])
-    user_named = {pl.name for pl in gc.user_places}
     n = 0
     for p, name in zip(photos, names):
         if p.gps is not None:

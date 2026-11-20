@@ -59,9 +59,17 @@ def setup(args):
         raise SystemExit(f"no photos found in {args.photos}")
     # Place names before clustering: the group label carries the location.
     no_geo = getattr(args, "no_geocode", False)
-    named = geocode.apply(ph, args.album, offline_db=not no_geo,
-                          online=not (no_geo or getattr(args, "offline_places", False)),
-                          language=getattr(args, "language", None))
+    online = not (no_geo or getattr(args, "offline_places", False))
+    # Nominatim's names are used at once only before the first layout, or
+    # with --refresh-places: a book already made keeps its place names.
+    precise = online and getattr(args, "precise_places", False)
+    refresh = precise and getattr(args, "refresh_places", False)
+    if refresh:
+        geocode.refresh_precise(args.album, getattr(args, "language", None))
+    named = geocode.apply(ph, args.album, offline_db=not no_geo, online=online,
+                          language=getattr(args, "language", None), precise=precise,
+                          precise_url=getattr(args, "nominatim_url", None),
+                          adopt=lambda: refresh or not Store(args.album).versions())
     ov = OV.Overrides.load(args.album)
     ph = OV.apply_to_photos(ph, ov)
     groups = cluster.assign(ph, args.gap_hours, args.radius_m)
@@ -330,6 +338,16 @@ def main() -> int:
         p.add_argument("--offline-places", action="store_true",
                        help="do not look up glacier, lake and peak names on OpenStreetMap "
                             "(that lookup sends photo coordinates to overpass-api.de)")
+        p.add_argument("--precise-places", action="store_true",
+                       help="name the village, hamlet or district each place is in, from "
+                            "OpenStreetMap's Nominatim (sends coordinates, rounded to about "
+                            "500 m, one a second)")
+        p.add_argument("--nominatim-url", default=None,
+                       help="your own Nominatim server (default: the public one, or "
+                            "ALBUM_NOMINATIM_URL)")
+        p.add_argument("--refresh-places", action="store_true",
+                       help="with --precise-places: use every Nominatim name, also those that "
+                            "arrived after the first layout")
         p.add_argument("--format", default=None)
         p.add_argument("--language", default="de")
         providers.add_arguments(p)

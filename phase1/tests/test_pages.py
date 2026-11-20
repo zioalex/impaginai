@@ -93,7 +93,7 @@ def repack_and_crop_guard(groups):
 # one no longer hides the rest. `python tests/test_pages.py` runs them in order.
 SECTIONS = ("repack_and_crop_guard", "adaptive_pages", "fuller_pages", "compositions_survive",
             "subjects_without_a_box", "user_spreads", "gutter_and_bleed", "costs_and_places",
-            "engadin_run_fixes")
+            "precise_places", "engadin_run_fixes")
 
 
 def _run(name: str) -> None:
@@ -169,6 +169,139 @@ def test_missing_browser_is_a_sentence():
     assert R.browser_ready() is True
 
 
+def _write_clip(path, seconds=3.0, size=(320, 180), **meta):
+    """A small video written with PyAV, so no video file lives in the repository."""
+    import av
+    import numpy as np
+
+    with av.open(str(path), "w") as c:
+        s = c.add_stream("h264", rate=30)
+        s.width, s.height = size
+        s.pix_fmt = "yuv420p"
+        for k, v in meta.items():
+            c.metadata[k] = v
+        for i in range(int(seconds * 30)):
+            a = np.zeros((size[1], size[0], 3), np.uint8)
+            a[:, :, 1] = (i * 2) % 255
+            a[40:100, (i * 3) % 200:(i * 3) % 200 + 60] = 255
+            for p in s.encode(av.VideoFrame.from_ndarray(a, format="rgb24")):
+                c.mux(p)
+        for p in s.encode():
+            c.mux(p)
+
+
+def test_clips_probe():
+    """What a short video carries: length, size, date, place, and whether a
+    photograph of the same name sits beside it. Reports, never raises."""
+    import shutil
+    import tempfile
+    from datetime import datetime
+
+    import clips
+
+    assert clips.parse_location("+46.4100+009.9400/") == (46.41, 9.94)
+    assert clips.parse_location("-33.8568+151.2153+010.000/") == (-33.8568, 151.2153)
+    assert clips.parse_location("") is None and clips.parse_location("somewhere") is None
+    assert clips.parse_location("+146.0+009.0/") is None, "a latitude past the pole"
+
+    # the phone's own local time wins over everything
+    when, how = clips.taken_at({"com.apple.quicktime.creationdate": "2026-08-05T11:12:33+0200",
+                                "creation_time": "2026-08-05T09:12:33.000000Z"}, "IMG_0001.MOV")
+    assert when == datetime(2026, 8, 5, 11, 12, 33) and "reliable" in how, (when, how)
+    # only UTC: used, and said to be possibly hours off
+    when, how = clips.taken_at({"creation_time": "2026-08-05T09:12:33.000000Z"}, "clip.mp4")
+    assert when == datetime(2026, 8, 5, 9, 12, 33) and "UTC" in how, (when, how)
+    # a file name written in local time, close to the UTC stamp, is the clock to trust
+    when, how = clips.taken_at({"creation_time": "2026-08-05T09:12:33.000000Z"},
+                               "VID_20260805_111233.mp4")
+    assert when == datetime(2026, 8, 5, 11, 12, 33) and "file name" in how, (when, how)
+    # a messenger's name carries a day and nothing else
+    when, how = clips.taken_at({}, "VID-20260805-WA0019.mp4")
+    assert when.date() == datetime(2026, 8, 5).date() and "no time of day" in how, (when, how)
+    assert clips.taken_at({"creation_time": "1970-01-01T00:00:00Z"}, "x.mp4") == (None, "no date")
+
+    test_loop_ensure()
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        _write_clip(d / "alone.mp4", creation_time="2026-08-05T09:12:33.000000Z",
+                    location="+46.4100+009.9400/")
+        shutil.copy(d / "alone.mp4", d / "IMG_0001.MOV")
+        shutil.copy(PHOTO_DIR / "p002.jpg", d / "img_0001.jpg")      # same stem, other case
+        _write_clip(d / "long.mp4", seconds=8.0)
+        (d / "broken.mp4").write_bytes(b"not a video at all")
+        (d / "notes.txt").write_text("ignored", encoding="utf-8")
+        rows = {r["file"]: r for r in (clips.probe(p) for p in clips.find(d))}
+        assert set(rows) == {"alone.mp4", "IMG_0001.MOV", "long.mp4", "broken.mp4"}, set(rows)
+        a = rows["alone.mp4"]
+        assert a["ok"] and a["clip"] and a["decodes"], a
+        assert (a["width"], a["height"]) == (320, 180) and abs(a["seconds"] - 3.0) < 0.2, a
+        assert a["gps"] == (46.41, 9.94) and a["taken_at"] == "2026-08-05 09:12:33", a
+        assert a["photo_beside"] is None and a["hdr"] is None and a["rotation"] == 0, a
+        assert rows["IMG_0001.MOV"]["photo_beside"] == "img_0001.jpg"
+        assert rows["long.mp4"]["ok"] and not rows["long.mp4"]["clip"]
+        assert not rows["broken.mp4"]["ok"] and rows["broken.mp4"]["error"]
+        text = clips.report(list(rows.values()))
+        assert "4 video file(s): 2 short enough to be a photograph, 1 longer, 1 unreadable" in text, text
+        assert "1 have a photograph of the same name" in text and "320×180" in text, text
+        assert "broken.mp4: cannot be read" in text
+    assert "No videos here" in clips.report([])
+    print("clips probe: length, size, date and its source, place, pairing, unreadable files: ok")
+
+
+def test_page_coverage():
+    """How empty each page is, and why: measured from the rectangles the
+    renderer draws, so the number describes the printed page."""
+    import fullness
+    from templates_lib import attach_aspects
+
+    g = R.geometry_for(LAB, "21x21")
+    dims = _dims()
+    lay = good_layout()
+    PG.repack(lay, _groups(), LAB)
+    attach_aspects(lay["spreads"], dims)
+    model = Layout.model_validate(lay)
+    pages = fullness.measure(model, dims, g)
+    assert len(pages) == 2 * len(model.spreads)
+    for p in pages:
+        assert 0.0 <= p["photo"] <= 1.0 and 0.0 <= p["empty"] <= 1.0, p
+        assert abs(p["photo"] + p["text"] + p["empty"] - 1.0) < 0.01, p
+        assert p["cause"] in fullness.CAUSES
+    # what is measured is what is drawn: the same rectangles as the page's HTML
+    checked = 0
+    for n, sp in enumerate(model.spreads):
+        rendered = T.build(sp.template, g, sp.options)
+        for side in ("left", "right"):
+            mine = [r for _, r in R.photo_rects(sp, rendered, g, g.page_window(side), dims)]
+            drawn = _img_rects(_page_html(g, lay["spreads"][n], side, dims))
+            assert len(mine) == len(drawn), (sp.template, side, mine, drawn)
+            for a, b in zip(sorted(mine, key=lambda r: (r.y, r.x)), sorted(drawn, key=lambda r: (r.y, r.x))):
+                assert abs(a.x - b.x) < 0.1 and abs(a.w - b.w) < 0.1 and abs(a.h - b.h) < 0.1, (a, b)
+                checked += 1
+    assert checked >= 10, checked
+
+    def one(template, ids, options=None):
+        sp = {"index": 1, "template": template, "options": options or {}, "text": None,
+              "section_id": None, "slots": [{"photo_id": i, "focal": [0.5, 0.5], "caption": None}
+                                            for i in ids]}
+        base = dict(lay, spreads=[sp])
+        base["meta"] = dict(lay["meta"], spread_count=1)
+        return fullness.measure(Layout.model_validate(base), dims, g)
+
+    left, right = one("full-bleed-single", ["p004"])
+    full, bare = (left, right) if left["photo"] > right["photo"] else (right, left)
+    assert full["empty"] == 0.0 and full["photo"] == 1.0, full
+    assert bare["cause"] == "nothing" and bare["empty"] > 0.95, \
+        f"the sliver a facing bleed runs past the fold was counted as a photograph: {bare}"
+    assert fullness.flagged([full, bare]) == [bare]
+    # a wide panorama in near-square slots is shown whole: the page says why it is empty
+    a, b = one("two-up-equal", ["p001", "p001"])
+    assert a["cause"] == "fitted" and a["fitted"] > 0.2, a
+    text = fullness.summary([full, bare, a, b])
+    assert "more than half empty" in text and "nothing on the page: page 2" in text, text
+    assert "no page is more than half empty" in fullness.summary([full])
+    print("page coverage: measured from the drawn rectangles, causes named: ok")
+
+
 def test_repack_and_crop_guard(): _run("repack_and_crop_guard")
 def test_adaptive_pages(): _run("adaptive_pages")
 def test_fuller_pages(): _run("fuller_pages")
@@ -177,6 +310,7 @@ def test_subjects_without_a_box(): _run("subjects_without_a_box")
 def test_user_spreads(): _run("user_spreads")
 def test_gutter_and_bleed(): _run("gutter_and_bleed")
 def test_costs_and_places(): _run("costs_and_places")
+def test_precise_places(): _run("precise_places")
 def test_settings_keys_places_and_ids(): _run("engadin_run_fixes")
 
 
@@ -1204,6 +1338,126 @@ def costs_and_places():
         geocode.apply(ph, Path(td), offline_db=False, online=False)
         assert ph[0].features, "cached features should still be used offline"
     print("cost pricing and named places: ok")
+
+
+def precise_places():
+    """Precise town names from Nominatim: off unless asked for, one request
+    per ~500 m cell and language, used at once only before the first layout
+    (or after a refresh), never over the user's own names, quiet when the
+    server is down, and at most one request a second."""
+    import json
+    import tempfile
+    import time
+    import urllib.request
+
+    import geocode
+
+    # the label: the most specific settlement, then the region
+    lab = geocode.nominatim_label
+    assert lab({"hamlet": "Isenfluh", "village": "Lauterbrunnen", "state": "Bern"}) == "Isenfluh, Bern"
+    assert lab({"city": "Zürich", "suburb": "Kreis 1", "state": "Zürich"}) == "Zürich"
+    assert lab({"town": "Baunei", "county": "Ogliastra"}) == "Baunei, Ogliastra"
+    assert lab({"road": "SS125", "state": "Sardegna"}) is None, "no settlement is not a name"
+    assert geocode.nominatim_base("https://geo.example.org/reverse/") == "https://geo.example.org"
+    assert geocode.nominatim_base(None).startswith("https://"), geocode.nominatim_base(None)
+
+    asked = []
+
+    def fake(lat, lon, lang):
+        asked.append((lat, lon, lang))
+        return {"en": "Isenfluh, Bern"}.get(lang, "Isenfluh, BE")
+
+    ph = [NS(id="a", gps=(46.6201, 7.8902), place=None, features=[]),
+          NS(id="b", gps=(46.6203, 7.8904), place=None, features=[]),   # same cell
+          NS(id="c", gps=(46.70, 7.90), place=None, features=[]),
+          NS(id="d", gps=None, place=None, features=[])]
+
+    def run(td, **kw):
+        geocode.apply(ph, Path(td), landmarks=False, precise_fetch=fake, **kw)
+        return [p.place for p in ph]
+
+    geocode._NOM_DOWN_UNTIL = 0.0
+    with tempfile.TemporaryDirectory() as td:
+        # the offline database's answers, as if reverse_geocoder had given them
+        (Path(td) / "places_cache.json").write_text(json.dumps(
+            {"46.620,7.890": "Lauterbrunnen, Bern", "46.700,7.900": "Interlaken, Bern"}), encoding="utf-8")
+        assert run(td) == ["Lauterbrunnen, Bern", "Lauterbrunnen, Bern", "Interlaken, Bern", None]
+        assert not asked and not (Path(td) / "places_online.json").exists(), "asked although off"
+
+        # before the first layout: asked once per cell, used at once
+        assert run(td, precise=True, online=True, language="en", adopt=lambda: True)[:2] \
+            == ["Isenfluh, Bern"] * 2
+        assert len(asked) == 2, f"one request per ~500 m cell: {asked}"
+        assert {(round(a[0], 3), round(a[1], 3)) for a in asked} == {(46.62, 7.89), (46.7, 7.9)}, \
+            "the cell is asked, not the photograph's exact point"
+        assert run(td, precise=True, online=True, language="en")[0] == "Isenfluh, Bern"
+        assert len(asked) == 2, "the cache was not used"
+        assert run(td, precise=True, language="en")[0] == "Isenfluh, Bern", "editor reload, offline"
+        assert run(td, language="en")[0] == "Lauterbrunnen, Bern", "turned off: the offline name again"
+
+        # after the first layout: a new answer waits for a refresh
+        assert run(td, precise=True, online=True, language="de", adopt=lambda: False)[0] \
+            == "Lauterbrunnen, Bern", "a late answer changed a book already made"
+        assert len(asked) == 4, "another language is another question"
+        assert geocode.refresh_precise(Path(td), "de") == 2
+        assert run(td, precise=True, language="de")[0] == "Isenfluh, BE"
+
+        # the user's own names always win
+        (Path(td) / "places.yaml").write_text(
+            "- name: Unser Chalet\n  lat: 46.6202\n  lon: 7.8903\n  radius_m: 300\n", encoding="utf-8")
+        assert run(td, precise=True, language="de")[:3] == ["Unser Chalet", "Unser Chalet", "Isenfluh, BE"]
+
+    # a server that does not answer: one try, then quiet for the cooldown
+    calls = []
+
+    def down(lat, lon, lang):
+        calls.append(1)
+        raise TimeoutError("The read operation timed out")
+
+    geocode._NOM_DOWN_UNTIL, geocode._NOM_SAID = 0.0, False
+    with tempfile.TemporaryDirectory() as td:
+        pr = geocode.Precise(Path(td), fetch=down)
+        assert pr.fetch_missing([p.gps for p in ph]) == 0
+        assert pr.fetch_missing([p.gps for p in ph]) == 0
+        assert len(calls) == 1, f"asked {len(calls)} times during the cooldown"
+        assert geocode.places_status()["precise"] == "unavailable"
+        assert not pr.cache, "a failure is not an answer"
+    geocode._NOM_DOWN_UNTIL = 0.0
+
+    # the real request: the right parameters, and one a second at most
+    urls, saved = [], (urllib.request.urlopen, geocode.NOM_INTERVAL_S)
+
+    class Answer:
+        def __init__(self, body):
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return self.body
+
+    def fake_open(req, timeout=None):
+        urls.append((time.monotonic(), req.full_url, req.get_header("User-agent")))
+        if "lat=0.0000" in req.full_url:
+            return Answer(b'{"error": "Unable to geocode"}')
+        return Answer(json.dumps({"address": {"village": "Wengen", "state": "Bern"}}).encode())
+
+    try:
+        urllib.request.urlopen, geocode.NOM_INTERVAL_S = fake_open, 0.3
+        assert geocode._nominatim(46.605, 7.92, "de", "https://geo.example.org/") == "Wengen, Bern"
+        assert geocode._nominatim(0.0, 0.0, None, "https://geo.example.org") is None
+    finally:
+        urllib.request.urlopen, geocode.NOM_INTERVAL_S = saved
+    (t1, u1, ua), (t2, u2, _) = urls
+    assert u1.startswith("https://geo.example.org/reverse?") and "accept-language=de" in u1, u1
+    assert "zoom=14" in u1 and "addressdetails=1" in u1 and "accept-language" not in u2, (u1, u2)
+    assert ua and "impaginai" in ua, "the usage policy asks for an identifying User-Agent"
+    assert t2 - t1 >= 0.29, f"two requests {t2 - t1:.2f}s apart"
+    print("precise place names: ok")
 
 
 if __name__ == "__main__":
