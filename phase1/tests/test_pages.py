@@ -784,6 +784,47 @@ def engadin_run_fixes(groups):
                    for sp in lay["spreads"]), "airy keeps single photographs apart"
     print("similar photographs of one moment composed three or four to a page: ok")
 
+    # the pixels count too: a burst is similar with no shared word, and a bare
+    # scene label alone no longer joins photographs taken hours apart
+    import tempfile
+
+    import similarity as SIM
+    from PIL import Image, ImageDraw
+
+    def pic(path, shift=0, noise=0):
+        im = Image.new("RGB", (160, 120), (30, 30, 30))
+        d = ImageDraw.Draw(im)
+        d.rectangle([20 + shift, 20, 90 + shift, 100], fill=(220, 220, 220))
+        d.ellipse([100, 30 + noise, 150, 80 + noise], fill=(120, 60, 200))
+        im.save(path, quality=95)
+        return path
+
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        h1 = SIM.dhash(pic(td / "a.jpg"))
+        h2 = SIM.dhash(pic(td / "b.jpg", shift=1))
+        other = Image.new("RGB", (160, 120), (200, 200, 200))
+        ImageDraw.Draw(other).line([0, 0, 160, 120], fill=(0, 0, 0), width=30)
+        other.save(td / "c.jpg")
+        h3 = SIM.dhash(td / "c.jpg")
+        assert SIM.distance(h1, h2) <= SIM.DUPLICATE_BITS, SIM.distance(h1, h2)
+        assert SIM.distance(h1, h3) > SIM.SIMILAR_BITS, SIM.distance(h1, h3)
+        assert SIM.dhash(td / "missing.jpg") is None and SIM.distance(None, h1) is None
+    grp = NS(id="g1")
+    bp = {x: grp for x in "xyz"}
+    f = {"x": {"scene": "", "subject": "", "who": "", "hash": h1},
+         "y": {"scene": "", "subject": "", "who": "", "hash": h2},
+         "z": {"scene": "seascape", "subject": "", "who": "", "hash": h3}}
+    assert PG.similar("x", "y", f, bp, {}), "a burst is similar with nothing said about it"
+    assert not PG.similar("x", "z", f, bp, {}), "unrelated pixels, no shared word"
+    f["x"]["scene"] = "seascape"
+    near = {"x": "2026-08-05T10:00", "z": "2026-08-05T10:20"}
+    far = {"x": "2026-08-05T10:00", "z": "2026-08-05T15:00"}
+    assert PG.similar("x", "z", f, bp, near), "the same scene label, twenty minutes apart"
+    assert not PG.similar("x", "z", f, bp, far), "the same scene label, five hours apart"
+    assert PG._near_duplicates(f, bp) == [("x", "y")]
+    print("pixel similarity: bursts found, bare scene labels need the time to agree: ok")
+
     # a photograph turned by the vision pass turns its keep-box too
     assert imaging.turn_box([0.1, 0.2, 0.3, 0.4], 90) == [0.6, 0.1, 0.8, 0.3]
 

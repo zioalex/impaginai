@@ -37,6 +37,7 @@ import cluster  # noqa: E402
 import geocode  # noqa: E402
 import overrides as OV  # noqa: E402
 import pages as PG  # noqa: E402
+import similarity as SIM  # noqa: E402
 import photos as PH  # noqa: E402
 import planner  # noqa: E402
 import providers  # noqa: E402
@@ -247,8 +248,7 @@ def finish(data: dict, ov, groups, photos, lab=None) -> dict:
                        together=ov.composed(),
                        alone={pid for pid, o in ov.by_id.items() if o.size == "full-page"},
                        no_bleed={p.id for p in photos if (p.can or {}).get("full-page") == "no"},
-                       features={p.id: {"scene": p.scene, "subject": p.subject, "who": p.who}
-                                 for p in photos})
+                       features=SIM.features_for(photos))
     refocused = PG.apply_focal(data, {p.id: p for p in photos})
     keeps = {p.id: p.keep for p in photos if p.keep}
     if lab is not None:
