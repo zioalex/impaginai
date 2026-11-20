@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Image formats: what counts as a photograph, and teaching Pillow to open it.
 
 Importing this module registers every decoder the project needs. Six modules
@@ -36,6 +38,11 @@ EXTENSIONS = {
 }
 
 HEIF_EXTENSIONS = {".heic", ".heif", ".avif"}
+
+# Videos that may be photographs taken with "live" or "motion" on. Not loaded
+# as photographs yet: phase1/clips.py probes them, and the frame picker that
+# turns one into a photograph is the next step of docs/plans/clips-and-fuller-pages.md.
+CLIP_EXTENSIONS = {".mp4", ".mov", ".m4v", ".3gp"}
 
 _registered = False
 _heif_ok = False

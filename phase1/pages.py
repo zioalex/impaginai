@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Close up the empty pages the planner leaves, and stamp each location.
 
 The planner thinks in spreads, and many of its templates spend one page of the
@@ -33,6 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "phase0"))
 
 import compose  # noqa: E402
+import similarity  # noqa: E402
 import templates_lib as T  # noqa: E402
 
 OPENING = ("title-page", "section-divider", "section-divider-plain", "text-page",
@@ -287,21 +290,52 @@ def _words(text: str) -> set[str]:
     return {w for w in _re.findall(r"[a-zà-ÿ]{4,}", (text or "").lower()) if w not in _STOP}
 
 
+def _minutes_apart(a: str, b: str, taken: dict) -> float | None:
+    from datetime import datetime
+
+    try:
+        return abs((datetime.fromisoformat(taken[a]) - datetime.fromisoformat(taken[b])).total_seconds())
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def similar(a: str, b: str, features: dict, by_photo: dict, taken: dict) -> bool:
     """Two photographs of the same scene: the same place and moment (group),
-    and the vision pass saw the same kind of scene, a shared subject, or the
-    same people. (They used to need to be within 45 minutes of each other too;
-    a group is already one place on one stretch of the trip, and the time
-    limit kept almost every trio from forming.)"""
+    and either the pixels are close (a burst, or one view from a step to the
+    side) or the vision pass saw the same people, a shared subject, or the
+    same kind of scene. A bare scene label ("seascape") is weak, so it only
+    counts when the two were also taken within 45 minutes of each other, if
+    both times are known. The pixels settle it first: a photograph far from
+    the other in the pixels is not folded in on a shared word alone."""
     ga, gb = by_photo.get(a), by_photo.get(b)
     if ga is None or ga is not gb:
         return False
     fa, fb = features.get(a) or {}, features.get(b) or {}
+    bits = similarity.distance(fa.get("hash"), fb.get("hash"))
+    if bits is not None and bits <= similarity.SIMILAR_BITS:
+        return True
     if fa.get("who") and fa.get("who") == fb.get("who"):
         return True
     if _words(fa.get("subject", "")) & _words(fb.get("subject", "")):
         return True
-    return bool(fa.get("scene")) and fa.get("scene") == fb.get("scene")
+    if not fa.get("scene") or fa.get("scene") != fb.get("scene"):
+        return False
+    gap = _minutes_apart(a, b, taken)
+    return gap is None or gap <= SIMILAR_WITHIN_S
+
+
+def _near_duplicates(features: dict, by_photo: dict) -> list[tuple[str, str]]:
+    """Pairs in one group whose pixels all but match. Reported, never removed:
+    which of two frames to drop is the user's call."""
+    ids = [i for i in features if (features[i] or {}).get("hash") is not None and i in by_photo]
+    out = []
+    for n, x in enumerate(ids):
+        for y in ids[n + 1:]:
+            if by_photo[x] is by_photo[y]:
+                d = similarity.distance(features[x]["hash"], features[y]["hash"])
+                if d is not None and d <= similarity.DUPLICATE_BITS:
+                    out.append((x, y))
+    return out
 
 
 def _group_similar(pages: list[Page], features: dict, by_photo: dict, taken: dict,
@@ -525,7 +559,8 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
     left them out — the ones added after the model last saw the album.
 
     `features` maps photo id to what the vision pass saw ({"scene", "subject",
-    "who"}): runs of three or four photographs of the same scene, moment and
+    "who"}) and, if known, the pixel hash of the photograph ("hash", see
+    similarity.py): runs of three or four photographs of the same scene, moment and
     place are then composed on one page."""
     spreads = layout.get("spreads", [])
     if not spreads:
@@ -880,6 +915,10 @@ def repack(layout: dict, groups, lab: dict | None = None, spare=None,
         log.append(f"brought into the book (your choice): {', '.join(brought)}")
     if grouped:
         log.append(f"{len(grouped)} page(s) of similar photographs composed together")
+    twins = _near_duplicates(features or {}, by_photo)
+    if twins:
+        log.append("near-identical photographs (consider leaving one out): "
+                   + ", ".join(f"{x}~{y}" for x, y in twins))
     if composed:
         log.append(f"composed with other photographs (your choice): {', '.join(composed)}")
     if added:

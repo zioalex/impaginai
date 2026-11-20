@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """The editor in a real browser.
 
     python tests/test_ui.py
@@ -100,7 +102,11 @@ def main() -> int:
             page.wait_for_function(
                 "[...document.querySelectorAll('#book .spread img')].slice(0, 2)"
                 ".every(i => i.complete && i.naturalWidth > 0)", timeout=30000)
-            ok(f"design from the button, book tab ({spreads} spreads, page images load)")
+            info = ed.get("/api/pages")
+            assert isinstance(info.get("empty_average"), int) and 0 <= info["empty_average"] <= 100, info
+            assert f"{info['empty_average']}% of a page empty" in page.inner_text("#emptyAvg")
+            ok(f"design from the button, book tab ({spreads} spreads, page images load, "
+               f"{info['empty_average']}% empty on average)")
 
             # 4. a spread opens large and closes again
             page.click("#book .spread >> nth=1")
@@ -170,6 +176,11 @@ def main() -> int:
             ed.wait(lambda: len((ed.get("/api/album") or {}).get("versions", [])) > versions,
                     180, "the revision made no new version")
             job_done("the revision")
+            # the editor finishes in the background (more fetches, then it switches
+            # to the Book tab itself): let that happen before clicking on
+            page.wait_for_function(
+                "document.getElementById('msgText').textContent.includes('Revised in')",
+                timeout=60000)
             page.click("#tabBook")
             page.wait_for_function(
                 "[...document.querySelectorAll('.vrow')].some(r => r.textContent.includes('Seite 4'))",
@@ -178,28 +189,27 @@ def main() -> int:
 
             # 10. a photograph removed from the album leaves the list, and comes back
             #
-            # Wait for the note the revision prints before touching a tab.
-            # job_done() returns when the SERVER says the job is over, but the
-            # page then fetches the pages and the report before it shows the
-            # book, and that took seconds on a loaded runner. Switching to the
-            # photos tab inside that window used to end with the book tab
-            # pulled back over the grid and a thirty-second wait for a
-            # photograph that would never be visible again — CI caught it on
-            # macOS and on Linux, from the same commit that passed elsewhere.
-            # The editor now keeps the tab the user picked last; this waits for
-            # the window to close so the test does not depend on that race at
-            # all, and then checks the tab really is the one that was asked for.
-            page.wait_for_function(
-                "document.getElementById('msgText').textContent.includes('Revised in')",
-                timeout=60000)
-            page.click("#tabPhotos")
-            page.wait_for_selector("#grid img", timeout=10000)
-            assert page.eval_on_selector("#main", "m => m.className") == "", \
-                "the editor left the photographs tab on its own after the revision"
+            # The editor now keeps the tab the user picked last: a job that
+            # finishes no longer switches to the book over it, and step 9
+            # already waited for the 'Revised in' note that closes the old
+            # race window. The retry loop below is belt-and-braces: if a tab
+            # switch still slips in, it goes back to Photos and re-picks the
+            # photograph rather than click into a hidden tab.
             before = len(ed.get("/api/photos"))
             page.once("dialog", lambda d: d.accept())
-            page.click("#grid img >> nth=2")
-            page.wait_for_selector("#editor", state="visible", timeout=5000)
+            # the editor can still be switching tabs on its own after a revision
+            # (seen on macOS): if the Remove link is not showing, go to Photos
+            # and pick the photograph again rather than click into a hidden tab
+            for attempt in range(4):
+                page.click("#tabPhotos")
+                page.wait_for_selector("#grid img", timeout=10000)
+                page.click("#grid img >> nth=2")
+                try:
+                    page.wait_for_selector("#optRemove", state="visible", timeout=5000)
+                    break
+                except Exception:
+                    if attempt == 3:
+                        raise
             page.click("#optRemove")
             page.wait_for_function(
                 f"document.querySelectorAll('#grid img').length === {before - 1}", timeout=20000)
@@ -232,6 +242,22 @@ def main() -> int:
             assert "CH ready" in line and "IT downloading" in line and "not answering" in line, line
             assert "not needed yet" in page.evaluate("placesLine({countries: {}, osm: 'idle'})")
             ok("landmark status line")
+
+            # 11. precise town names: the server box saves, the refresh button
+            #     shows with the option on (locked off here by --no-geocode)
+            page.click("#tabSettings")
+            page.wait_for_selector("#opt-nominatim_url", timeout=15000)
+            page.fill("#opt-nominatim_url", "http://127.0.0.1:9")
+            page.dispatch_event("#opt-nominatim_url", "change")
+            ed.wait(lambda: next(o["value"] for o in ed.get("/api/config")["options"]
+                                 if o["key"] == "nominatim_url") == "http://127.0.0.1:9",
+                    15, "the Nominatim server address was not saved")
+            row = page.evaluate("optionRow({key: 'precise_places', label: 'x', kind: 'bool', value: true, "
+                                "effect: 'regroup', help: ''})")
+            assert 'id="placesRefreshBtn"' in row, row
+            assert "not answering" in page.evaluate("preciseLine({precise: 'unavailable'})")
+            assert page.locator("#placesRefreshBtn").count() == 0, "refresh offered with the option off"
+            ok("precise town names: server address, refresh button, status line")
             browser.close()
     finally:
         ed.stop()

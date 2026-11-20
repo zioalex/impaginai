@@ -1,6 +1,20 @@
-# Tool configuration only. The project is not packaged yet (see
-# docs/reviews/2026-11-11-project-review.md); this file exists so the test
-# runner, the linter and the coverage report agree on what the code is.
+# Metadata and tool configuration. The project is still not built as a wheel
+# (there is no [build-system] table; see
+# docs/reviews/2026-11-11-project-review.md), but the licence belongs here so
+# anything reading this file knows the terms. The rest of the file exists so the
+# test runner, the linter and the coverage report agree on what the code is.
+
+[project]
+name = "impaginai"
+version = "0.1.0"
+description = "Turns a folder of photographs into a print-ready photo book."
+requires-python = ">=3.11"
+# The licence is an SPDX expression (PEP 639): AGPL-3.0 version 3 exactly, not
+# "or later". A commercial licence is available as well, see COMMERCIAL.md.
+license = "AGPL-3.0-only"
+# The lab specification files under phase0/labs/ stay Apache-2.0.
+license-files = ["LICENSE", "phase0/labs/LICENSE"]
+authors = [{ name = "Alessandro Surace" }]
 
 [tool.pytest.ini_options]
 # tools/ holds the repository's own small tools and their tests (the history

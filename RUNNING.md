@@ -131,7 +131,7 @@ Useful extras:
 | `--gap-hours 4` | a gap longer than this starts a new group |
 | `--radius-m 400` | moving this far starts a new group |
 | `--no-geocode` | skip place names entirely |
-| `--offline-places` | no glacier, lake and peak names: nothing is downloaded or looked up |
+| `--offline-places` | nothing about places is looked up online: no glacier, lake and peak names, no precise town names |
 | `--host 0.0.0.0 --port 8000` | reachable from other machines on your network |
 
 ### Glaciers, lakes and peaks by name
@@ -165,6 +165,33 @@ python phase1/geocode.py check 46.41 9.94
 `ALBUM_OVERPASS_URL` points at your own Overpass server and
 `ALBUM_GAZETTEER_URL` at a mirror of the country files
 (`https://example.org/dump/{cc}.zip`).
+
+### Precise town names (optional, online)
+
+The town database on your machine names the nearest town *centre* among towns
+of a thousand people or more. Near a boundary that is the neighbouring town;
+in the countryside it can be a town several kilometres away.
+
+**Settings → Places → Precise town names** (off by default) asks
+OpenStreetMap's [Nominatim](https://nominatim.org/release-docs/latest/api/Reverse/)
+instead: the village, hamlet or district each place is actually in, in the
+album's language.
+
+- **What leaves your machine:** each place's coordinates, rounded to about
+  500 m, sent to the server in **Nominatim server** (empty: the public
+  `nominatim.openstreetmap.org`). `ALBUM_NOMINATIM_URL` sets a default.
+  Your own server keeps them on your network.
+- **How fast:** one request a second, as the public server's usage policy asks,
+  in the background. Nothing waits for it; while it is not answering, the town
+  database is used.
+- **When the names change:** answers that arrive before the album's first
+  design are used at once. Later ones are kept in `places_online.json` but not
+  used until you press **Refresh place names**, so a book you have already seen
+  does not change by itself (place names also decide the groups).
+- Names you give in `places.yaml` always win.
+
+On the command line: `--precise-places`, `--nominatim-url URL`, and
+`--refresh-places` to use answers that arrived after the first layout.
 
 ### Naming places yourself
 
@@ -223,6 +250,29 @@ python album.py plan --album ../albums/sardinien --photos ~/Pictures/sardinien \
 `phase1/examples/demo_captions.yaml`. A description set in the editor wins over
 one in that file.
 
+## How full are the pages
+
+The **Book** tab says what share of a page is empty on average, and marks each
+page that is more than half empty with the reason: nothing on it, text only, a
+photograph shown whole inside a slot of another shape (its subject would have
+been cut), a photograph with too few pixels printed smaller, or simply the
+margins of that layout. A page with ordinary margins is about a third empty,
+so 30–40% is a normal average; the marked pages are the ones worth a look.
+`python phase0/render.py check …` prints the same summary.
+
+## Short videos
+
+Phones with "live" or "motion" photos save three seconds of video where you
+meant to take a picture. They are not used as photographs yet. To see what
+yours contain — length, size, date, place, HDR, and whether a photograph of
+the same name sits beside each — run:
+
+```bash
+python phase1/clips.py probe ~/Pictures/engadin
+```
+
+It only reads. Its summary says how large each could be printed.
+
 ## Getting the print files
 
 The editor produces a proof — low resolution, small file, for looking at. When
@@ -261,6 +311,7 @@ albums/sardinien/
   places.yaml         your own names for places (you write this)
   annotations.json    cached result of the one pass that looks at photographs
   places_cache.json   cached GPS lookups, so runs are repeatable
+  places_online.json  precise town names from Nominatim, and which are in use
   features_cache.json cached OpenStreetMap names near each place
   settings.json       book size, title, language chosen in the editor
   costs.jsonl         one line per design session: models, tokens, USD
