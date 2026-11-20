@@ -1,5 +1,6 @@
-# Three things, on every push: do the dependencies have known holes, does the
-# code have mistakes a linter can see, and does the print chain still work.
+# Three things, on every push to main and every pull request: do the
+# dependencies have known holes, does the code have mistakes a linter can
+# see, and does the print chain still work.
 # The last matters because the Chromium scaling bug documented in
 # phase0/README.md was invisible except in the rendered output.
 #
@@ -10,6 +11,7 @@
 name: CI
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
   schedule:
