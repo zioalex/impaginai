@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """End-to-end test of the Phase 1 loop with no API key and no network.
 
 A scripted completer stands in for the model. Its first answer is deliberately

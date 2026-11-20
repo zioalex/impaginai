@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Which model answers, and over which wire protocol.
 
 The planner never knew what it was talking to: its one requirement is a

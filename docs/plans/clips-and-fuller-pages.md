@@ -1,6 +1,7 @@
 # Plan: short videos as photographs, and fuller pages
 
-Status: **agreed; building in the order below. Nothing built yet.** Decisions already taken by the owner are
+Status: **agreed; building in the order below. Built so far: B0 (empty share,
+`phase0/fullness.py`) and A0 (the probe, `phase1/clips.py`).** Decisions already taken by the owner are
 under "Decided". Open points are at the end.
 
 Two requests:
@@ -213,8 +214,8 @@ each kind on or off; a per-page override removes one element.
 
 | Step | What | Size | Why here |
 |---|---|---|---|
-| 1 | B0 measure empty share | small | Shows which remedy matters; gives a number |
-| 2 | A0 probe the real clips | small | Decides dates, HDR and pairing details |
+| 1 ✔ | B0 measure empty share | small | Shows which remedy matters; gives a number |
+| 2 ✔ | A0 probe the real clips | small | Decides dates, HDR and pairing details |
 | 3 | B1 justified pages, safe crop | large | Removes most white at the cause |
 | 4 | A1 + A2 clips with local best frame and editor override | medium | Usable without any model |
 | 5 | Fonts bundled, then B2 typography | medium | Fonts are a prerequisite and an open defect |

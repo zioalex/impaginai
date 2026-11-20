@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Per-photo instructions from the user, and the pass that applies them.
 
 The planner is good at sequencing and bad at knowing that this particular

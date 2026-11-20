@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """The editor in a real browser.
 
     python tests/test_ui.py
@@ -100,7 +102,11 @@ def main() -> int:
             page.wait_for_function(
                 "[...document.querySelectorAll('#book .spread img')].slice(0, 2)"
                 ".every(i => i.complete && i.naturalWidth > 0)", timeout=30000)
-            ok(f"design from the button, book tab ({spreads} spreads, page images load)")
+            info = ed.get("/api/pages")
+            assert isinstance(info.get("empty_average"), int) and 0 <= info["empty_average"] <= 100, info
+            assert f"{info['empty_average']}% of a page empty" in page.inner_text("#emptyAvg")
+            ok(f"design from the button, book tab ({spreads} spreads, page images load, "
+               f"{info['empty_average']}% empty on average)")
 
             # 4. a spread opens large and closes again
             page.click("#book .spread >> nth=1")
@@ -170,6 +176,11 @@ def main() -> int:
             ed.wait(lambda: len((ed.get("/api/album") or {}).get("versions", [])) > versions,
                     180, "the revision made no new version")
             job_done("the revision")
+            # the editor finishes in the background (more fetches, then it switches
+            # to the Book tab itself): let that happen before clicking on
+            page.wait_for_function(
+                "document.getElementById('msgText').textContent.includes('Revised in')",
+                timeout=60000)
             page.click("#tabBook")
             page.wait_for_function(
                 "[...document.querySelectorAll('.vrow')].some(r => r.textContent.includes('Seite 4'))",
@@ -215,6 +226,22 @@ def main() -> int:
             assert "CH ready" in line and "IT downloading" in line and "not answering" in line, line
             assert "not needed yet" in page.evaluate("placesLine({countries: {}, osm: 'idle'})")
             ok("landmark status line")
+
+            # 11. precise town names: the server box saves, the refresh button
+            #     shows with the option on (locked off here by --no-geocode)
+            page.click("#tabSettings")
+            page.wait_for_selector("#opt-nominatim_url", timeout=15000)
+            page.fill("#opt-nominatim_url", "http://127.0.0.1:9")
+            page.dispatch_event("#opt-nominatim_url", "change")
+            ed.wait(lambda: next(o["value"] for o in ed.get("/api/config")["options"]
+                                 if o["key"] == "nominatim_url") == "http://127.0.0.1:9",
+                    15, "the Nominatim server address was not saved")
+            row = page.evaluate("optionRow({key: 'precise_places', label: 'x', kind: 'bool', value: true, "
+                                "effect: 'regroup', help: ''})")
+            assert 'id="placesRefreshBtn"' in row, row
+            assert "not answering" in page.evaluate("preciseLine({precise: 'unavailable'})")
+            assert page.locator("#placesRefreshBtn").count() == 0, "refresh offered with the option off"
+            ok("precise town names: server address, refresh button, status line")
             browser.close()
     finally:
         ed.stop()

@@ -172,14 +172,18 @@ one is a regression even when the tests stay green.
 
 - `phase0/` print chain: renderer (`render.py`), geometry, template library
   (`templates_lib.py`), page compositions (`compose.py`), validation
-  (`validate.py`), imaging and derivatives (`imaging.py`), charts, assets, and
-  lab specs (`labs/saal.yaml`, which sets the 24-page minimum).
+  (`validate.py`), imaging and derivatives (`imaging.py`), charts, assets,
+  `fullness.py`, which measures how empty each page is from the rectangles
+  the renderer draws, and lab specs (`labs/saal.yaml`, which sets the
+  24-page minimum).
 - `phase1/` planning: prompt (`prompt.py`), planner, providers, album state
   (`album.py`, `versions.py`), user overrides (`overrides.py`), the page
   repacker (`pages.py`, which runs after the model on every version: front
   page, no empty pages, place stamps, photos marked "in a composition"),
   photo handling and grouping (`photos.py`, `cluster.py`, `annotate.py`),
-  places (`geocode.py`, `gazetteer.py` — a local list,
+  clips (`clips.py` — short videos that are really photographs: today only
+  the probe; `docs/plans/clips-and-fuller-pages.md` has the steps that
+  follow), places (`geocode.py`, `gazetteer.py` — a local list,
   OpenStreetMap only in the background), keys (`keystore.py`), durable writes
   (`safeio.py`), tests, and the committed synthetic `demo_photos/`.
 - `phase2/` the editor: `server.py` (FastAPI) and `static/index.html` (one
@@ -241,4 +245,5 @@ step of every task, before you open the pull request.
   is for (including the stale stack section in `PLAN.md`), and this protocol.
   Added the two sandbox traps found while running the suite for that change: a
   clean `venv` for `reverse-geocoder`, and matching Playwright to a browser
-  that is already on the machine.
+  that is already on the machine. Main's newer `fullness.py` and `clips.py`
+  bullets were folded into the map above when the merge was resolved.

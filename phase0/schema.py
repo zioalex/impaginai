@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Layout JSON schema.
 
 Phase 0 hand-writes this file; Phase 1 has the model emit it. Same validator
