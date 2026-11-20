@@ -69,6 +69,59 @@ def main() -> int:
                     f"{step}: the editor shows an error: {page.inner_text('#msgText')}"
                 print(f"{step}: ok")
 
+            # One class on <main> decides which of the three panes is on
+            # screen; the other two are display:none, and so is everything
+            # inside them.
+            PANE = {"Photos": "", "Book": "book", "Settings": "settings"}
+
+            def tab(which: str) -> None:
+                """Open a tab, and see that the editor stays on it.
+
+                Anything that moves that class afterwards takes away the pane
+                the step is working in, and every click that follows then
+                waits out its timeout on an element that is no longer
+                displayed — half a minute of "element is not visible" about a
+                thumbnail that is perfectly fine. Reading the class here says
+                what actually happened, where it happened.
+                """
+                page.click(f"#tab{which}")
+                try:
+                    page.wait_for_function(
+                        "want => document.getElementById('main').className === want",
+                        arg=PANE[which], timeout=15000)
+                except Exception:
+                    now = page.eval_on_selector("#main", "e => e.className")
+                    raise AssertionError(
+                        f"the {which} tab did not stay open: <main> is {now!r}, so "
+                        "something moved the view while this step was working in it"
+                    ) from None
+
+            def reported(opening: str) -> None:
+                """Wait for the editor to be done with a job, not just the server.
+
+                When a design or a revision finishes, the editor fetches the
+                album, the photographs, the pages and the report, writes down
+                what it did, and only then goes to the book view by itself.
+                That jump is several round trips behind the moment the server
+                calls the job done, so a test that waits for the server alone
+                can be on another tab when it lands, and the pane it is working
+                in disappears under it. The note is written one statement before
+                the jump: once it is on screen, the editor has settled and the
+                tabs belong to the test again.
+                """
+                try:
+                    page.wait_for_function(
+                        "opening => document.getElementById('msgText')"
+                        ".textContent.startsWith(opening)", arg=opening, timeout=60000)
+                    page.wait_for_function(
+                        "document.getElementById('main').className === 'book'", timeout=15000)
+                except Exception:
+                    raise AssertionError(
+                        f"the editor never settled on “{opening} …” and the book view; "
+                        f"it says {page.inner_text('#msgText')!r} and shows "
+                        f"{page.eval_on_selector('#main', 'e => e.className')!r}"
+                    ) from None
+
             # 1. the page loads and shows every photograph
             page.goto(f"http://127.0.0.1:{ed.port}/")
             n = len(ed.get("/api/photos"))
@@ -95,7 +148,8 @@ def main() -> int:
                     or (ed.get("/api/job") or {}).get("error"), 180, "the design did not finish")
             job = ed.get("/api/job")
             assert job.get("done") and not job.get("error"), job
-            page.click("#tabBook")
+            reported("Designed in")
+            tab("Book")
             page.wait_for_selector("#book .spread img", timeout=30000)
             spreads = page.locator("#book .spread").count()
             assert spreads >= 12, f"only {spreads} spreads in the book view"
@@ -115,10 +169,10 @@ def main() -> int:
             ok("a spread opens large")
 
             # 5. settings render every section and survive a change
-            page.click("#tabSettings")
+            tab("Settings")
             page.wait_for_selector("#settings .setsec", timeout=15000)
             assert page.locator("#settings .setsec").count() >= 3
-            page.click("#tabPhotos")
+            tab("Photos")
             page.wait_for_selector("#grid img", timeout=10000)
             ok("settings tab and back")
 
@@ -143,7 +197,7 @@ def main() -> int:
 
             # 7. a setting changed in the editor is saved, and costs no model call
             asked = len(fake.requests)
-            page.click("#tabSettings")
+            tab("Settings")
             page.wait_for_selector("#settings .opt[data-set=density]", timeout=15000)
             before = ed.get("/api/config")
             cur = next(o["value"] for o in before["options"] if o["key"] == "density")
@@ -176,12 +230,8 @@ def main() -> int:
             ed.wait(lambda: len((ed.get("/api/album") or {}).get("versions", [])) > versions,
                     180, "the revision made no new version")
             job_done("the revision")
-            # the editor finishes in the background (more fetches, then it switches
-            # to the Book tab itself): let that happen before clicking on
-            page.wait_for_function(
-                "document.getElementById('msgText').textContent.includes('Revised in')",
-                timeout=60000)
-            page.click("#tabBook")
+            reported("Revised in")
+            tab("Book")
             page.wait_for_function(
                 "[...document.querySelectorAll('.vrow')].some(r => r.textContent.includes('Seite 4'))",
                 timeout=30000)
@@ -190,6 +240,12 @@ def main() -> int:
             # 10. a photograph removed from the album leaves the list, and comes back
             before = len(ed.get("/api/photos"))
             page.once("dialog", lambda d: d.accept())
+            # The thumbnails carry `loading="lazy"`, but CSS gives each one its
+            # box (.ph is aspect-ratio:1 and the img fills it), so a picture
+            # that has not loaded yet is still there to be clicked, and one
+            # below the fold Playwright scrolls to by itself. If this click
+            # ever reports "element is not visible", the pane it lives in is
+            # the thing that went away: see tab() above.
             # the editor can still be switching tabs on its own after a revision
             # (seen on macOS): if the Remove link is not showing, go to Photos
             # and pick the photograph again rather than click into a hidden tab
@@ -218,7 +274,7 @@ def main() -> int:
             cur = json.loads(latest.read_text(encoding="utf-8"))
             placed = {s["photo_id"] for sp in cur.get("spreads", []) for s in sp["slots"]}
             assert gone[0]["id"] not in placed, "a removed photograph is still in the book"
-            page.click("#tabSettings")
+            tab("Settings")
             page.wait_for_selector("#removedList [data-restore]", timeout=15000)
             page.click("#removedList [data-restore]")
             page.wait_for_function(
