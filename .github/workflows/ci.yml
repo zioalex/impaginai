@@ -7,20 +7,54 @@
 # against the same versions every time. The `latest` job, weekly, installs the
 # newest versions the floors in requirements.txt allow, so a release that
 # breaks something is found on a Monday and not by a user.
+#
+# `ci-ok` at the bottom is the one check branch protection requires. Requiring
+# the jobs individually means a matrix entry added later is not covered until
+# someone remembers to add it to the branch rule; requiring the aggregate
+# means it is covered the moment it exists.
 name: CI
 on:
+  # `push` is main only, and `pull_request` covers everything else. A bare
+  # `push:` next to `pull_request:` ran the whole matrix TWICE for every
+  # commit on a branch with a pull request open — two runs of four test legs
+  # plus Windows, for one push. Work on a branch is tested through its pull
+  # request, which is where it is read.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
   schedule:
     - cron: "17 6 * * 1"      # Monday: advisories and releases since the last push
 
+# Read-only by default. No job here writes to the repository; a job that one
+# day needs to raises it for itself.
+permissions:
+  contents: read
+
+# A new push to the same branch supersedes the one before it. Cancelled only
+# for pull requests: a run on main is history and should finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Actions are pinned to a commit, not a tag: a tag can be moved to point at
+# other code, and these actions run with access to this repository. The
+# comment is the version that commit was. Dependabot watches the
+# github-actions ecosystem monthly (.github/dependabot.yml) and proposes the
+# bump with the new SHA, so pinning costs nothing to keep current.
+#
+# The majors matter as well as the SHAs: the first run of these pins warned
+# that checkout v4 and setup-python v5 target Node 20, which is deprecated and
+# was only still running because the runner forces it onto Node 24. Pinning the
+# version a repository already used was the cautious choice and the wrong one.
+
 jobs:
   audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - run: pip install pip-audit
@@ -29,18 +63,40 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - run: pip install -r requirements-dev.lock.txt
       # Names that do not exist, unused imports, syntax errors: see pyproject.toml.
       - run: ruff check .
 
+  # Everything .pre-commit-config.yaml checks, on every file — so a
+  # contributor who has not run `pre-commit install` still cannot land
+  # trailing whitespace, a stray large file, a private key or a new secret.
+  # Both stages: the pre-push hooks are the slower, more interesting ones.
+  hooks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install pre-commit
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+      - run: pre-commit run --all-files --show-diff-on-failure
+      - run: pre-commit run --all-files --hook-stage pre-push --show-diff-on-failure
+
   test:
     name: test (${{ matrix.os }}, ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false          # one platform failing must not hide the others
       matrix:
@@ -52,13 +108,13 @@ jobs:
           # at 10x). Put the line back / remove the `if: false` below to resume.
           # - { os: macos-latest, python: "3.12" }
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: requirements*.lock.txt
-      - run: pip install -r requirements.lock.txt -r requirements-dev.lock.txt
+      - run: pip install -r requirements.lock.txt -r requirements-dev.lock.txt -r requirements-geo.lock.txt
       - run: playwright install --with-deps chromium
       - name: Warm the offline geocoder
         run: python -c "import reverse_geocoder as rg; rg.search([(47.4, 8.6)])"
@@ -75,7 +131,7 @@ jobs:
           cd phase0
           python tools/make_placeholder_photos.py
           python render.py proof --layout examples/layout_test24.json --photos ./photos --allow-fold --out "${{ runner.temp }}/out"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && matrix.summary
         with:
           name: proof-pdf
@@ -90,14 +146,15 @@ jobs:
     name: test (windows-latest, 3.12, engine only)
     if: false        # paused to save runner minutes; remove this line to resume
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements*.lock.txt
-      - run: pip install -r requirements.lock.txt -r requirements-dev.lock.txt
+      - run: pip install -r requirements.lock.txt -r requirements-dev.lock.txt -r requirements-geo.lock.txt
       - run: playwright install chromium
       - name: Warm the offline geocoder
         run: python -c "import reverse_geocoder as rg; rg.search([(47.4, 8.6)])"
@@ -105,18 +162,69 @@ jobs:
         run: pytest phase1/tests/test_loop.py phase1/tests/test_pages.py
 
   # Newest versions the floors allow. Not on pull requests: it would turn a
-  # change red for something the change did not do.
+  # change red for something the change did not do. Left out of `ci-ok` for
+  # the same reason.
   latest:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-      - run: pip install -r requirements.txt -r requirements-dev.txt pip-audit
+      - run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-geo.txt pip-audit
       - run: pip-audit -r requirements.txt --strict
       - run: playwright install --with-deps chromium
       - name: Warm the offline geocoder
         run: python -c "import reverse_geocoder as rg; rg.search([(47.4, 8.6)])"
       - run: pytest
+
+  # The single required check. It fails if any job above it did not succeed,
+  # including one that was skipped or cancelled, so "green" cannot mean
+  # "never ran". A skip is tolerable only when it is a decision recorded in
+  # PAUSED below together with the job's `if: false` in this file.
+  ci-ok:
+    name: ci-ok
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+    needs: [audit, lint, hooks, test, test-windows]
+    steps:
+      - name: Every job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          # Jobs paused on purpose (`if: false` on the job): their 'skipped'
+          # is a decision written in this file, not a missing answer.
+          # `test-windows` is paused to save runner minutes; remove the
+          # pause, or the name here, when the leg resumes.
+          PAUSED: test-windows
+        run: |
+          bad=0
+          for line in $(printf '%s' "$NEEDS" | jq -r 'to_entries[] | "\(.key)=\(.value.result)"'); do
+            name=${line%%=*}; r=${line#*=}
+            echo "$name: $r"
+            case "$r" in
+              success) ;;
+              skipped)
+                case " $PAUSED " in
+                  *" $name "*) echo "note: $name is skipped on purpose (paused in this file)" ;;
+                  *) echo "::error::$name was skipped; if that is deliberate, add it to PAUSED above with a comment"; bad=1 ;;
+                esac
+                ;;
+              cancelled)
+                # Not a pass: a cancelled job is a job whose answer nobody
+                # knows, and this check exists to refuse exactly that. In
+                # practice it means a newer push superseded this run, in
+                # which case this commit is no longer the head and the newer
+                # run is the one that decides the pull request.
+                echo "::error::a required job was cancelled — if a newer commit was pushed, that run is the one that counts; otherwise re-run this one"
+                bad=1
+                ;;
+              *)
+                echo "::error::a required job ended as '$r'"
+                bad=1
+                ;;
+            esac
+          done
+          exit "$bad"

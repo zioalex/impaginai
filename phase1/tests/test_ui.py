@@ -188,6 +188,13 @@ def main() -> int:
             ok("a change asked for in words becomes a new version in the book")
 
             # 10. a photograph removed from the album leaves the list, and comes back
+            #
+            # The editor now keeps the tab the user picked last: a job that
+            # finishes no longer switches to the book over it, and step 9
+            # already waited for the 'Revised in' note that closes the old
+            # race window. The retry loop below is belt-and-braces: if a tab
+            # switch still slips in, it goes back to Photos and re-picks the
+            # photograph rather than click into a hidden tab.
             before = len(ed.get("/api/photos"))
             page.once("dialog", lambda d: d.accept())
             # the editor can still be switching tabs on its own after a revision
@@ -257,6 +264,42 @@ def main() -> int:
         fake.stop()
     print("editor in a browser: ok")
     return 0
+
+
+def test_ids_reaching_the_dom_are_escaped():
+    """A photograph's id is its filename stem, so it can hold a quote.
+
+    `tile()` builds its markup with innerHTML. An id like `a" onerror="…`
+    arriving from a folder the user pointed at (the upload route sanitises
+    names; a folder is read as it is) would then run script in the editor's
+    own origin — the origin whose API can read the key store. An id holding
+    "#" or "?" truncated the thumbnail URL instead, and the picture silently
+    failed to load.
+
+    This needs no browser, so it also guards the file where Chromium is
+    absent. It checks the sinks rather than the symptom: every id written
+    into markup or into a URL must go through esc() or encodeURIComponent().
+    """
+    html = (Path(__file__).resolve().parents[1].parent
+            / "phase2" / "static" / "index.html").read_text(encoding="utf-8")
+
+    # Every /thumb/ and /photo/ URL built from an id encodes it.
+    for line_no, line in enumerate(html.splitlines(), 1):
+        for route in ("/thumb/${", "/photo/${"):
+            at = line.find(route)
+            if at < 0:
+                continue
+            expr = line[at + len(route):line.index("}", at)]
+            assert expr.startswith("encodeURIComponent("), \
+                f"index.html:{line_no}: {route}{expr}}} is not URL-encoded"
+
+    # No id is interpolated raw into innerHTML.
+    for line_no, line in enumerate(html.splitlines(), 1):
+        if "innerHTML" not in line:
+            continue
+        for raw in ("${p.id}", "${id}", "${photo.id}"):
+            assert raw not in line, \
+                f"index.html:{line_no}: {raw} goes into innerHTML unescaped; use esc()"
 
 
 def test_editor_in_a_browser():

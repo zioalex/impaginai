@@ -1,0 +1,23 @@
+# Offline place names from GPS. Optional, and deliberately kept out of
+# requirements.txt.
+#
+# ~8 MB of bundled settlement data, no network, no API key. Without it the
+# album has no place names; with it you can still override any name in
+# places.yaml. Pulls in numpy and scipy.
+#
+# It is separate because it has no wheel for every platform and falls back to
+# building from source. When that build fails — it does in some containers and
+# on some Python versions, with "a group has no place" — pip gives up on the
+# entire resolution, so a single optional dependency took the other fourteen
+# down with it and `pip install -r requirements.lock.txt` installed nothing at
+# all. Separated, a failed build here costs place names and nothing else.
+#
+# Install after the main lock, which also constrains it:
+#
+#     pip install -r requirements.lock.txt
+#     pip install -r requirements-geo.lock.txt
+#
+# Replacing this library with a GeoNames extract is tracked in
+# docs/reviews/2026-11-11-project-review.md (last released 2016, LGPL, data
+# ten years old).
+reverse-geocoder>=1.5.1       # verified 1.5.1 (numpy 2.5.3, scipy 1.18.1)

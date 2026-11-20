@@ -460,7 +460,12 @@ const EXPORTS=[["proof","Preview PDF","Small and quick, for looking through"],
  ["jpeg:300","Page images · 300 DPI","One JPEG per page, zipped — for printing elsewhere"]];
 
 let photos=[], album=null, sel=null, picked=new Set(), lastClicked=null, polling=null,
-    designed=false, dirty=false, broughtBack=new Set(), rerenderTimer=null, view="photos", pages={count:0};
+    designed=false, dirty=false, broughtBack=new Set(), rerenderTimer=null, view="photos", pages={count:0},
+    // Counts the tab changes the USER asked for. A job that finishes shows
+    // the book, but finished() does two requests before it gets there, and
+    // the user can pick another tab while they are in flight. Comparing this
+    // before and after is how the later, explicit choice wins.
+    navSeq=0;
 const $=id=>document.getElementById(id);
 const usd=v=>v==null?"—":(v<0.01&&v>0?"<$0.01":"$"+v.toFixed(2));
 
@@ -556,7 +561,7 @@ function tile(p){
   const d=document.createElement("div");
   d.className="tile"+(p.exclude?" off":"")+(sel===p.id?" sel":"")+(picked.has(p.id)?" multi":"");
   d.tabIndex=0; d.dataset.id=p.id;
-  d.innerHTML=`<div class="ph"><img loading="lazy" src="/thumb/${p.id}.jpg?r=${p.rotate||0}" alt="${p.id}"><div class="badges"></div>
+  d.innerHTML=`<div class="ph"><img loading="lazy" src="/thumb/${encodeURIComponent(p.id)}.jpg?r=${p.rotate||0}" alt="${esc(p.id)}"><div class="badges"></div>
     <div class="qa"><button class="eye ${p.exclude?"":"on"}" title="${p.exclude?"Bring back into the album (X)":"Leave out of the album (X)"}">${p.exclude?"🚫":"👁"}</button>
     <button class="pen" title="Write the caption (Enter)">✎</button>
     <button class="zoom" title="See it bigger (Space)">⤢</button></div></div><div class="cap"></div>`;
@@ -601,7 +606,7 @@ function select(id,scroll=true){
   sel=id; document.body.classList.add("picked");
   const p=photos.find(x=>x.id===id); if(!p)return;
   $("noSel").style.display="none"; $("editor").style.display="block";
-  $("preview").src=`/thumb/${id}.jpg?r=${p.rotate||0}`;
+  $("preview").src=`/thumb/${encodeURIComponent(id)}.jpg?r=${p.rotate||0}`;
   const bits=[];
   if(p.place)bits.push(`<b>${esc(p.place)}</b>`);
   if(p.taken_at)bits.push(esc(p.taken_at));
@@ -720,8 +725,8 @@ function openLightbox(id){
   lbId=id;
   const img=$("lbImg");
   const r=p.rotate||0;
-  img.src=`/thumb/${id}.jpg?r=${r}`;           // at once, then the large copy
-  const big=new Image(); big.onload=()=>{if(lbId===id)img.src=big.src;}; big.src=`/photo/${id}.jpg?r=${r}`;
+  img.src=`/thumb/${encodeURIComponent(id)}.jpg?r=${r}`;           // at once, then the large copy
+  const big=new Image(); big.onload=()=>{if(lbId===id)img.src=big.src;}; big.src=`/photo/${encodeURIComponent(id)}.jpg?r=${r}`;
   $("lbCap").textContent=p.description||p.caption||p.landmark||p.place||"";
   $("lbMeta").textContent=[p.taken_at,`${p.width}×${p.height}`].filter(Boolean).join(" · ");
   $("photoView").classList.add("on");
@@ -798,6 +803,7 @@ function lockButtons(on){$("btnPlan").disabled=on;$("fmtSel").disabled=on;}
 
 async function finished(j){
   const r=j.result||{};
+  const navAtStart=navSeq;      // see navSeq, above
   album=await get("/api/album"); photos=await get("/api/photos");
   designed=album.versions.length>0; setHeader(); renderGrid(); if(sel)select(sel,false);
   await refreshPages();
@@ -809,7 +815,11 @@ async function finished(j){
     const cost=r.usd!=null?` · this session cost ${usd(r.usd)}${r.estimated?" (estimated)":""}`:"";
     note(`${j.kind==="design"?"Designed":"Revised"} in ${took}${cost}. ${rep.pages} pages`
       +(bad?` — ${bad} problem(s) to fix before printing.`:`, ${rep.min_dpi} DPI at the smallest.`));
-    showView("book");
+    // The finished book is what you want to see — unless you have chosen
+    // another tab in the second or two this function spent fetching the
+    // pages and the report. Then you chose last, and you keep what you
+    // chose; the note above already says the book is ready.
+    if(navSeq===navAtStart)showView("book");
   }else if(j.kind==="rerender"){
     status("Preview up to date");
     const back=(r.not_placed||[]).filter(id=>broughtBack.has(id));
@@ -893,9 +903,9 @@ function showView(v){
   if(v==="book")renderBook();
   if(v==="settings")renderSettings();
 }
-$("tabPhotos").onclick=()=>showView("photos");
-$("tabBook").onclick=()=>showView("book");
-$("tabSettings").onclick=()=>showView("settings");
+$("tabPhotos").onclick=()=>{navSeq++;showView("photos");};
+$("tabBook").onclick=()=>{navSeq++;showView("book");};
+$("tabSettings").onclick=()=>{navSeq++;showView("settings");};
 
 // --- Settings ------------------------------------------------------------
 const EFFECT={instant:["Applies now · free","Re-applied to the current design at once, no model call."],

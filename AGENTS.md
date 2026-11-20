@@ -19,18 +19,23 @@ Same as CI (`.github/workflows/ci.yml`):
 
 ```bash
 pip install -r requirements.lock.txt -r requirements-dev.lock.txt
+pip install -r requirements-geo.lock.txt   # optional, and installed on its own
 pytest --cov      # everything, each check reported on its own, with coverage
 ruff check .      # mistakes the tests do not reach
 ```
 
-CI installs from `requirements.lock.txt` and `requirements-dev.lock.txt`. After
-changing either requirements file, regenerate both:
+CI installs from all three locks. `requirements-geo.lock.txt` is a separate
+line on purpose: `reverse-geocoder` builds from source where it has no wheel,
+and a failed build inside the main resolution left pip installing nothing at
+all. After changing any requirements file, regenerate all three:
 
 ```bash
 pip install uv
 uv pip compile requirements.txt --universal --python-version 3.11 -o requirements.lock.txt
 uv pip compile requirements-dev.txt --universal --python-version 3.11 \
     -c requirements.lock.txt -o requirements-dev.lock.txt
+uv pip compile requirements-geo.txt --universal --python-version 3.11 \
+    -c requirements.lock.txt -o requirements-geo.lock.txt
 ```
 
 Each file also runs alone, which is quicker while working on one area:
@@ -43,9 +48,10 @@ python phase1/tests/test_ui.py      # the editor in Chromium: load, describe, de
 ```
 
 - `test_e2e.py` drives the phase-2 editor over HTTP; nothing calls a real model.
-- `test_loop.py` needs `reverse_geocoder`, which may fail to build in some
-  sandboxes ("a group has no place"). That is the environment, not the code:
-  check it against unmodified `main` before chasing it.
+- `test_loop.py` needs `reverse_geocoder` from `requirements-geo.lock.txt`,
+  which may fail to build in some sandboxes ("a group has no place"). That is
+  the environment, not the code: check it against unmodified `main` before
+  chasing it. Everything else in the suite runs without it.
 - Rendering needs Playwright's Chromium. If `pip install -r requirements.txt`
   pulls a Playwright whose browser is not installed, pin the version that
   matches the installed browser instead of downloading another one.

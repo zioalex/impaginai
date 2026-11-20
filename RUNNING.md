@@ -14,6 +14,7 @@ python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 
 pip install -r requirements.lock.txt
+pip install -r requirements-geo.lock.txt   # optional: place names from GPS
 playwright install chromium        # ~150 MB browser download
 ```
 
@@ -22,12 +23,22 @@ Linux, macOS and Windows, Python 3.11 to 3.13. `requirements.txt` holds the
 oldest versions that are supported instead; install from it if you need to
 share an environment with something else, and expect the newest of everything.
 
+The second line is on its own because it can fail on its own.
+`reverse-geocoder` has no wheel for every platform and builds from source; when
+that build fails, pip abandons the whole resolution, and while it sat in
+`requirements.txt` one optional library took the other fourteen down with it
+and installed nothing at all. Separated, a failure there costs place names and
+nothing else — the album is built exactly the same way, with no place names in
+it. Run the two lines in this order: the main lock also constrains the
+optional one.
+
 ### Updating
 
 After `git pull`, bring the environment up to date, both lines:
 
 ```bash
 pip install -r requirements.lock.txt
+pip install -r requirements-geo.lock.txt   # if you installed it before
 playwright install chromium        # each Playwright version has its own browser
 ```
 
@@ -326,9 +337,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
       fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && playwright install chromium
-RUN python -c "import reverse_geocoder as rg; rg.search([(47.4, 8.6)])"
+COPY requirements.lock.txt requirements-geo.lock.txt ./
+RUN pip install --no-cache-dir -r requirements.lock.txt && playwright install chromium
+# Place names are optional: install them in their own layer so a failed build
+# costs place names and not the image.
+RUN pip install --no-cache-dir -r requirements-geo.lock.txt \
+    && python -c "import reverse_geocoder as rg; rg.search([(47.4, 8.6)])" \
+    || echo "no offline place names in this image"
 COPY . .
 EXPOSE 8000
 CMD ["python","phase2/server.py","--album","/data/album","--photos","/data/photos","--host","0.0.0.0"]
@@ -772,14 +787,15 @@ On a machine **with** a connection:
 
 ```bash
 mkdir -p offline-bundle && cd offline-bundle
-pip download -r ../requirements.txt -d wheels
+pip download -r ../requirements.lock.txt -r ../requirements-geo.lock.txt -d wheels
 tar czf chromium.tgz -C ~ .cache/ms-playwright
 ```
 
 Copy that directory across, then on the target machine:
 
 ```bash
-pip install --no-index --find-links=wheels -r requirements.txt
+pip install --no-index --find-links=wheels -r requirements.lock.txt
+pip install --no-index --find-links=wheels -r requirements-geo.lock.txt   # optional
 tar xzf chromium.tgz -C ~
 ```
 

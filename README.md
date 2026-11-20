@@ -238,6 +238,9 @@ cannot show you. `RUNNING.md` has the cost table and recommended stacks.
 
 `requirements.txt` holds floors (the oldest versions supported) and
 `requirements.lock.txt` the exact versions CI tested; install from the lock.
+`requirements-geo.txt` is the one optional dependency — offline place names
+from GPS — kept separate because its build can fail and must not be able to
+abort the whole install.
 Dependabot moves the lock forward, and a weekly CI job installs the newest
 versions the floors allow, so a release that breaks something is noticed. `pillow` and `pypdf` both
 parse untrusted binary input — photographs and PDFs — and are the two that must

@@ -1,0 +1,136 @@
+# Does the install in RUNNING.md still work?
+#
+# `ci.yml` installs from the lock into a runner that already has a Python and
+# a pip cache, which is not what a stranger does. This job does what the
+# documentation says, in order, from an empty directory, in a clean virtual
+# environment, on all three platforms — and then starts the editor and asks it
+# a question.
+#
+# It exists because every install failure this project has had was invisible to
+# CI: a Playwright whose browser was not downloaded, and an optional
+# dependency whose failed build left pip installing nothing at all. Both would
+# have been caught here on the Monday.
+#
+# Weekly rather than per-push: it is slow, it downloads a browser three times,
+# and the thing it guards against is drift, which happens with time rather
+# than with commits.
+name: Fresh clone
+on:
+  schedule:
+    - cron: "41 7 * * 1"      # Monday, after CI's own weekly run
+  workflow_dispatch:
+  pull_request:
+    # Only when the install itself changes.
+    paths:
+      - "requirements*.txt"
+      - "RUNNING.md"
+      - ".github/workflows/fresh-clone.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fresh-clone-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  install:
+    name: install as documented (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The version floor RUNNING.md states, not the newest available: if the
+      # documented minimum has stopped working, that is the bug.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+          # No pip cache on purpose. A cache hides a package that can no
+          # longer be downloaded or built.
+
+      - name: Install, exactly as RUNNING.md says (POSIX)
+        if: runner.os != 'Windows'
+        run: |
+          set -euxo pipefail
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements.lock.txt
+          playwright install chromium
+
+      - name: Install, exactly as RUNNING.md says (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .venv\Scripts\Activate.ps1
+          pip install -r requirements.lock.txt
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          playwright install chromium
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      # Separately, and allowed to fail: that is the whole point of it being a
+      # separate file. A failure here must not fail the job, but it must be
+      # visible in the log and in the summary.
+      - name: Install the optional place names
+        id: geo
+        continue-on-error: true
+        shell: bash
+        run: |
+          source .venv/bin/activate 2>/dev/null || source .venv/Scripts/activate
+          pip install -r requirements-geo.lock.txt
+          python -c "import reverse_geocoder as rg; rg.search([(47.4, 8.6)])"
+
+      - name: Say so if place names could not be installed
+        if: steps.geo.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning::requirements-geo.lock.txt did not install on ${{ matrix.os }} — albums work, without place names"
+          echo "- place names unavailable on ${{ matrix.os }}" >> "$GITHUB_STEP_SUMMARY"
+
+      # The failure mode that has actually happened twice: Playwright is
+      # installed, its browser is not, and nothing says so until a render
+      # hangs. Ask the browser for its version and refuse to go on without it.
+      - name: The renderer's browser is really there
+        shell: bash
+        run: |
+          source .venv/bin/activate 2>/dev/null || source .venv/Scripts/activate
+          python - <<'PY'
+          import sys
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as p:
+              exe = p.chromium.executable_path
+              browser = p.chromium.launch()
+              print("playwright expects:", exe)
+              print("chromium reports:", browser.version)
+              browser.close()
+          PY
+
+      # Then the quick start from README.md, against the synthetic photographs
+      # the repository ships, which needs no API key.
+      - name: The editor starts and answers
+        shell: bash
+        run: |
+          source .venv/bin/activate 2>/dev/null || source .venv/Scripts/activate
+          python phase2/server.py --album ./albums/demo --photos phase1/demo_photos \
+            --no-geocode --port 8111 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8111/api/album > album.json; then break; fi
+            sleep 2
+          done
+          test -s album.json || { echo "the editor never answered"; exit 1; }
+          curl -fsS http://127.0.0.1:8111/api/photos > photos.json
+          python - <<'PY'
+          import json, sys
+          album = json.load(open("album.json"))
+          photos = json.load(open("photos.json"))
+          print("album open:", album.get("open"), "| photographs:", len(photos))
+          if not album.get("open"):
+              sys.exit("the editor answered but no album was open")
+          if len(photos) < 20:
+              sys.exit(f"expected the 22 demo photographs, the editor listed {len(photos)}")
+          PY

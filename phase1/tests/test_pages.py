@@ -139,6 +139,52 @@ def test_portable_dates_and_text():
         assert OV.Overrides.load(Path(td)).get("p001").description == words
 
 
+def test_photo_paths_are_urls_not_paths():
+    """A photograph's path goes into an HTML attribute, so it must be a URL.
+
+    A photograph's id is its filename stem and the album folder is named by
+    the user, so `Sommer #3.jpg` and an album called `Ferien #2` are ordinary
+    input. Written raw, `#` truncated the URL at the fragment and the page
+    waited thirty seconds for an image that never loaded, `%` was an invalid
+    escape, and a double quote ended the attribute and injected the rest into
+    a page Chromium runs.
+
+    An ordinary path must come through untouched, on Windows too, so the fix
+    cannot change what the renderer emits for the normal case."""
+    from schema import Layout as L
+
+    assert R.src_url(Path("/albums/holiday/derivatives/proof/p001.jpg")) == \
+        "/albums/holiday/derivatives/proof/p001.jpg", "an ordinary path must not change"
+    assert R.src_url(Path("C:/Users/alex/albums/p001.jpg")) == \
+        "C:/Users/alex/albums/p001.jpg", "a Windows drive letter must not change"
+    assert R.src_url(Path("/a #2/Sommer #3.jpg")) == "/a%20%232/Sommer%20%233.jpg"
+    assert R.src_url(Path("/a/100%.jpg")) == "/a/100%25.jpg"
+    assert '"' not in R.src_url(Path('/a/b".jpg'))
+
+    g = R.geometry_for(LAB, "28x21")
+    lay = {"meta": {"title": "t", "format": "28x21", "spread_count": 1}, "sections": [],
+           "spreads": [{"index": 1, "section_id": None, "template": "two-up-equal",
+                        "slots": [{"photo_id": "p1", "focal": [0.5, 0.5], "caption": None,
+                                   "caption_position": "none"},
+                                  {"photo_id": "p2", "focal": [0.5, 0.5], "caption": None,
+                                   "caption_position": "none"}]}]}
+    spread = L.model_validate(lay).spreads[0]
+    rendered = T.build(spread.template, g, spread.options)
+    paths = {"p1": Path('/album #2/Sommer #3.jpg'), "p2": Path('/album #2/a"b.jpg')}
+    html = (R.canvas_html(spread, rendered, g, paths, g.page_window("left"))
+            + R.canvas_html(spread, rendered, g, paths, g.page_window("right")))
+
+    import re as _re
+    srcs = _re.findall(r'<img[^>]*\ssrc="([^"]*)"', html)
+    assert len(srcs) == 2, f"both photographs must be drawn, got {srcs}"
+    for src in srcs:
+        assert "#" not in src and '"' not in src and " " not in src, src
+    # The attribute must not be closed early: each <img> has one src and one
+    # style, and nothing loose between them.
+    for tag in _re.findall(r"<img[^>]*>", html):
+        assert tag.count('"') == 6, tag        # class, src, style
+
+
 def test_missing_browser_is_a_sentence():
     """After an update the renderer's browser is the wrong version. That must
     read as one instruction, not as a traceback."""
