@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """End to end, with a mocked key and a fake model endpoint: no network, no cost.
 
     python phase1/tests/test_e2e.py
@@ -289,6 +291,24 @@ def main() -> int:
             assert {"lab", "length", "density", "selection", "captions", "gap_hours",
                     "radius_m", "vision_px", "auto_rotate", "geocode", "online_places"} <= set(keys)
             assert keys["geocode"]["locked"], "--no-geocode should lock place names"
+            assert keys["precise_places"]["locked"] and keys["precise_places"]["default"] is False, \
+                "precise town names are off by default and locked by --no-geocode"
+            try:
+                ed.send("POST", "/api/places/refresh", {})
+                raise AssertionError("refreshed place names with the precise lookup off")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 409
+            for bad in ("ftp://x", "nominatim.local", "https://a b"):
+                try:
+                    ed.send("PUT", "/api/config", {"nominatim_url": bad})
+                    raise AssertionError(f"{bad!r} accepted as a server address")
+                except urllib.error.HTTPError as exc:
+                    assert exc.code == 400
+            r = ed.send("PUT", "/api/config", {"nominatim_url": " http://127.0.0.1:9/ "})
+            assert r["changed"] == ["nominatim_url"], r
+            assert ed.get("/api/config")["options"][[o["key"] for o in cfg["options"]]
+                                                   .index("nominatim_url")]["value"] == "http://127.0.0.1:9/"
+            ed.send("PUT", "/api/config", {"nominatim_url": ""})
             try:
                 ed.send("PUT", "/api/config", {"geocode": True})
                 raise AssertionError("a locked setting was changed")

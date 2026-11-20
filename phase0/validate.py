@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Print constraints as executable checks.
 
 Everything in here exists because a prompt cannot be trusted to enforce it.
@@ -88,6 +90,7 @@ class Report:
     page_count: int
     empty_pages: list[int] = None       # pages with no photograph at all
     bare_pages: list[int] = None        # pages with neither photograph nor text
+    coverage: list[dict] = None         # per page: how full it is and why not (fullness.py)
 
     @property
     def blocking(self) -> bool:
@@ -109,6 +112,10 @@ class Report:
         )
         if bare:
             print(f"  pages carrying nothing: {bare}")
+        if self.coverage:
+            import fullness
+
+            print(fullness.summary(self.coverage))
 
 
 def check(
@@ -267,4 +274,11 @@ def check(
 
     if min_dpi_seen == float("inf"):
         min_dpi_seen = 0.0
-    return Report(issues, min_dpi_seen, pc, empty, bare)
+    # How full each page is, and why not. Never blocks: it is a measurement.
+    try:
+        import fullness
+
+        cov = fullness.measure(layout, {k: (v.width, v.height) for k, v in photos.items()}, g)
+    except Exception:
+        cov = None
+    return Report(issues, min_dpi_seen, pc, empty, bare, cov)

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """The annotate call: look at each photograph once, in batches, and cache it.
 
 This is where vision earns its cost. Previously the only way for the model to

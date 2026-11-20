@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Phase 0: layout JSON + photos -> Saal-Digital-spec PDF.
 
 No LLM, no database, no frontend. This script exists to prove one thing before
@@ -309,6 +311,34 @@ def place_photo(slot_rect: Rect, aspect: float, focal, keep, bleeds: bool,
     return rect, px, py
 
 
+def _allowance(sp, rendered, g: Geometry, window: Rect) -> float:
+    """How much of a photograph a slot on this page may cut away. Slots sized
+    by compose.adaptive (the spread carries the photographs' shapes) were
+    fitted with an allowance: render, and measure, with the same one."""
+    adapted = bool((sp.options or {}).get("aspects"))
+    on_page = sum(1 for b in rendered.slots if _owns(g, window, b.rect))
+    return (CROP_KEEP_SINGLE if on_page <= 1 else CROP_KEEP_MULTI) - 0.02 if adapted else MIN_CROP_KEEP
+
+
+def photo_rects(sp, rendered, g: Geometry, window: Rect, dims: dict) -> list[tuple[int, Rect]]:
+    """(slot number, rectangle) for every photograph drawn on this page: the
+    rectangles canvas_html draws, without drawing them. `dims` maps photo id
+    to (width, height). Used to measure how full a page is."""
+    side = _side_of(g, window)
+    keeps = list((sp.options or {}).get("keeps") or [])
+    allow = _allowance(sp, rendered, g, window)
+    out = []
+    for n, (slot, box) in enumerate(zip(sp.slots, rendered.slots)):
+        if not _owns(g, window, box.rect) or slot.photo_id not in dims:
+            continue
+        w, h = dims[slot.photo_id]
+        keep = keeps[n] if n < len(keeps) else None
+        rect, _, _ = place_photo(box.rect, (w / h) if h else 1.0, tuple(slot.focal), keep,
+                                 box.bleeds, allow, g.text_column(side))
+        out.append((n, rect))
+    return out
+
+
 def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window: Rect) -> str:
     parts: list[str] = []
     side = _side_of(g, window)
@@ -321,11 +351,7 @@ def canvas_html(sp, rendered, g: Geometry, photo_paths: dict[str, Path], window:
     overlays: list[str] = []      # captions and scrims go above every photograph
     band: list[str] = []          # captions set in the band under the page's photos
     keeps = list((sp.options or {}).get("keeps") or [])
-    # Slots sized by compose.adaptive (the spread carries the photographs'
-    # shapes) were fitted with an allowance: render with the same one.
-    adapted = bool((sp.options or {}).get("aspects"))
-    on_page = sum(1 for b in rendered.slots if _owns(g, window, b.rect))
-    allow = (CROP_KEEP_SINGLE if on_page <= 1 else CROP_KEEP_MULTI) - 0.02 if adapted else MIN_CROP_KEEP
+    allow = _allowance(sp, rendered, g, window)
     for n, (slot, box) in enumerate(zip(sp.slots, rendered.slots)):
         if not _owns(g, window, box.rect):
             continue

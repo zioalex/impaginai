@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Every editor setting that is not a photograph, in one place.
 
 Each option knows its default, what values it accepts, which group of the
@@ -29,7 +31,7 @@ class Option:
     label: str
     default: Any
     effect: str
-    kind: str                       # choice | number | bool
+    kind: str                       # choice | number | bool | url
     choices: dict[str, str] = field(default_factory=dict)   # value -> label
     min: float | None = None
     max: float | None = None
@@ -49,6 +51,12 @@ class Option:
             if str(v).lower() in ("false", "0", "no", "off"):
                 return False
             raise ValueError(f"{self.key} must be true or false")
+        if self.kind == "url":
+            v = "" if v is None else str(v).strip()
+            if v and not (v.startswith(("http://", "https://")) and len(v.split("/")[2]) > 0
+                          and not any(c.isspace() for c in v)):
+                raise ValueError(f"{self.key} must be empty or an http(s):// address")
+            return v
         if self.kind == "choice":
             if str(v) not in self.choices:
                 raise ValueError(f"{self.key} must be one of {', '.join(self.choices)}")
@@ -141,6 +149,21 @@ OPTIONS: list[Option] = [
                 "OpenStreetMap when it answers (this sends coordinates, rounded to "
                 "about a kilometre, to its public servers).",
            flag="--offline-places"),
+    Option("precise_places", "places", "Precise town names (online)", False, "regroup", "bool",
+           help="Asks OpenStreetMap's Nominatim which village, hamlet or district each place "
+                "is in, in the album's language. Off by default: it sends coordinates, rounded "
+                "to about 500 m, to the server below, one a second, in the background.",
+           info="Off — town names come from a database on this machine. It names the nearest "
+                "town of a thousand people or more: near a boundary that can be the "
+                "neighbouring town, in the countryside one several kilometres away.\n"
+                "On — the village, hamlet or district the place is actually in. Names that "
+                "arrive before the first design are used at once; later ones wait for "
+                "“Refresh place names”, so a book you have seen does not change by itself.\n"
+                "Names you gave in places.yaml always win.",
+           flag="--offline-places"),
+    Option("nominatim_url", "places", "Nominatim server", "", "instant", "url",
+           help="Empty uses the public server, nominatim.openstreetmap.org. Your own "
+                "server keeps the coordinates on your network."),
 ]
 
 BY_KEY = {o.key: o for o in OPTIONS}

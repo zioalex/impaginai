@@ -36,6 +36,10 @@ anthropic>=0.69.0,<3
 fastapi>=0.162.2              # verified 0.162.2
 uvicorn>=0.54.0               # verified 0.54.0
 
+# Short videos that are really photographs (phone "live" / "motion" photos).
+# Wheels for Linux, macOS and Windows with FFmpeg inside: nothing else to install.
+av>=18.1.0                    # verified 18.1.0 (Python 3.11) and 19.0.2
+
 # --- optional ---
 # Offline place names from GPS. ~8 MB of bundled settlement data, no network,
 # no API key. Without it the album simply has no place names; with it you can

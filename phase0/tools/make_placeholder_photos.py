@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Generate stand-in photos so the print chain can be exercised end to end.
 
 Each image carries an edge band and corner markers, so any cover-crop is

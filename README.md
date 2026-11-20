@@ -253,10 +253,17 @@ CI runs that on every push and weekly, and Dependabot opens grouped update PRs.
 
 ## Licence
 
-GNU AGPL-3.0 — see `LICENSE` — with a commercial licence available for use
-that the AGPL does not allow: see `COMMERCIAL.md`. The lab specification files
-in `phase0/labs/` are Apache-2.0. To contribute, read `CONTRIBUTING.md` and
-`CLA.md`.
+**AGPL-3.0-only** — the GNU Affero General Public License version 3, and not
+"or any later version". See `LICENSE`. Every source file carries an
+`SPDX-License-Identifier` line saying which licence applies to it.
+
+A **commercial licence** is available for use the AGPL does not allow, such as
+offering a hosted service without publishing your changes: see `COMMERCIAL.md`.
+
+The lab specification files in `phase0/labs/` are **Apache-2.0** (see
+`phase0/labs/LICENSE`), so print labs and users can share them freely.
+
+To contribute, read `CONTRIBUTING.md` and `CLA.md`.
 
 Landmark names come from [GeoNames](https://www.geonames.org) (CC BY 4.0) and,
 when its servers answer, © OpenStreetMap contributors (ODbL).

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: Apache-2.0
+# Lab specifications are deliberately permissive: see phase0/labs/LICENSE.
 # Saal Digital — Professional Line, layflat binding.
 #
 # VERIFY markers below mean: confirm against the InDesign/PSD template you
