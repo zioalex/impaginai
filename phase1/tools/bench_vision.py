@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Find the smallest image size that still annotates your photographs correctly.
 
 Vision cost is driven by image DIMENSIONS — Anthropic charges roughly

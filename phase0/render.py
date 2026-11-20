@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Phase 0: layout JSON + photos -> Saal-Digital-spec PDF.
 
 No LLM, no database, no frontend. This script exists to prove one thing before

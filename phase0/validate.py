@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Print constraints as executable checks.
 
 Everything in here exists because a prompt cannot be trusted to enforce it.

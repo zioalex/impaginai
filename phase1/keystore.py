@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """API keys entered in the editor: stored, looked up, masked, never shown.
 
 A key from the environment ALWAYS wins over one stored here. Run as a service,

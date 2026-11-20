@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
 """Photo ingest for the planning call.
 
 Two jobs: read what the camera recorded, and work out what each photo is
