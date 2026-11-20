@@ -1,5 +1,9 @@
-# Three things, on every push: do the dependencies have known holes, does the
-# code have mistakes a linter can see, and does the print chain still work.
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Four things, on every push: do the dependencies have known holes, does the
+# code have mistakes a linter can see, does every file still say what it is
+# licensed under, and does the print chain still work.
 # The last matters because the Chromium scaling bug documented in
 # phase0/README.md was invisible except in the rendered output.
 #
@@ -37,6 +41,20 @@ jobs:
       - run: pip install -r requirements-dev.lock.txt
       # Names that do not exist, unused imports, syntax errors: see pyproject.toml.
       - run: ruff check .
+
+  # Does every file still say what it is licensed under? The project is
+  # dual-licensed (AGPL-3.0-only plus a commercial option), so per-file clarity
+  # is the whole point: see REUSE.toml and reuse.software. One small job of
+  # about twenty seconds, ubuntu only — it reads files and runs nothing.
+  reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install reuse
+      - run: reuse lint
 
   test:
     name: test (${{ matrix.os }}, ${{ matrix.python }})

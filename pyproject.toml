@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Alessandro Surace
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Metadata and tool configuration. The project is still not built as a wheel
 # (there is no [build-system] table; see
 # docs/reviews/2026-11-11-project-review.md), but the licence belongs here so
@@ -12,8 +15,11 @@ requires-python = ">=3.11"
 # The licence is an SPDX expression (PEP 639): AGPL-3.0 version 3 exactly, not
 # "or later". A commercial licence is available as well, see COMMERCIAL.md.
 license = "AGPL-3.0-only"
-# The lab specification files under phase0/labs/ stay Apache-2.0.
-license-files = ["LICENSE", "phase0/labs/LICENSE"]
+# Every licence text the repository uses lives in LICENSES/, named by its SPDX
+# identifier, as the REUSE specification requires; LICENSE is the same AGPL
+# text again at the root, which is where GitHub looks. See REUSE.toml for the
+# files that carry no header of their own.
+license-files = ["LICENSE", "LICENSES/*.txt"]
 authors = [{ name = "Alessandro Surace" }]
 
 [tool.pytest.ini_options]

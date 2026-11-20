@@ -260,8 +260,16 @@ CI runs that on every push and weekly, and Dependabot opens grouped update PRs.
 A **commercial licence** is available for use the AGPL does not allow, such as
 offering a hosted service without publishing your changes: see `COMMERCIAL.md`.
 
-The lab specification files in `phase0/labs/` are **Apache-2.0** (see
-`phase0/labs/LICENSE`), so print labs and users can share them freely.
+Two corners are not AGPL. The lab specification files in `phase0/labs/` are
+**Apache-2.0** (see `phase0/labs/LICENSE`), so print labs and users can share
+them freely; and the configuration you copy into your own album directory —
+`presets/`, `models.example.yaml`, `phase1/examples/` — is **CC0-1.0**, so your
+copy is yours. The documentation is **CC-BY-SA-4.0**.
+
+The repository follows the [REUSE specification](https://reuse.software):
+licence texts are in `LICENSES/` under their SPDX identifiers, files without a
+header of their own are covered by `REUSE.toml`, and `reuse lint` passes. Run
+`reuse spdx` for a bill of materials. `CONTRIBUTING.md` has the per-area table.
 
 To contribute, read `CONTRIBUTING.md` and `CLA.md`.
 
