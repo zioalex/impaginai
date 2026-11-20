@@ -238,8 +238,6 @@ def main() -> int:
             ok("a change asked for in words becomes a new version in the book")
 
             # 10. a photograph removed from the album leaves the list, and comes back
-            tab("Photos")
-            page.wait_for_selector("#grid img", timeout=10000)
             before = len(ed.get("/api/photos"))
             page.once("dialog", lambda d: d.accept())
             # The thumbnails carry `loading="lazy"`, but CSS gives each one its
@@ -248,8 +246,19 @@ def main() -> int:
             # below the fold Playwright scrolls to by itself. If this click
             # ever reports "element is not visible", the pane it lives in is
             # the thing that went away: see tab() above.
-            page.click("#grid img >> nth=2")
-            page.wait_for_selector("#editor", state="visible", timeout=5000)
+            # the editor can still be switching tabs on its own after a revision
+            # (seen on macOS): if the Remove link is not showing, go to Photos
+            # and pick the photograph again rather than click into a hidden tab
+            for attempt in range(4):
+                page.click("#tabPhotos")
+                page.wait_for_selector("#grid img", timeout=10000)
+                page.click("#grid img >> nth=2")
+                try:
+                    page.wait_for_selector("#optRemove", state="visible", timeout=5000)
+                    break
+                except Exception:
+                    if attempt == 3:
+                        raise
             page.click("#optRemove")
             page.wait_for_function(
                 f"document.querySelectorAll('#grid img').length === {before - 1}", timeout=20000)

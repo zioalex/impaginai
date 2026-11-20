@@ -62,6 +62,7 @@ import geocode
 import keystore
 import overrides as OV
 import pages as PG
+import similarity as SIM
 import photos as PH
 import planner
 import prompt as P
@@ -557,8 +558,7 @@ def finish_layout(raw: dict, usable) -> dict:
               # Photographs added after the design: the model never had the
               # chance to leave them out, so they go in.
               include=unseen_photos(raw, usable) | touched_photos(by_id),
-              features={p.id: {"scene": p.scene, "subject": p.subject, "who": p.who}
-                        for p in usable})
+              features=SIM.features_for(usable))
     PG.apply_focal(data, by_id)
     # Never cut the people or the main subject: a page set to the edges whose
     # crop would cut them holds the photograph inside its margins instead, and
