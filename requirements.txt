@@ -17,7 +17,7 @@
 # Versions in the comments are what this was last verified against.
 
 # --- rendering and print chain (Phase 0) ---
-playwright>=1.63.0,<2            # verified 1.63.0
+playwright>=1.65.2,<2            # verified 1.63.0
 pillow>=13.0.0,<14                # verified 13.0.0 — below this, 39 known CVEs
 pillow-heif>=1.1.0            # HEIC/HEIF: the default format on every iPhone
                               # since 2017. Pillow cannot read it alone.
@@ -30,10 +30,10 @@ httpx>=0.28.1                 # verified 0.28.1 — OpenAI-compatible endpoints
 
 # Only needed for --provider anthropic, which is the default. Drop it if you
 # point --base-url at an OpenAI-compatible endpoint instead.
-anthropic>=0.69.0,<3
+anthropic>=2.10.0,<3
 
 # --- web editor (Phase 2) ---
-fastapi>=0.162.2              # verified 0.162.2
+fastapi>=0.163.2              # verified 0.162.2
 uvicorn>=0.54.0               # verified 0.54.0
 
 # Short videos that are really photographs (phone "live" / "motion" photos).
