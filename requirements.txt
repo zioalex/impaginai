@@ -21,7 +21,7 @@ playwright>=1.63.0,<2            # verified 1.63.0
 pillow>=13.0.0,<14                # verified 13.0.0 — below this, 39 known CVEs
 pillow-heif>=1.1.0            # HEIC/HEIF: the default format on every iPhone
                               # since 2017. Pillow cannot read it alone.
-pypdf>=6.21.4,<8                 # verified 7.0.0  — below this, 25 known CVEs
+pypdf>=7.1.1,<8                 # verified 7.0.0  — below this, 25 known CVEs
 
 # --- schema, config, planning (Phase 1) ---
 pydantic>=2.13.5              # verified 2.13.5
